@@ -151,14 +151,22 @@ async function grab(id){
   const r = await api('wanted/'+id+'/grab', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ source: src, adapter: 'qbittorrent' }) });
   if(!r.ok) alert('grab failed: '+await r.text());
+  else loadWanted();
+}
+async function autograb(id){
+  const r = await api('wanted/'+id+'/autograb', { method:'POST' });
+  if(!r.ok) alert('find & grab failed: '+await r.text());
+  else loadWanted();
 }
 async function del(id){ if(confirm('Remove this request?')){ await api('wanted/'+id, {method:'DELETE'}); loadWanted(); } }
-window.grab = grab; window.del = del;
+window.grab = grab; window.autograb = autograb; window.del = del;
 
 function statusPill(s){ return `<span class="status ${s}">${s}</span>`; }
 function rowHtml(w){
+  const grabbable = ['pending','failed'].includes(w.status);
   const admin = ADMIN ? `<div class="row-actions">
-    ${['pending','failed'].includes(w.status)?`<button onclick="grab('${w.id}')">grab</button>`:''}
+    ${grabbable && CFG.autoGrab ? `<button class="primary" onclick="autograb('${w.id}')">find &amp; grab</button>` : ''}
+    ${grabbable ? `<button onclick="grab('${w.id}')">magnet</button>` : ''}
     <button onclick="del('${w.id}')">remove</button></div>` : '';
   return `<tr><td>${escapeHtml(w.title)} <span class="muted">${w.year||''}</span></td>
     <td>${statusPill(w.status)}</td><td class="muted">${escapeHtml(w.detail||'')}</td><td>${admin}</td></tr>`;

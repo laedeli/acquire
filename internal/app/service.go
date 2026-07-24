@@ -6,7 +6,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/laedeli/acquire/internal/events"
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/katalog"
+	"github.com/laedeli/acquire/internal/prowlarr"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
 )
@@ -24,12 +27,16 @@ type Service struct {
 	gw     *gateway.Client
 	kc     *katalog.Client
 	tm     *tmdb.Client
+	pr     *prowlarr.Client
 	notify func() // sse ping
 }
 
-func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, notify func()) *Service {
-	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, notify: notify}
+func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, notify func()) *Service {
+	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, notify: notify}
 }
+
+// AutoGrabEnabled reports whether Prowlarr search is configured.
+func (s *Service) AutoGrabEnabled() bool { return s.pr.Enabled() }
 
 // setStatus updates + pings subscribers.
 func (s *Service) setStatus(ctx context.Context, id, status, detail string) {
@@ -41,6 +48,13 @@ func (s *Service) setStatus(ctx context.Context, id, status, detail string) {
 }
 
 // ── request-side (commands, called by httpapi) ──────────────────────────────
+
+var (
+	errAutoGrabDisabled = errors.New("indexer search not configured")
+	errNoReleases       = errors.New("no releases found")
+)
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 func newID() string {
 	// time-ordered enough for a request id; uniqueness from the nanosecond.
@@ -88,6 +102,55 @@ func (s *Service) Grab(ctx context.Context, wantedID, source, adapter string) er
 	}
 	_ = s.st.RecordGrab(ctx, wantedID, adapter, res.ClientJobID, source)
 	s.setStatus(ctx, wantedID, "downloading", "grabbed via "+adapter)
+	return nil
+}
+
+// AutoGrab searches Prowlarr for the request's title, ranks the releases
+// NZB-first, and grabs the top one through the matching gateway adapter
+// (usenet→nzbget, torrent→qbittorrent). This is the *arr-style automation on top
+// of the manual Grab.
+func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
+	w, err := s.st.GetWanted(ctx, wantedID)
+	if err != nil {
+		return err
+	}
+	if !s.pr.Enabled() {
+		return errAutoGrabDisabled
+	}
+	query := w.Title
+	if w.Year != 0 {
+		query = w.Title + " " + itoa(w.Year)
+	}
+	releases, err := s.pr.Search(ctx, query)
+	if err != nil {
+		s.setStatus(ctx, wantedID, "failed", "indexer search failed: "+err.Error())
+		return err
+	}
+	ranked := prowlarr.Rank(releases, s.cfg.PreferUsenet)
+	if len(ranked) == 0 {
+		s.setStatus(ctx, wantedID, "failed", "no releases found on the indexers")
+		return errNoReleases
+	}
+	best := ranked[0]
+	adapter := best.Adapter()
+	res, err := s.gw.Add(ctx, gateway.AddRequest{
+		Adapter:      adapter,
+		Source:       best.Source(),
+		Title:        w.Title,
+		SavePath:     s.cfg.SavePath,
+		WantedItemID: wantedID,
+	})
+	if err != nil {
+		s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())
+		return err
+	}
+	_ = s.st.RecordGrab(ctx, wantedID, adapter, res.ClientJobID, best.Source())
+	proto := "NZB"
+	if !best.IsUsenet() {
+		proto = "torrent"
+	}
+	s.setStatus(ctx, wantedID, "downloading",
+		"grabbed "+proto+" from "+best.Indexer+" via "+adapter)
 	return nil
 }
 
