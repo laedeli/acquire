@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -64,14 +65,68 @@ func (r Release) Adapter() string {
 	return "qbittorrent"
 }
 
+// IndexerInfo is the subset of an indexer definition we need to scope searches.
+type IndexerInfo struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	Enable   bool   `json:"enable"`
+}
+
+// Indexers lists the configured indexers (to scope a search by protocol — a
+// full 50-indexer fan-out is far too slow, so NZB-first means "search the few
+// usenet indexers first").
+func (c *Client) Indexers(ctx context.Context) ([]IndexerInfo, error) {
+	if !c.Enabled() {
+		return nil, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/indexer", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.APIKey)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+	var out []IndexerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EnabledIDs returns the enabled indexer IDs for a protocol ("usenet"|"torrent").
+func EnabledIDs(idx []IndexerInfo, protocol string) []int {
+	var ids []int
+	for _, i := range idx {
+		if i.Enable && i.Protocol == protocol {
+			ids = append(ids, i.ID)
+		}
+	}
+	return ids
+}
+
 // Search runs an aggregated search across all indexers.
 func (c *Client) Search(ctx context.Context, query string) ([]Release, error) {
+	return c.SearchIn(ctx, query, nil)
+}
+
+// SearchIn searches only the given indexer IDs (nil = all). Scoping to the usenet
+// indexers keeps the NZB-first path fast; the torrent-wide fallback is rare.
+func (c *Client) SearchIn(ctx context.Context, query string, indexerIDs []int) ([]Release, error) {
 	if !c.Enabled() || strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
-	u := c.BaseURL + "/api/v1/search?" + url.Values{
-		"query": {query}, "type": {"search"}, "limit": {"100"},
-	}.Encode()
+	v := url.Values{"query": {query}, "type": {"search"}, "limit": {"100"}}
+	for _, id := range indexerIDs {
+		v.Add("indexerIds", strconv.Itoa(id))
+	}
+	u := c.BaseURL + "/api/v1/search?" + v.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err

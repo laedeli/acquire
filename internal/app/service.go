@@ -121,12 +121,26 @@ func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 	if w.Year != 0 {
 		query = w.Title + " " + itoa(w.Year)
 	}
-	releases, err := s.pr.Search(ctx, query)
-	if err != nil {
-		s.setStatus(ctx, wantedID, "failed", "indexer search failed: "+err.Error())
-		return err
+	// NZB-first + FAST: search the usenet indexers first (a couple of indexers,
+	// ~1s). Only fall back to the slow torrent-wide fan-out when there is no NZB.
+	idx, _ := s.pr.Indexers(ctx)
+	var releases []prowlarr.Release
+	if s.cfg.PreferUsenet {
+		if usenetIDs := prowlarr.EnabledIDs(idx, "usenet"); len(usenetIDs) > 0 {
+			releases, _ = s.pr.SearchIn(ctx, query, usenetIDs)
+		}
 	}
 	ranked := prowlarr.Rank(releases, s.cfg.PreferUsenet)
+	if len(ranked) == 0 {
+		// Torrent fallback (or the whole set when not usenet-preferring).
+		torrentIDs := prowlarr.EnabledIDs(idx, "torrent")
+		rel2, err := s.pr.SearchIn(ctx, query, torrentIDs)
+		if err != nil {
+			s.setStatus(ctx, wantedID, "failed", "indexer search failed: "+err.Error())
+			return err
+		}
+		ranked = prowlarr.Rank(rel2, s.cfg.PreferUsenet)
+	}
 	if len(ranked) == 0 {
 		s.setStatus(ctx, wantedID, "failed", "no releases found on the indexers")
 		return errNoReleases
