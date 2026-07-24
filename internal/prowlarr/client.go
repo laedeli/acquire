@@ -24,7 +24,9 @@ func New(baseURL, apiKey string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		APIKey:  apiKey,
-		HTTP:    &http.Client{Timeout: 90 * time.Second}, // multi-indexer fan-out is slow
+		// The multi-indexer fan-out is slow (a single slow indexer gates the
+		// whole aggregated search); give it generous headroom.
+		HTTP: &http.Client{Timeout: 210 * time.Second},
 	}
 }
 
