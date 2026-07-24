@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>acquire · requests</title>
+<style>
+  :root {
+    --bg:#0B0F19; --surface:#11161F; --surface2:#161B26; --border:#1F2633;
+    --text:#C9D1D9; --muted:#AEB8C2; --dim:#6E7787; --accent:#58A6FF;
+    --green:#2EA043; --amber:#F2B233; --red:#F85149;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:16px 24px;
+    border-bottom:1px solid var(--border); }
+  header h1 { font-size:18px; margin:0; letter-spacing:.02em; }
+  header .who { margin-left:auto; color:var(--muted); font-size:13px; }
+  main { max-width:1000px; margin:0 auto; padding:24px; }
+  .bar { display:flex; gap:8px; margin-bottom:20px; }
+  input, button { font:inherit; }
+  input[type=search], input.text {
+    flex:1; padding:10px 14px; background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; color:var(--text); }
+  button { padding:9px 16px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface2); color:var(--text); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#001; font-weight:600; }
+  button.primary:hover { filter:brightness(1.08); }
+  button:disabled { opacity:.5; cursor:default; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:24px 0 12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .card img { width:100%; aspect-ratio:2/3; object-fit:cover; display:block; background:var(--surface2); }
+  .card .b { padding:10px; }
+  .card .t { font-weight:600; font-size:13px; margin-bottom:4px; }
+  .card .y { color:var(--dim); font-size:12px; margin-bottom:8px; }
+  .card button { width:100%; padding:6px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); font-size:13px; }
+  th { color:var(--muted); font-weight:500; }
+  .status { font-size:12px; padding:2px 8px; border-radius:999px; display:inline-block; }
+  .status.pending{ background:#25314a; color:var(--accent); }
+  .status.downloading{ background:#3a2f10; color:var(--amber); }
+  .status.packaging{ background:#25314a; color:var(--accent); }
+  .status.fulfilled{ background:#12351f; color:var(--green); }
+  .status.failed{ background:#3a1414; color:var(--red); }
+  .status.grabbed{ background:#25314a; color:var(--accent); }
+  .muted { color:var(--muted); }
+  .row-actions button { padding:4px 10px; font-size:12px; }
+  #signin { text-align:center; padding:60px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&gt;a acquire</h1>
+  <span class="who" id="who"></span>
+</header>
+<main>
+  <div id="signin" style="display:none">
+    <p class="muted">Sign in to request and manage downloads.</p>
+    <button class="primary" onclick="login()">Sign in</button>
+  </div>
+  <div id="appui" style="display:none">
+    <div class="bar">
+      <input type="search" id="q" placeholder="Search a movie or show to request…" />
+      <button class="primary" onclick="doSearch()">Search</button>
+    </div>
+    <div id="results" class="grid"></div>
+    <h2>requests</h2>
+    <table>
+      <thead><tr><th>title</th><th>status</th><th>detail</th><th></th></tr></thead>
+      <tbody id="wanted"></tbody>
+    </table>
+  </div>
+</main>
+<script type="module">
+// Minimal OIDC Authorization-Code + PKCE, no dependencies.
+const enc = new TextEncoder();
+const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
+  .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+async function sha256(s){ return await crypto.subtle.digest('SHA-256', enc.encode(s)); }
+const rand = (n=64) => { const a=new Uint8Array(n); crypto.getRandomValues(a);
+  return Array.from(a,x=>('0'+(x&0xff).toString(16)).slice(-2)).join(''); };
+
+let CFG=null, TOKEN=null, ADMIN=false, SUB='';
+const base = location.pathname.replace(/\/[^/]*$/, '/'); // e.g. /acquire/
+const redirectUri = location.origin + base + 'callback';
+
+async function config(){
+  const r = await fetch('api/config'); return r.json();
+}
+async function login(){
+  const verifier = rand(); const challenge = b64url(await sha256(verifier));
+  const state = rand(16);
+  sessionStorage.setItem('acq_v', verifier); sessionStorage.setItem('acq_s', state);
+  const p = new URLSearchParams({
+    client_id: CFG.oidcClientId, redirect_uri: redirectUri, response_type: 'code',
+    scope: 'openid profile email', state, code_challenge: challenge, code_challenge_method: 'S256',
+  });
+  location.href = `${CFG.oidcIssuer}/protocol/openid-connect/auth?${p}`;
+}
+window.login = login;
+
+async function exchange(code){
+  const verifier = sessionStorage.getItem('acq_v');
+  const p = new URLSearchParams({
+    grant_type:'authorization_code', client_id:CFG.oidcClientId, code,
+    redirect_uri:redirectUri, code_verifier:verifier });
+  const r = await fetch(`${CFG.oidcIssuer}/protocol/openid-connect/token`,
+    { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:p });
+  if(!r.ok) throw new Error('token exchange failed');
+  return r.json();
+}
+function parseJwt(t){ try { return JSON.parse(atob(t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); } catch { return {}; } }
+
+async function api(path, opts={}){
+  opts.headers = Object.assign({'Authorization':'Bearer '+TOKEN}, opts.headers||{});
+  const r = await fetch('api/'+path, opts);
+  if(r.status===401){ login(); throw new Error('unauth'); }
+  return r;
+}
+
+async function doSearch(){
+  const q = document.getElementById('q').value.trim();
+  if(!q) return;
+  const hits = await (await api('discover?q='+encodeURIComponent(q))).json();
+  const el = document.getElementById('results'); el.innerHTML='';
+  for(const h of hits){
+    const card = document.createElement('div'); card.className='card';
+    card.innerHTML = `${h.posterUrl?`<img src="${h.posterUrl}" loading="lazy">`:`<div style="aspect-ratio:2/3;background:var(--surface2)"></div>`}
+      <div class="b"><div class="t">${escapeHtml(h.title)}</div>
+      <div class="y">${h.year||''} · ${h.mediaType}</div>
+      ${h.inLibrary?`<button disabled>in library</button>`:`<button class="primary">request</button>`}</div>`;
+    if(!h.inLibrary){
+      card.querySelector('button').onclick = () => request(h);
+    }
+    el.appendChild(card);
+  }
+}
+window.doSearch = doSearch;
+
+async function request(h){
+  await api('wanted', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ tmdbId:h.tmdbId, mediaType:h.mediaType, title:h.title, year:h.year, posterUrl:h.posterUrl }) });
+  loadWanted();
+}
+async function grab(id){
+  const src = prompt('Paste a magnet link or .torrent URL to grab:');
+  if(!src) return;
+  const r = await api('wanted/'+id+'/grab', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ source: src, adapter: 'qbittorrent' }) });
+  if(!r.ok) alert('grab failed: '+await r.text());
+}
+async function del(id){ if(confirm('Remove this request?')){ await api('wanted/'+id, {method:'DELETE'}); loadWanted(); } }
+window.grab = grab; window.del = del;
+
+function statusPill(s){ return `<span class="status ${s}">${s}</span>`; }
+function rowHtml(w){
+  const admin = ADMIN ? `<div class="row-actions">
+    ${['pending','failed'].includes(w.status)?`<button onclick="grab('${w.id}')">grab</button>`:''}
+    <button onclick="del('${w.id}')">remove</button></div>` : '';
+  return `<tr><td>${escapeHtml(w.title)} <span class="muted">${w.year||''}</span></td>
+    <td>${statusPill(w.status)}</td><td class="muted">${escapeHtml(w.detail||'')}</td><td>${admin}</td></tr>`;
+}
+async function loadWanted(){
+  const items = await (await api('wanted')).json();
+  document.getElementById('wanted').innerHTML = items.map(rowHtml).join('');
+}
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function liveStatus(){
+  try {
+    const es = new EventSource('api/events'); // note: bearer not sendable on EventSource; server allows same-session
+    es.addEventListener('wanted', () => loadWanted());
+    es.onerror = () => { es.close(); setTimeout(liveStatus, 5000); };
+  } catch {}
+}
+
+async function boot(){
+  CFG = await config();
+  const url = new URL(location.href);
+  if(url.searchParams.get('code')){
+    const tok = await exchange(url.searchParams.get('code'));
+    TOKEN = tok.access_token;
+    history.replaceState({}, '', base);
+  }
+  if(!TOKEN){ document.getElementById('signin').style.display='block'; return; }
+  const claims = parseJwt(TOKEN);
+  SUB = claims.sub||''; ADMIN = ((claims.realm_access||{}).roles||[]).includes(CFG.adminRole);
+  document.getElementById('who').textContent = (claims.preferred_username||claims.email||'') + (ADMIN?' · admin':'');
+  document.getElementById('appui').style.display='block';
+  const q0 = new URL(location.href).searchParams.get('q');
+  if(q0){ document.getElementById('q').value=q0; doSearch(); }
+  loadWanted(); liveStatus();
+}
+boot();
+</script>
+</body>
+</html>
