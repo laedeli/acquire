@@ -17,6 +17,7 @@ import (
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/httpapi"
 	"github.com/laedeli/acquire/internal/katalog"
+	"github.com/laedeli/acquire/internal/prowlarr"
 	"github.com/laedeli/acquire/internal/sse"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
@@ -38,9 +39,10 @@ func main() {
 	gw := gateway.New(cfg.GatewayURL, tokens)
 	kc := katalog.New(cfg.ManagerURL, cfg.KatalogURL, tokens)
 	tm := tmdb.New(cfg.TMDBAPIKey, cfg.TMDBLanguage)
+	pr := prowlarr.New(cfg.ProwlarrURL, cfg.ProwlarrAPIKey)
 	br := sse.New()
 
-	svc := app.New(cfg, st, gw, kc, tm, br.Notify)
+	svc := app.New(cfg, st, gw, kc, tm, pr, br.Notify)
 
 	// Kafka consumer (download.client.* + catalog.item.packaged → svc reactions).
 	if cons, err := events.NewConsumer(cfg.KafkaBrokers, cfg.KafkaCertDir, cfg.KafkaTopicPrefix, cfg.KafkaGroupID); err != nil {

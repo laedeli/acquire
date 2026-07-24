@@ -33,6 +33,11 @@ type Config struct {
 	TMDBAPIKey   string // TMDB_API_KEY
 	TMDBLanguage string // TMDB_LANGUAGE (default en-US)
 
+	// Prowlarr indexer search (our own instance). Blank -> auto-grab disabled.
+	ProwlarrURL    string // PROWLARR_URL (http://prowlarr:9696)
+	ProwlarrAPIKey string // PROWLARR_API_KEY
+	PreferUsenet   bool   // ACQUIRE_PREFER (default "usenet" -> NZB-first)
+
 	// Kafka (shared cluster, mTLS). Prefix is the tenant namespace.
 	KafkaBrokers     string // KAFKA_BROKERS
 	KafkaCertDir     string // KAFKA_CERT_DIR (user.crt/user.key/ca.crt)
@@ -82,6 +87,10 @@ func Load() Config {
 
 		TMDBAPIKey:   env("TMDB_API_KEY"),
 		TMDBLanguage: def("en-US", "TMDB_LANGUAGE"),
+
+		ProwlarrURL:    env("PROWLARR_URL"),
+		ProwlarrAPIKey: env("PROWLARR_API_KEY"),
+		PreferUsenet:   def("usenet", "ACQUIRE_PREFER") == "usenet",
 
 		KafkaBrokers:     env("KAFKA_BROKERS"),
 		KafkaCertDir:     def("/etc/kafka-cert", "KAFKA_CERT_DIR"),

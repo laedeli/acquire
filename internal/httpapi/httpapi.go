@@ -147,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 			"oidcIssuer":   s.cfg.OIDCIssuer,
 			"oidcClientId": s.cfg.OIDCClientID,
 			"adminRole":    s.cfg.AdminRole,
+			"autoGrab":     s.svc.AutoGrabEnabled(), // SPA shows "Find & grab" when true
 		})
 	})
 	r.Get("/readyz", func(w http.ResponseWriter, rq *http.Request) {
@@ -167,7 +168,8 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/wanted", s.listWanted)
 		r.Post("/api/wanted", s.createWanted)         // user role
 		r.Delete("/api/wanted/{id}", s.deleteWanted)  // admin
-		r.Post("/api/wanted/{id}/grab", s.grabWanted) // admin
+		r.Post("/api/wanted/{id}/grab", s.grabWanted)         // admin (manual magnet)
+		r.Post("/api/wanted/{id}/autograb", s.autograbWanted) // admin (search + best)
 		r.Get("/api/discover", s.discover)
 		r.Get("/api/status", s.status)
 	})
@@ -239,6 +241,19 @@ func (s *Server) grabWanted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "grabbed"})
+}
+
+// autograbWanted searches the indexers and grabs the best release (NZB-first).
+func (s *Server) autograbWanted(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	if err := s.svc.AutoGrab(r.Context(), chi.URLParam(r, "id")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "grabbing"})
 }
 
 func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
