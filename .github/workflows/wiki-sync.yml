@@ -28,9 +28,20 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install mermaid-cli (to bake diagrams the wiki can't render)
+        run: |
+          npm install -g @mermaid-js/mermaid-cli
+          echo '{"args":["--no-sandbox","--disable-gpu"]}' > "${RUNNER_TEMP}/puppeteer.json"
+
       - name: Build wiki from docs/ and push
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MMDC_ARGS: -p ${{ runner.temp }}/puppeteer.json
         run: |
           set -euo pipefail
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki
