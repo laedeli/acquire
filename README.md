@@ -9,28 +9,30 @@ acquisition UI.
 This is **v0.1** for zaentrum-beta. It is deliberately event-driven and reuses
 neutral core capabilities — it adds **no** download-specific code to the core.
 
-## Architecture (event-driven; commands REST at the edges)
+## Documentation
 
-```
-user (chino search miss)
-  → "request" (extension slot, kind=link → /acquire/?q=…)
-  → acquire SPA: TMDB discovery pick → POST /api/wanted   [command]
-  → admin grab: POST /api/wanted/{id}/grab                [command]
-      → download-gateway POST /api/v1/downloads (wanted_item_id)   [command]
-  → gateway emits zaentrum-beta.download.client.{started,progress,completed,failed}  [events]
-  → acquire consumes .completed:
-      • stage the finished video into packages/_inbox/<itemId>/
-      • create the catalog item (with the request's TMDB metadata) + source asset
-      • EMIT zaentrum-beta.catalog.item.discovered          [event → the pipeline]
-  → core pipeline: enrich → analyze → transcode → PACKAGE (packaged storage)  [events]
-  → acquire consumes .packaged → wanted = fulfilled
-  → live status to the SPA + chino slot via acquire's Kafka→SSE bridge         [events]
-```
+The full design docs live in [`docs/`](./docs) and are mirrored to this repo's
+**[Wiki](https://github.com/laedeli/acquire/wiki)**:
 
-The only non-events are the three genuine user/boundary **commands** (request,
-grab, gateway download-add) — matching the platform idiom (commands REST,
-reactions Kafka). Packaged storage is the durable serving artifact; the raw
-download in `_downloads`/`_inbox` is transient staging, cleaned after packaging.
+- [Architecture](./docs/architecture.md) — the two extension seams, the
+  event-driven loop, the neutral-core property.
+- [The acquire service](./docs/acquire.md) — request lifecycle, API, SPA, schema.
+- [Download gateway & clients](./docs/download-gateway.md) — the download plane.
+- [Indexer search & NZB-first](./docs/indexers-and-nzb.md) — how auto-grab chooses.
+- [Deploying the addon](./docs/deploying.md) — installing it on a platform.
+
+## Architecture in one paragraph
+
+A request becomes a **WantedItem**; an admin **grabs** it (manually, or via
+`find & grab` which searches your indexers NZB-first); acquire hands the source to
+the **download-gateway**, which drives your download clients and emits
+`download.client.*` events. acquire is **consume-only**: on `completed` it ingests
+the finished file *in place* via katalog-manager's neutral `POST /api/ingest`
+(which emits `catalog.item.discovered`), the core pipeline enriches → analyzes →
+transcodes → packages, and on `catalog.item.packaged` the request flips to
+**fulfilled** and plays in chino. Commands go over HTTP at the edges (request,
+grab, ingest); everything else is Kafka. See
+[Architecture](./docs/architecture.md) for the diagrams.
 
 ## What's authored (this tree, compiling backend pieces)
 
