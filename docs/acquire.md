@@ -85,18 +85,29 @@ authenticated. Clients read it with **fetch-streaming** rather than
 | `zaentrum-user` | `ACQUIRE_USER_ROLE` | request titles |
 | `zaentrum-admin` | `ACQUIRE_ADMIN_ROLE` | request **+** grab, auto-grab, remove |
 
-## The console (SPA)
+## The console
 
-The embedded SPA (OIDC Auth-Code + PKCE, no build step) offers:
+A Vite/React/TypeScript app on the nalet design system, built into the binary
+with `go:embed` (source in `web/`, one container — no nginx sidecar). Auth is
+`oidc-client-ts` Auth-Code + PKCE, so the session survives a reload and renews
+silently. **Realm roles come from the ACCESS token** — the ID-token profile
+oidc-client-ts exposes as `user.profile` carries none, so reading it makes every
+user look like a non-admin.
 
-- **Search & request** — search TMDB, request a hit (disabled when already in the
-  library).
-- **Requests table** — title · status pill · detail · actions.
-- **Admin row actions** —
-  - **find & grab** → `autograb` (shown only when `autoGrab` is configured and the
-    request is `pending`/`failed`); see [Indexer search & NZB-first](./indexers-and-nzb.md).
-  - **magnet** → prompts for a magnet/`.torrent` URL and grabs it via qBittorrent.
-  - **remove** → deletes the request.
+Tabs:
+
+- **requests** — status pill, chosen release, and a live progress bar with speed,
+  ETA and the client's own state inline. Admin actions per row: **find & grab**
+  (automatic pick), **releases** (interactive search — see below), **magnet**
+  (paste a magnet/`.torrent` URL), **remove**.
+- **downloads** — every client job with progress and telemetry, pause/resume/
+  cancel, under per-client health chips (speed, free disk, active news servers).
+- **discover** — TMDB search + request; in-library titles are marked.
+- **indexers** — what is searched and in which order.
+
+The **release picker** (`releases`) runs the same NZB-first search auto-grab uses
+but shows the ranked candidates — protocol, indexer, size, seeders and *why* each
+was ranked where it was — so an admin can override the automatic choice.
 - **Live progress** — each downloading request shows a progress bar with speed,
   ETA and the client's own state; a **downloads** table lists every job with
   per-client health chips and pause/resume/cancel.
