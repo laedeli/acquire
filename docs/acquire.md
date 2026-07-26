@@ -34,10 +34,13 @@ stateDiagram-v2
   failed, no video file in the completed download, or ingest error. The detail
   line carries the reason. `pending` and `failed` requests are re-grabbable.
 
-acquire reacts to three consumed events:
+acquire reacts to these consumed events:
 
+- `download.client.started` / `.progress` → record live telemetry (state, bytes,
+  speed, ETA, seeders/health) and stream it to the console.
 - `download.client.completed` → resolve the video file → `POST /api/ingest` →
-  `packaging`.
+  `packaging`. Idempotent: a repeat (e.g. after a gateway restart) is ignored
+  once the request has moved past the download.
 - `download.client.failed` → `failed` (with the client's error).
 - `catalog.item.packaged` → look up the request by item id → `fulfilled`.
 
@@ -57,7 +60,7 @@ dev (every caller is treated as admin).
 | `GET` | `/healthz` | public | liveness |
 | `GET` | `/readyz` | public | DB ping (503 when down) |
 | `GET` | `/api/config` | public | SPA bootstrap: issuer, client id, admin role, `autoGrab` flag |
-| `GET` | `/api/events` | public¹ | SSE change-ping stream |
+| `GET` | `/api/events` | any signed-in¹ | live stream: change pings + download telemetry |
 | `GET` | `/api/wanted` | any signed-in | list requests |
 | `POST` | `/api/wanted` | **user** or admin | create a request |
 | `GET` | `/api/discover?q=` | any signed-in | TMDB search, flags in-library hits |
@@ -65,11 +68,15 @@ dev (every caller is treated as admin).
 | `POST` | `/api/wanted/{id}/grab` | **admin** | hand a magnet/URL to a client |
 | `POST` | `/api/wanted/{id}/autograb` | **admin** | search indexers + grab the best release |
 | `DELETE` | `/api/wanted/{id}` | **admin** | remove a request |
+| `GET` | `/api/downloads` | any signed-in | live + recently finished downloads |
+| `GET` | `/api/clients` | any signed-in | per-client health + aggregate speed |
+| `POST` | `/api/downloads/{adapter}/{id}/{action}` | **admin** | `pause` \| `resume` \| `cancel` |
 | `GET` | `/*` | public | the embedded SPA |
 
-¹ The SSE stream is public because `EventSource` can't send a bearer; it carries
-**no data** — it's just a “something changed, refetch” ping, and clients refetch
-the authenticated list.
+¹ The stream carries download telemetry (progress, speed, ETA), so it is
+authenticated. Clients read it with **fetch-streaming** rather than
+`EventSource`, which cannot send an `Authorization` header. It emits `changed`
+(refetch the lists) and `download` (one telemetry row, applied in place).
 
 ### Roles
 
@@ -90,7 +97,11 @@ The embedded SPA (OIDC Auth-Code + PKCE, no build step) offers:
     request is `pending`/`failed`); see [Indexer search & NZB-first](./indexers-and-nzb.md).
   - **magnet** → prompts for a magnet/`.torrent` URL and grabs it via qBittorrent.
   - **remove** → deletes the request.
-- **Live updates** — the SPA subscribes to `/api/events` and refetches on a ping.
+- **Live progress** — each downloading request shows a progress bar with speed,
+  ETA and the client's own state; a **downloads** table lists every job with
+  per-client health chips and pause/resume/cancel.
+- **Live updates** — the SPA reads `/api/events` with fetch-streaming, applying
+  `download` rows in place and refetching on a `changed` ping (30s fallback poll).
 
 ## Storage
 
@@ -101,10 +112,17 @@ acquire owns a small Postgres schema (applied on boot, idempotent):
 `detail` (last status message), `item_id` (catalog id once created), `updated_at`.
 
 **`grabs`** — `wanted_id` (FK, cascade), `adapter`, `client_job_id`, `source`,
-`created_at`; PK `(wanted_id, adapter, client_job_id)`. An audit trail of what was
-handed to which client. (Completed/failed events actually map back to a request
-via the `wanted_item_id` echoed in the gateway's event payload — not via this
-table; a `client_job_id → wanted` lookup exists but is currently unused.)
+plus the release that won (`release_title`, `indexer`, `protocol`, `size_bytes`,
+`seeders`, `reason`); PK `(wanted_id, adapter, client_job_id)`. Terminal events
+normally map back via the `wanted_item_id` the gateway echoes; this table is the
+fallback when a restarted gateway no longer knows it.
+
+**`downloads`** — one row per client job (`adapter` + `client_job_id`): state,
+the client's native state, bytes, speed, ETA, seeders/health, timestamps. This is
+a *projection* of the clients' state, so `wanted_id` is a soft reference — a
+download whose request was deleted simply loses the link. Terminal rows keep the
+telemetry the progress stream accumulated, and are never resurrected by a late
+progress message.
 
 ## Configuration
 

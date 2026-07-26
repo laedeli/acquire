@@ -258,6 +258,13 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 	if err != nil {
 		return nil
 	}
+	// Completed can legitimately arrive twice — e.g. the gateway restarts and
+	// re-adopts a job, or a client re-reports history. Ingest is idempotent on
+	// the path, but re-running it would knock a fulfilled request back to
+	// "packaging", so stop here once the request has moved past the download.
+	if w.Status == "packaging" || w.Status == "fulfilled" {
+		return nil
+	}
 	video := katalog.ResolveVideo(ev.Files)
 	if video == "" {
 		s.setStatus(ctx, w.ID, "failed", "no video file in the completed download")
@@ -356,11 +363,14 @@ func (s *Service) saveDownload(ctx context.Context, ev events.DownloadEvent, sta
 	if ev.SizeBytes != nil {
 		d.BytesTotal = *ev.SizeBytes
 	}
-	if err := s.st.UpsertDownload(ctx, d); err != nil {
+	// Publish the MERGED row, not the sparse event: a terminal event carries
+	// almost no telemetry, and the store is what reconciles the two.
+	merged, err := s.st.UpsertDownload(ctx, d)
+	if err != nil {
 		log.Printf("acquire: upsert download %s/%s: %v", ev.Adapter, ev.ClientID, err)
 		return nil
 	}
-	s.publish("download", d)
+	s.publish("download", merged)
 	return nil
 }
 
