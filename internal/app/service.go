@@ -7,6 +7,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -21,18 +22,37 @@ import (
 	"github.com/laedeli/acquire/internal/tmdb"
 )
 
-type Service struct {
-	cfg    config.Config
-	st     *store.Store
-	gw     *gateway.Client
-	kc     *katalog.Client
-	tm     *tmdb.Client
-	pr     *prowlarr.Client
-	notify func() // sse ping
+// Bus is the live channel to connected consoles: a payload-free ping to refetch
+// lists, and typed events for high-frequency telemetry (download progress).
+type Bus interface {
+	Notify()
+	Publish(name string, data any)
 }
 
-func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, notify func()) *Service {
-	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, notify: notify}
+type Service struct {
+	cfg config.Config
+	st  *store.Store
+	gw  *gateway.Client
+	kc  *katalog.Client
+	tm  *tmdb.Client
+	pr  *prowlarr.Client
+	bus Bus
+}
+
+func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, bus Bus) *Service {
+	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, bus: bus}
+}
+
+func (s *Service) notify() {
+	if s.bus != nil {
+		s.bus.Notify()
+	}
+}
+
+func (s *Service) publish(name string, data any) {
+	if s.bus != nil {
+		s.bus.Publish(name, data)
+	}
 }
 
 // AutoGrabEnabled reports whether Prowlarr search is configured.
@@ -158,14 +178,38 @@ func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 		s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())
 		return err
 	}
-	_ = s.st.RecordGrab(ctx, wantedID, adapter, res.ClientJobID, best.Source())
 	proto := "NZB"
 	if !best.IsUsenet() {
 		proto = "torrent"
 	}
+	// Keep the release itself, not just its URL: the console shows what won and
+	// the search results are gone by the time anyone looks.
+	var seeders *int32
+	if !best.IsUsenet() {
+		n := int32(best.Seeders)
+		seeders = &n
+	}
+	_ = s.st.RecordGrabRelease(ctx, store.Grab{
+		WantedID: wantedID, Adapter: adapter, ClientJobID: res.ClientJobID,
+		Source: best.Source(), ReleaseTitle: best.Title, Indexer: best.Indexer,
+		Protocol: best.Protocol, SizeBytes: best.Size, Seeders: seeders,
+		Reason: rankReason(best, s.cfg.PreferUsenet),
+	})
 	s.setStatus(ctx, wantedID, "downloading",
 		"grabbed "+proto+" from "+best.Indexer+" via "+adapter)
 	return nil
+}
+
+// rankReason explains in one line why this release was picked, so the console
+// can show it next to the choice.
+func rankReason(r prowlarr.Release, preferUsenet bool) string {
+	if r.IsUsenet() {
+		if preferUsenet {
+			return "NZB preferred; largest usenet release on " + r.Indexer
+		}
+		return "usenet release on " + r.Indexer
+	}
+	return "most seeded torrent on " + r.Indexer + " (" + itoa(r.Seeders) + " seeders)"
 }
 
 // Discover proxies a TMDB multi-search, flagging in-library hits.
@@ -198,10 +242,19 @@ type DiscoverHit struct {
 // OnCompleted: the download finished. Resolve the video file, ingest it into the
 // catalog (item + primary asset + discovered → pipeline), and mark packaging.
 func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) error {
-	if ev.WantedID == "" {
+	// Record the terminal download state first — this is true whether or not the
+	// job belongs to a request we know about.
+	_ = s.saveDownload(ctx, ev, "completed")
+	wantedID := ev.WantedID
+	if wantedID == "" {
+		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
+			wantedID = id
+		}
+	}
+	if wantedID == "" {
 		return nil // not one of ours
 	}
-	w, err := s.st.GetWanted(ctx, ev.WantedID)
+	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
 		return nil
 	}
@@ -233,14 +286,21 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 
 // OnFailed: the download failed.
 func (s *Service) OnFailed(ctx context.Context, ev events.DownloadEvent) error {
-	if ev.WantedID == "" {
+	_ = s.saveDownload(ctx, ev, "failed")
+	wantedID := ev.WantedID
+	if wantedID == "" {
+		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
+			wantedID = id
+		}
+	}
+	if wantedID == "" {
 		return nil
 	}
 	detail := ev.Error
 	if detail == "" {
 		detail = "download failed"
 	}
-	s.setStatus(ctx, ev.WantedID, "failed", detail)
+	s.setStatus(ctx, wantedID, "failed", detail)
 	return nil
 }
 
@@ -257,9 +317,114 @@ func (s *Service) OnPackaged(ctx context.Context, ev events.ItemEvent) error {
 	return nil
 }
 
+// OnStarted / OnProgress record download telemetry. The gateway emits progress
+// every few seconds; we persist the latest snapshot and push it straight to the
+// console so a progress bar moves without refetching anything.
+func (s *Service) OnStarted(ctx context.Context, ev events.DownloadEvent) error {
+	return s.saveDownload(ctx, ev, "queued")
+}
+
+func (s *Service) OnProgress(ctx context.Context, ev events.DownloadEvent) error {
+	state := ev.State
+	if state == "" {
+		state = "downloading"
+	}
+	return s.saveDownload(ctx, ev, state)
+}
+
+// saveDownload upserts one client job's telemetry and streams it to subscribers.
+func (s *Service) saveDownload(ctx context.Context, ev events.DownloadEvent, state string) error {
+	if ev.Adapter == "" || ev.ClientID == "" {
+		return nil
+	}
+	wantedID := ev.WantedID
+	if wantedID == "" {
+		// A job the gateway adopted after a restart has no wanted id; recover it
+		// from our own grab record.
+		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
+			wantedID = id
+		}
+	}
+	d := store.Download{
+		Adapter: ev.Adapter, ClientJobID: ev.ClientID, WantedID: wantedID,
+		Title: ev.Title, State: state, NativeState: ev.NativeState,
+		ProgressPct: ev.ProgressPct, BytesDone: ev.Downloaded,
+		SpeedBps: ev.SpeedBps, EtaSec: ev.EtaSec,
+		Seeders: ev.Seeders, Leechers: ev.Leechers, Health: ev.Health,
+		Error: ev.Error,
+	}
+	if ev.SizeBytes != nil {
+		d.BytesTotal = *ev.SizeBytes
+	}
+	if err := s.st.UpsertDownload(ctx, d); err != nil {
+		log.Printf("acquire: upsert download %s/%s: %v", ev.Adapter, ev.ClientID, err)
+		return nil
+	}
+	s.publish("download", d)
+	return nil
+}
+
+// Downloads lists current + recently finished downloads.
+func (s *Service) Downloads(ctx context.Context, limit int) ([]store.Download, error) {
+	return s.st.ListDownloads(ctx, limit)
+}
+
+// ClientsStatus proxies the gateway's per-client health/speed.
+func (s *Service) ClientsStatus(ctx context.Context) ([]gateway.ClientStatus, error) {
+	return s.gw.ClientsStatus(ctx)
+}
+
+// ControlDownload cancels, pauses or resumes a client job.
+func (s *Service) ControlDownload(ctx context.Context, adapter, jobID, action string) error {
+	switch action {
+	case "pause":
+		return s.gw.Pause(ctx, adapter, jobID)
+	case "resume":
+		return s.gw.Resume(ctx, adapter, jobID)
+	case "cancel":
+		if err := s.gw.Cancel(ctx, adapter, jobID); err != nil {
+			return err
+		}
+		if err := s.st.DeleteDownload(ctx, adapter, jobID); err != nil {
+			return err
+		}
+		s.notify()
+		return nil
+	}
+	return fmt.Errorf("unknown action %q", action)
+}
+
+// Reconcile re-syncs from the gateway at boot. The Kafka consumer starts at the
+// latest offset, so downloads that started (or finished) while acquire was down
+// would otherwise be invisible until their next progress tick.
+func (s *Service) Reconcile(ctx context.Context) {
+	if !s.gw.Enabled() {
+		return
+	}
+	jobs, err := s.gw.List(ctx)
+	if err != nil {
+		log.Printf("acquire: reconcile downloads: %v", err)
+		return
+	}
+	for _, j := range jobs {
+		_ = s.saveDownload(ctx, events.DownloadEvent{
+			ClientID: j.ClientJobID, Adapter: j.Adapter, WantedID: j.WantedItemID,
+			Title: j.Title, State: j.State, NativeState: j.NativeState,
+			ProgressPct: j.ProgressPct, Downloaded: j.Downloaded, SizeBytes: j.SizeBytes,
+			SpeedBps: j.SpeedBps, EtaSec: j.EtaSec,
+			Seeders: j.Seeders, Leechers: j.Leechers, Health: j.Health,
+		}, j.State)
+	}
+	if len(jobs) > 0 {
+		log.Printf("acquire: reconciled %d in-flight download(s) from the gateway", len(jobs))
+	}
+}
+
 // Handlers returns the consumer callback set bound to this service.
 func (s *Service) Handlers() events.Handlers {
 	return events.Handlers{
+		OnStarted:   s.OnStarted,
+		OnProgress:  s.OnProgress,
 		OnCompleted: s.OnCompleted,
 		OnFailed:    s.OnFailed,
 		OnPackaged:  s.OnPackaged,

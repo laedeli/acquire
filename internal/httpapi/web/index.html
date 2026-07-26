@@ -46,9 +46,20 @@
   .status.fulfilled{ background:#12351f; color:var(--green); }
   .status.failed{ background:#3a1414; color:var(--red); }
   .status.grabbed{ background:#25314a; color:var(--accent); }
+  .status.queued{ background:#25314a; color:var(--accent); }
+  .status.completed{ background:#12351f; color:var(--green); }
   .muted { color:var(--muted); }
+  .small { font-size:11px; margin-top:3px; }
   .row-actions button { padding:4px 10px; font-size:12px; }
   #signin { text-align:center; padding:60px; }
+  /* Square progress bar: accent fill on a border-coloured track. */
+  .pbar { height:6px; background:var(--surface2); border:1px solid var(--border); min-width:120px; }
+  .pbar-fill { height:100%; background:var(--accent); transition:width .4s linear; }
+  .chips { display:inline-flex; gap:6px; flex-wrap:wrap; margin-left:10px; vertical-align:middle; }
+  .chip { font-size:11px; padding:2px 8px; border:1px solid var(--border);
+          background:var(--surface2); color:var(--muted); font-weight:400; }
+  .chip.ok { border-color:#1d3a26; color:var(--green); }
+  .chip.bad { border-color:#3a1414; color:var(--red); }
 </style>
 </head>
 <body>
@@ -71,6 +82,11 @@
     <table>
       <thead><tr><th>title</th><th>status</th><th>detail</th><th></th></tr></thead>
       <tbody id="wanted"></tbody>
+    </table>
+    <h2>downloads <span id="clients" class="chips"></span></h2>
+    <table>
+      <thead><tr><th>title</th><th>state</th><th>progress</th><th></th></tr></thead>
+      <tbody id="downloads"></tbody>
     </table>
   </div>
 </main>
@@ -128,7 +144,7 @@ async function doSearch(){
   const el = document.getElementById('results'); el.innerHTML='';
   for(const h of hits){
     const card = document.createElement('div'); card.className='card';
-    card.innerHTML = `${h.posterUrl?`<img src="${h.posterUrl}" loading="lazy">`:`<div style="aspect-ratio:2/3;background:var(--surface2)"></div>`}
+    card.innerHTML = `${h.posterUrl?`<img src="${escapeAttr(h.posterUrl)}" loading="lazy">`:`<div style="aspect-ratio:2/3;background:var(--surface2)"></div>`}
       <div class="b"><div class="t">${escapeHtml(h.title)}</div>
       <div class="y">${h.year||''} · ${h.mediaType}</div>
       ${h.inLibrary?`<button disabled>in library</button>`:`<button class="primary">request</button>`}</div>`;
@@ -162,33 +178,163 @@ async function del(id){ if(confirm('Remove this request?')){ await api('wanted/'
 window.grab = grab; window.autograb = autograb; window.del = del;
 
 function statusPill(s){ return `<span class="status ${s}">${s}</span>`; }
+
+// ── formatting helpers ──────────────────────────────────────────────────────
+function fmtBytes(n){
+  if(!n || n<=0) return '';
+  const u=['B','KB','MB','GB','TB']; let i=0, v=n;
+  while(v>=1024 && i<u.length-1){ v/=1024; i++; }
+  return (v>=10||i===0? Math.round(v) : v.toFixed(1))+' '+u[i];
+}
+function fmtSpeed(bps){ return bps>0 ? fmtBytes(bps)+'/s' : ''; }
+function fmtEta(sec){
+  if(sec==null || sec<0) return '';
+  if(sec<60) return sec+'s';
+  if(sec<3600) return Math.round(sec/60)+'m';
+  return Math.floor(sec/3600)+'h '+Math.round(sec%3600/60)+'m';
+}
+// Square, accent-filled bar — the house progress convention.
+function progressBar(pct){
+  const p = Math.max(0, Math.min(100, pct||0));
+  return `<div class="pbar"><div class="pbar-fill" style="width:${p.toFixed(1)}%"></div></div>`;
+}
+
+// DOWNLOADS is keyed "adapter:client_job_id" and updated in place from the
+// event stream, so a progress bar moves without refetching the whole list.
+let DOWNLOADS = new Map();
+function dlKey(d){ return d.adapter+':'+d.clientJobId; }
+function activeFor(wantedId){
+  for(const d of DOWNLOADS.values()){
+    if(d.wantedId===wantedId && (d.state==='downloading'||d.state==='queued')) return d;
+  }
+  return null;
+}
+
 function rowHtml(w){
   const grabbable = ['pending','failed'].includes(w.status);
   const admin = ADMIN ? `<div class="row-actions">
     ${grabbable && CFG.autoGrab ? `<button class="primary" onclick="autograb('${w.id}')">find &amp; grab</button>` : ''}
     ${grabbable ? `<button onclick="grab('${w.id}')">magnet</button>` : ''}
     <button onclick="del('${w.id}')">remove</button></div>` : '';
+  const d = activeFor(w.id);
+  const live = d ? `${progressBar(d.progressPct)}
+    <div class="muted small">${d.progressPct.toFixed(0)}% · ${fmtBytes(d.bytesDone)}${d.bytesTotal?' / '+fmtBytes(d.bytesTotal):''}
+    ${fmtSpeed(d.speedBps)?' · '+fmtSpeed(d.speedBps):''}${fmtEta(d.etaSec)?' · '+fmtEta(d.etaSec)+' left':''}
+    ${d.nativeState?' · '+escapeHtml(d.nativeState):''}</div>` : '';
   return `<tr><td>${escapeHtml(w.title)} <span class="muted">${w.year||''}</span></td>
-    <td>${statusPill(w.status)}</td><td class="muted">${escapeHtml(w.detail||'')}</td><td>${admin}</td></tr>`;
+    <td>${statusPill(w.status)}</td>
+    <td class="muted">${escapeHtml(w.detail||'')}${live}</td><td>${admin}</td></tr>`;
 }
 async function loadWanted(){
   const items = await (await api('wanted')).json();
   document.getElementById('wanted').innerHTML = items.map(rowHtml).join('');
 }
-function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-function liveStatus(){
-  try {
-    const es = new EventSource('api/events'); // note: bearer not sendable on EventSource; server allows same-session
-    es.addEventListener('wanted', () => loadWanted());
-    es.onerror = () => { es.close(); setTimeout(liveStatus, 5000); };
-  } catch {}
+function dlRowHtml(d){
+  const ctl = ADMIN ? `<div class="row-actions">
+    ${d.state==='downloading'||d.state==='queued' ? `<button onclick="dlctl('${d.adapter}','${d.clientJobId}','pause')">pause</button>
+      <button onclick="dlctl('${d.adapter}','${d.clientJobId}','resume')">resume</button>` : ''}
+    <button onclick="dlctl('${d.adapter}','${d.clientJobId}','cancel')">cancel</button></div>` : '';
+  const peers = d.seeders!=null ? ` · ${d.seeders} seeds` : (d.health!=null ? ` · health ${(d.health/10).toFixed(0)}%` : '');
+  return `<tr><td>${escapeHtml(d.title||d.clientJobId)}<div class="muted small">${escapeHtml(d.adapter)}${peers}</div></td>
+    <td>${statusPill(d.state)}<div class="muted small">${escapeHtml(d.nativeState||'')}</div></td>
+    <td>${progressBar(d.progressPct)}<div class="muted small">${d.progressPct.toFixed(0)}% · ${fmtBytes(d.bytesDone)}${d.bytesTotal?' / '+fmtBytes(d.bytesTotal):''}${fmtSpeed(d.speedBps)?' · '+fmtSpeed(d.speedBps):''}${fmtEta(d.etaSec)?' · '+fmtEta(d.etaSec)+' left':''}</div></td>
+    <td>${ctl}</td></tr>`;
+}
+function renderDownloads(){
+  const rows = [...DOWNLOADS.values()].sort((a,b)=>{
+    const act = s => (s==='downloading'||s==='queued') ? 0 : 1;
+    return act(a.state)-act(b.state) || (b.updatedAt||'').localeCompare(a.updatedAt||'');
+  });
+  document.getElementById('downloads').innerHTML = rows.map(dlRowHtml).join('')
+    || `<tr><td colspan="4" class="muted">no downloads yet.</td></tr>`;
+}
+async function loadDownloads(){
+  const items = await (await api('downloads')).json();
+  DOWNLOADS = new Map(items.map(d => [dlKey(d), d]));
+  renderDownloads();
+}
+async function loadClients(){
+  const items = await (await api('clients')).json();
+  document.getElementById('clients').innerHTML = items.map(c => {
+    const bits = [];
+    if(c.down_bps>0) bits.push('↓ '+fmtSpeed(c.down_bps));
+    if(c.free_disk_bytes) bits.push(fmtBytes(c.free_disk_bytes)+' free');
+    for(const k in (c.detail||{})) bits.push(escapeHtml(c.detail[k]));
+    if(c.paused) bits.push('paused');
+    return `<span class="chip ${c.reachable?'ok':'bad'}">${escapeHtml(c.name)}${bits.length?' · '+bits.join(' · '):''}</span>`;
+  }).join('');
+}
+async function dlctl(adapter, id, action){
+  if(action==='cancel' && !confirm('Cancel this download?')) return;
+  await api(`downloads/${encodeURIComponent(adapter)}/${encodeURIComponent(id)}/${action}`, {method:'POST'});
+  loadDownloads();
+}
+window.dlctl = dlctl;
+
+function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// Attribute values additionally must not carry a javascript:/data: scheme.
+function escapeAttr(s){
+  const v = String(s||'');
+  return /^https?:\/\//i.test(v) ? escapeHtml(v) : '';
+}
+
+// The stream is authenticated, so it is read with fetch-streaming (EventSource
+// cannot send a bearer). "changed" means refetch the lists; "download" carries a
+// telemetry row we apply in place. A fallback poll covers a dropped stream.
+async function liveStatus(){
+  let attempt = 0;
+  for(;;){
+    try {
+      const r = await fetch('api/events', {
+        headers: {'Authorization':'Bearer '+TOKEN, 'Accept':'text/event-stream'},
+      });
+      if(!r.ok || !r.body) throw new Error('stream '+r.status);
+      attempt = 0;
+      const reader = r.body.getReader(); const dec = new TextDecoder(); let buf='';
+      for(;;){
+        const {value, done} = await reader.read();
+        if(done) break;
+        buf += dec.decode(value, {stream:true});
+        let i;
+        while((i = buf.indexOf('\n\n')) >= 0){
+          const frame = buf.slice(0, i); buf = buf.slice(i+2);
+          let name='message', data='';
+          for(const line of frame.split('\n')){
+            if(line.startsWith('event: ')) name = line.slice(7).trim();
+            else if(line.startsWith('data: ')) data += line.slice(6);
+          }
+          if(name==='download'){
+            try {
+              const d = JSON.parse(data);
+              DOWNLOADS.set(dlKey(d), d);
+              renderDownloads(); loadWanted();
+            } catch {}
+          } else if(name==='changed'){
+            loadWanted(); loadDownloads();
+          }
+        }
+      }
+    } catch {}
+    // Reconnect with backoff, then resync what we missed.
+    const wait = Math.min(30000, 1000 * 2 ** Math.min(attempt++, 5));
+    await new Promise(res => setTimeout(res, wait));
+    try { await loadWanted(); await loadDownloads(); } catch {}
+  }
 }
 
 async function boot(){
   CFG = await config();
   const url = new URL(location.href);
   if(url.searchParams.get('code')){
+    // Validate the CSRF state before exchanging the code.
+    const expect = sessionStorage.getItem('acq_s');
+    if(!expect || url.searchParams.get('state') !== expect){
+      history.replaceState({}, '', base);
+      document.getElementById('signin').style.display='block';
+      return;
+    }
+    sessionStorage.removeItem('acq_s');
     const tok = await exchange(url.searchParams.get('code'));
     TOKEN = tok.access_token;
     history.replaceState({}, '', base);
@@ -200,7 +346,9 @@ async function boot(){
   document.getElementById('appui').style.display='block';
   const q0 = new URL(location.href).searchParams.get('q');
   if(q0){ document.getElementById('q').value=q0; doSearch(); }
-  loadWanted(); liveStatus();
+  loadWanted(); loadDownloads(); loadClients(); liveStatus();
+  // Fallback poll — the live stream is the primary trigger.
+  setInterval(() => { loadDownloads(); loadClients(); }, 30000);
 }
 boot();
 </script>

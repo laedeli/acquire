@@ -61,7 +61,8 @@ func (v *Verifier) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !v.enabled() {
 			// Auth disabled (dev) — treat as an admin so the flow works locally.
-			ctx := context.WithValue(r.Context(), roleKey, []string{})
+			ctx := context.WithValue(r.Context(), devBypassCtxKey{}, true)
+			ctx = context.WithValue(ctx, roleKey, []string{})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -103,16 +104,18 @@ func subFrom(ctx context.Context) string {
 	}
 	return ""
 }
+
+// devBypassKey marks a request that skipped verification because no issuer is
+// configured (local development). It is the ONLY thing that grants a role for
+// free — a real token with an empty realm_access.roles must not be treated as
+// an admin, which is what keying off len(roles)==0 used to do.
+type devBypassCtxKey struct{}
+
 func hasRole(ctx context.Context, role string) bool {
-	// Auth-disabled dev path stores an empty slice → allow.
-	rs := rolesFrom(ctx)
-	if rs == nil {
-		return false
+	if v, _ := ctx.Value(devBypassCtxKey{}).(bool); v {
+		return true // auth disabled (no OIDC_ISSUER): local dev only
 	}
-	if len(rs) == 0 {
-		return true
-	}
-	for _, r := range rs {
+	for _, r := range rolesFrom(ctx) {
 		if r == role {
 			return true
 		}
@@ -158,20 +161,22 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]string{"status": "ready"})
 	})
 
-	// Payload-free change ping — public (EventSource can't send a bearer; the
-	// stream carries no data, clients refetch the authed list on it).
-	r.Get("/api/events", s.br.Handler)
-
-	// Authenticated API.
+	// Authenticated API. The event stream is in here too: it now carries download
+	// telemetry, so it is read with fetch-streaming (which can send a bearer)
+	// rather than EventSource.
 	r.Group(func(r chi.Router) {
 		r.Use(s.ver.middleware)
+		r.Get("/api/events", s.br.Handler)
 		r.Get("/api/wanted", s.listWanted)
-		r.Post("/api/wanted", s.createWanted)         // user role
-		r.Delete("/api/wanted/{id}", s.deleteWanted)  // admin
+		r.Post("/api/wanted", s.createWanted)                 // user role
+		r.Delete("/api/wanted/{id}", s.deleteWanted)          // admin
 		r.Post("/api/wanted/{id}/grab", s.grabWanted)         // admin (manual magnet)
 		r.Post("/api/wanted/{id}/autograb", s.autograbWanted) // admin (search + best)
 		r.Get("/api/discover", s.discover)
 		r.Get("/api/status", s.status)
+		r.Get("/api/downloads", s.listDownloads)
+		r.Get("/api/clients", s.listClients)
+		r.Post("/api/downloads/{adapter}/{id}/{action}", s.controlDownload) // admin
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
@@ -179,6 +184,48 @@ func (s *Server) Handler() http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 	r.Handle("/*", spaFallback(sub, fileServer))
 	return r
+}
+
+// listDownloads returns live + recently finished downloads.
+func (s *Server) listDownloads(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.Downloads(r.Context(), 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, items)
+}
+
+// listClients reports per-download-client health and aggregate speed. Best
+// effort: an unreachable gateway yields an empty list, not an error page.
+func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
+	items, err := s.svc.ClientsStatus(r.Context())
+	if err != nil {
+		writeJSON(w, 200, []any{})
+		return
+	}
+	writeJSON(w, 200, items)
+}
+
+// controlDownload pauses, resumes or cancels a client job (admin only).
+func (s *Server) controlDownload(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	action := chi.URLParam(r, "action")
+	switch action {
+	case "pause", "resume", "cancel":
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	err := s.svc.ControlDownload(r.Context(), chi.URLParam(r, "adapter"), chi.URLParam(r, "id"), action)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": action})
 }
 
 func (s *Server) listWanted(w http.ResponseWriter, r *http.Request) {

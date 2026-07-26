@@ -3,17 +3,18 @@ package store
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-//go:embed schema.sql
-var schema string
+//go:embed migrations/*.sql
+var migrationFS embed.FS
 
 var ErrNotFound = errors.New("not found")
 
@@ -29,11 +30,39 @@ func New(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	s := &Store{pool: pool}
-	if _, err := pool.Exec(ctx, schema); err != nil {
+	if err := migrate(ctx, pool); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, err
 	}
 	return s, nil
+}
+
+// migrate applies every embedded migration in name order, on every boot. Each
+// file must be idempotent (CREATE/ALTER ... IF NOT EXISTS) — that keeps a
+// re-run harmless and means a fresh database and an existing one converge on
+// the same schema without a version table to drift out of sync.
+func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		return fmt.Errorf("read migrations: %w", err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		body, err := migrationFS.ReadFile("migrations/" + name)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", name, err)
+		}
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
+			return fmt.Errorf("apply %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() {
@@ -176,8 +205,161 @@ func (s *Store) FindWantedByClientJob(ctx context.Context, clientJobID string) (
 }
 
 func (s *Store) RecordGrab(ctx context.Context, wantedID, adapter, clientJobID, source string) error {
+	return s.RecordGrabRelease(ctx, Grab{
+		WantedID: wantedID, Adapter: adapter, ClientJobID: clientJobID, Source: source,
+	})
+}
+
+// Grab is one hand-off of a release to a download client, including which
+// release won so the console can show it long after the search is gone.
+type Grab struct {
+	WantedID     string    `json:"wantedId"`
+	Adapter      string    `json:"adapter"`
+	ClientJobID  string    `json:"clientJobId"`
+	Source       string    `json:"source"`
+	ReleaseTitle string    `json:"releaseTitle"`
+	Indexer      string    `json:"indexer"`
+	Protocol     string    `json:"protocol"`
+	SizeBytes    int64     `json:"sizeBytes"`
+	Seeders      *int32    `json:"seeders"`
+	Reason       string    `json:"reason"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// RecordGrabRelease stores the grab together with the chosen release.
+func (s *Store) RecordGrabRelease(ctx context.Context, g Grab) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO grabs (wanted_id, adapter, client_job_id, source) VALUES ($1,$2,$3,$4)
-		 ON CONFLICT DO NOTHING`, wantedID, adapter, clientJobID, source)
+		`INSERT INTO grabs (wanted_id, adapter, client_job_id, source,
+		                    release_title, indexer, protocol, size_bytes, seeders, reason)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		 ON CONFLICT DO NOTHING`,
+		g.WantedID, g.Adapter, g.ClientJobID, g.Source,
+		g.ReleaseTitle, g.Indexer, g.Protocol, g.SizeBytes, g.Seeders, g.Reason)
+	return err
+}
+
+// LatestGrab returns the most recent grab for a request (the release the user
+// is currently waiting on), or ErrNotFound.
+func (s *Store) LatestGrab(ctx context.Context, wantedID string) (Grab, error) {
+	var g Grab
+	err := s.pool.QueryRow(ctx,
+		`SELECT wanted_id, adapter, client_job_id, source, release_title, indexer,
+		        protocol, size_bytes, seeders, reason, created_at
+		   FROM grabs WHERE wanted_id=$1 ORDER BY created_at DESC LIMIT 1`, wantedID).
+		Scan(&g.WantedID, &g.Adapter, &g.ClientJobID, &g.Source, &g.ReleaseTitle, &g.Indexer,
+			&g.Protocol, &g.SizeBytes, &g.Seeders, &g.Reason, &g.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Grab{}, ErrNotFound
+	}
+	return g, err
+}
+
+// Download is the live (or final) state of one client job.
+type Download struct {
+	Adapter     string     `json:"adapter"`
+	ClientJobID string     `json:"clientJobId"`
+	WantedID    string     `json:"wantedId"`
+	Title       string     `json:"title"`
+	State       string     `json:"state"`
+	NativeState string     `json:"nativeState"`
+	ProgressPct float64    `json:"progressPct"`
+	BytesDone   int64      `json:"bytesDone"`
+	BytesTotal  int64      `json:"bytesTotal"`
+	SpeedBps    int64      `json:"speedBps"`
+	EtaSec      *int32     `json:"etaSec"`
+	Seeders     *int32     `json:"seeders"`
+	Leechers    *int32     `json:"leechers"`
+	Health      *int32     `json:"health"`
+	Error       string     `json:"error"`
+	StartedAt   time.Time  `json:"startedAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+	FinishedAt  *time.Time `json:"finishedAt"`
+}
+
+// UpsertDownload records the newest telemetry for a client job. wanted_id is
+// only overwritten when the caller actually knows it — after a gateway restart
+// the adopted job has no wanted id, and we must not erase the one we had.
+func (s *Store) UpsertDownload(ctx context.Context, d Download) error {
+	terminal := d.State == "completed" || d.State == "failed"
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO downloads (adapter, client_job_id, wanted_id, title, state, native_state,
+		                        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
+		                        seeders, leechers, health, error, updated_at, finished_at)
+		 VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),
+		         CASE WHEN $16 THEN now() ELSE NULL END)
+		 ON CONFLICT (adapter, client_job_id) DO UPDATE SET
+		   wanted_id   = COALESCE(NULLIF(EXCLUDED.wanted_id,''), downloads.wanted_id),
+		   title       = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE downloads.title END,
+		   state       = EXCLUDED.state,
+		   native_state= EXCLUDED.native_state,
+		   progress_pct= EXCLUDED.progress_pct,
+		   bytes_done  = EXCLUDED.bytes_done,
+		   bytes_total = EXCLUDED.bytes_total,
+		   speed_bps   = EXCLUDED.speed_bps,
+		   eta_sec     = EXCLUDED.eta_sec,
+		   seeders     = EXCLUDED.seeders,
+		   leechers    = EXCLUDED.leechers,
+		   health      = EXCLUDED.health,
+		   error       = CASE WHEN EXCLUDED.error <> '' THEN EXCLUDED.error ELSE downloads.error END,
+		   updated_at  = now(),
+		   finished_at = COALESCE(downloads.finished_at, EXCLUDED.finished_at)`,
+		d.Adapter, d.ClientJobID, d.WantedID, d.Title, d.State, d.NativeState,
+		d.ProgressPct, d.BytesDone, d.BytesTotal, d.SpeedBps, d.EtaSec,
+		d.Seeders, d.Leechers, d.Health, d.Error, terminal)
+	return err
+}
+
+// ListDownloads returns active downloads first, then recently finished ones.
+func (s *Store) ListDownloads(ctx context.Context, limit int) ([]Download, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT adapter, client_job_id, COALESCE(wanted_id,''), title, state, native_state,
+		        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
+		        seeders, leechers, health, error, started_at, updated_at, finished_at
+		   FROM downloads
+		  ORDER BY (state IN ('queued','downloading')) DESC, updated_at DESC
+		  LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Download{}
+	for rows.Next() {
+		var d Download
+		if err := rows.Scan(&d.Adapter, &d.ClientJobID, &d.WantedID, &d.Title, &d.State,
+			&d.NativeState, &d.ProgressPct, &d.BytesDone, &d.BytesTotal, &d.SpeedBps,
+			&d.EtaSec, &d.Seeders, &d.Leechers, &d.Health, &d.Error,
+			&d.StartedAt, &d.UpdatedAt, &d.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ActiveDownloadFor returns the in-flight download for a request, if any.
+func (s *Store) ActiveDownloadFor(ctx context.Context, wantedID string) (Download, error) {
+	var d Download
+	err := s.pool.QueryRow(ctx,
+		`SELECT adapter, client_job_id, COALESCE(wanted_id,''), title, state, native_state,
+		        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
+		        seeders, leechers, health, error, started_at, updated_at, finished_at
+		   FROM downloads WHERE wanted_id=$1
+		  ORDER BY (state IN ('queued','downloading')) DESC, updated_at DESC LIMIT 1`, wantedID).
+		Scan(&d.Adapter, &d.ClientJobID, &d.WantedID, &d.Title, &d.State, &d.NativeState,
+			&d.ProgressPct, &d.BytesDone, &d.BytesTotal, &d.SpeedBps, &d.EtaSec,
+			&d.Seeders, &d.Leechers, &d.Health, &d.Error, &d.StartedAt, &d.UpdatedAt, &d.FinishedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Download{}, ErrNotFound
+	}
+	return d, err
+}
+
+// DeleteDownload drops a job row (used when a download is cancelled).
+func (s *Store) DeleteDownload(ctx context.Context, adapter, clientJobID string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM downloads WHERE adapter=$1 AND client_job_id=$2`, adapter, clientJobID)
 	return err
 }
