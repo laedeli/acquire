@@ -276,12 +276,20 @@ type Download struct {
 	FinishedAt  *time.Time `json:"finishedAt"`
 }
 
-// UpsertDownload records the newest telemetry for a client job. wanted_id is
-// only overwritten when the caller actually knows it — after a gateway restart
-// the adopted job has no wanted id, and we must not erase the one we had.
-func (s *Store) UpsertDownload(ctx context.Context, d Download) error {
+// UpsertDownload records the newest telemetry for a client job and returns the
+// merged row.
+//
+// Merge rules exist because the events are NOT uniform: progress carries full
+// telemetry, while completed/failed carry almost none. Overwriting blindly
+// would zero a finished download's numbers — and since the gateway stops
+// tracking a job once it is terminal, nothing would ever repair it. So:
+//   - terminal events keep the telemetry the progress stream accumulated
+//     (completed additionally pins 100% / full bytes);
+//   - "unknown" (NULL) peer counts never overwrite a known value;
+//   - a terminal row is absorbing: a late progress message cannot resurrect it.
+func (s *Store) UpsertDownload(ctx context.Context, d Download) (Download, error) {
 	terminal := d.State == "completed" || d.State == "failed"
-	_, err := s.pool.Exec(ctx,
+	row := s.pool.QueryRow(ctx,
 		`INSERT INTO downloads (adapter, client_job_id, wanted_id, title, state, native_state,
 		                        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
 		                        seeders, leechers, health, error, updated_at, finished_at)
@@ -291,22 +299,61 @@ func (s *Store) UpsertDownload(ctx context.Context, d Download) error {
 		   wanted_id   = COALESCE(NULLIF(EXCLUDED.wanted_id,''), downloads.wanted_id),
 		   title       = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE downloads.title END,
 		   state       = EXCLUDED.state,
-		   native_state= EXCLUDED.native_state,
-		   progress_pct= EXCLUDED.progress_pct,
-		   bytes_done  = EXCLUDED.bytes_done,
-		   bytes_total = EXCLUDED.bytes_total,
-		   speed_bps   = EXCLUDED.speed_bps,
-		   eta_sec     = EXCLUDED.eta_sec,
-		   seeders     = EXCLUDED.seeders,
-		   leechers    = EXCLUDED.leechers,
-		   health      = EXCLUDED.health,
+		   native_state= CASE WHEN EXCLUDED.native_state <> '' THEN EXCLUDED.native_state
+		                      ELSE downloads.native_state END,
+		   progress_pct= CASE WHEN NOT $16 THEN EXCLUDED.progress_pct
+		                      WHEN EXCLUDED.state = 'completed' THEN 100
+		                      ELSE downloads.progress_pct END,
+		   bytes_done  = CASE WHEN NOT $16 THEN EXCLUDED.bytes_done
+		                      WHEN EXCLUDED.state = 'completed'
+		                        THEN GREATEST(downloads.bytes_done, downloads.bytes_total, EXCLUDED.bytes_total)
+		                      ELSE downloads.bytes_done END,
+		   bytes_total = CASE WHEN EXCLUDED.bytes_total > 0 THEN EXCLUDED.bytes_total
+		                      ELSE downloads.bytes_total END,
+		   speed_bps   = CASE WHEN $16 THEN 0 ELSE EXCLUDED.speed_bps END,
+		   eta_sec     = CASE WHEN $16 THEN NULL ELSE EXCLUDED.eta_sec END,
+		   seeders     = COALESCE(EXCLUDED.seeders, downloads.seeders),
+		   leechers    = COALESCE(EXCLUDED.leechers, downloads.leechers),
+		   health      = COALESCE(EXCLUDED.health, downloads.health),
 		   error       = CASE WHEN EXCLUDED.error <> '' THEN EXCLUDED.error ELSE downloads.error END,
 		   updated_at  = now(),
-		   finished_at = COALESCE(downloads.finished_at, EXCLUDED.finished_at)`,
+		   finished_at = COALESCE(downloads.finished_at, EXCLUDED.finished_at)
+		 WHERE downloads.state NOT IN ('completed','failed') OR $16
+		 RETURNING adapter, client_job_id, COALESCE(wanted_id,''), title, state, native_state,
+		           progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
+		           seeders, leechers, health, error, started_at, updated_at, finished_at`,
 		d.Adapter, d.ClientJobID, d.WantedID, d.Title, d.State, d.NativeState,
 		d.ProgressPct, d.BytesDone, d.BytesTotal, d.SpeedBps, d.EtaSec,
 		d.Seeders, d.Leechers, d.Health, d.Error, terminal)
-	return err
+
+	var out Download
+	err := row.Scan(&out.Adapter, &out.ClientJobID, &out.WantedID, &out.Title, &out.State,
+		&out.NativeState, &out.ProgressPct, &out.BytesDone, &out.BytesTotal, &out.SpeedBps,
+		&out.EtaSec, &out.Seeders, &out.Leechers, &out.Health, &out.Error,
+		&out.StartedAt, &out.UpdatedAt, &out.FinishedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The WHERE guard suppressed the update (a stale progress message for an
+		// already-finished job). Report the row as it stands.
+		return s.GetDownload(ctx, d.Adapter, d.ClientJobID)
+	}
+	return out, err
+}
+
+// GetDownload returns one client job's row.
+func (s *Store) GetDownload(ctx context.Context, adapter, clientJobID string) (Download, error) {
+	var d Download
+	err := s.pool.QueryRow(ctx,
+		`SELECT adapter, client_job_id, COALESCE(wanted_id,''), title, state, native_state,
+		        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
+		        seeders, leechers, health, error, started_at, updated_at, finished_at
+		   FROM downloads WHERE adapter=$1 AND client_job_id=$2`, adapter, clientJobID).
+		Scan(&d.Adapter, &d.ClientJobID, &d.WantedID, &d.Title, &d.State, &d.NativeState,
+			&d.ProgressPct, &d.BytesDone, &d.BytesTotal, &d.SpeedBps, &d.EtaSec,
+			&d.Seeders, &d.Leechers, &d.Health, &d.Error, &d.StartedAt, &d.UpdatedAt, &d.FinishedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Download{}, ErrNotFound
+	}
+	return d, err
 }
 
 // ListDownloads returns active downloads first, then recently finished ones.
