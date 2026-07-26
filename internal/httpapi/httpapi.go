@@ -177,6 +177,9 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/downloads", s.listDownloads)
 		r.Get("/api/clients", s.listClients)
 		r.Post("/api/downloads/{adapter}/{id}/{action}", s.controlDownload) // admin
+		r.Get("/api/wanted/{id}/releases", s.listReleases)                  // admin
+		r.Post("/api/wanted/{id}/pick", s.pickRelease)                      // admin
+		r.Get("/api/indexers", s.listIndexers)
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
@@ -184,6 +187,45 @@ func (s *Server) Handler() http.Handler {
 	fileServer := http.FileServer(http.FS(sub))
 	r.Handle("/*", spaFallback(sub, fileServer))
 	return r
+}
+
+// listReleases runs an interactive search for a request and returns the ranked
+// candidates, so an admin can see what is on offer instead of trusting the
+// automatic pick.
+func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	out, err := s.svc.Releases(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+// pickRelease grabs one specific candidate from the picker.
+func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	var c app.Candidate
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.Source == "" {
+		http.Error(w, "source is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.svc.GrabCandidate(r.Context(), chi.URLParam(r, "id"), c); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "grabbed"})
+}
+
+// listIndexers reports the configured search backends.
+func (s *Server) listIndexers(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.svc.Indexers(r.Context()))
 }
 
 // listDownloads returns live + recently finished downloads.
