@@ -11,6 +11,7 @@ import {
   type Wanted,
 } from './lib/api'
 import { debounce, useEventStream } from './lib/stream'
+import { realmRoles } from './lib/format'
 import { Requests } from './views/Requests'
 import { Downloads } from './views/Downloads'
 import { Discover } from './views/Discover'
@@ -32,11 +33,10 @@ export function App({ config }: { config: Config }) {
     [token, auth],
   )
 
-  const admin = useMemo(() => {
-    const roles = (auth.user?.profile as { realm_access?: { roles?: string[] } } | undefined)
-      ?.realm_access?.roles
-    return !!roles?.includes(config.adminRole)
-  }, [auth.user, config.adminRole])
+  const admin = useMemo(
+    () => realmRoles(auth.user?.access_token).includes(config.adminRole),
+    [auth.user, config.adminRole],
+  )
 
   const loadLists = useCallback(async () => {
     const [w, d] = await Promise.allSettled([api.wanted(), api.downloads()])
