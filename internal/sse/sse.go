@@ -1,29 +1,52 @@
-// Package sse is a tiny server-sent-events broker: acquire's status changes fan
-// out a payload-free "changed" PING, and the SPA / chino slot refetch the
-// (authenticated) list on it — no polling, and the stream itself carries no data
-// so it can be served unauthenticated (EventSource can't send a bearer).
+// Package sse is a tiny server-sent-events broker.
+//
+// It carries two kinds of message. A payload-free "changed" ping tells clients
+// to refetch the (authenticated) lists — that is enough for status transitions.
+// Download telemetry instead streams as typed "download" events with a JSON
+// body, because a progress bar that had to refetch the whole list every few
+// seconds would be both laggy and wasteful.
+//
+// Because the stream can now carry data, subscribing requires a bearer: the SPA
+// reads it with fetch-streaming rather than EventSource (which cannot send an
+// Authorization header).
 package sse
 
 import (
+	"encoding/json"
 	"net/http"
 	"sync"
 	"time"
 )
 
-type Broker struct {
-	mu   sync.Mutex
-	subs map[chan struct{}]struct{}
+// Event is one message on the wire. Name is the SSE event name; Data is
+// marshalled to JSON (nil for a bare ping).
+type Event struct {
+	Name string
+	Data any
 }
 
-func New() *Broker { return &Broker{subs: map[chan struct{}]struct{}{}} }
+type Broker struct {
+	mu   sync.Mutex
+	subs map[chan Event]struct{}
+}
 
-// Notify pings every subscriber (non-blocking; a busy subscriber coalesces).
-func (b *Broker) Notify() {
+func New() *Broker { return &Broker{subs: map[chan Event]struct{}{}} }
+
+// Notify sends a payload-free "changed" ping: refetch the lists.
+func (b *Broker) Notify() { b.publish(Event{Name: "changed"}) }
+
+// Publish fans a typed event out to every subscriber.
+func (b *Broker) Publish(name string, data any) { b.publish(Event{Name: name, Data: data}) }
+
+// publish is non-blocking: a subscriber that cannot keep up drops this message
+// rather than stalling the producer. Losing a progress tick is harmless — the
+// next one (or the fallback poll) re-syncs the client.
+func (b *Broker) publish(ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for ch := range b.subs {
 		select {
-		case ch <- struct{}{}:
+		case ch <- ev:
 		default:
 		}
 	}
@@ -40,8 +63,10 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Proxies must not buffer an event stream.
+	w.Header().Set("X-Accel-Buffering", "no")
 
-	ch := make(chan struct{}, 4)
+	ch := make(chan Event, 32)
 	b.mu.Lock()
 	b.subs[ch] = struct{}{}
 	b.mu.Unlock()
@@ -55,18 +80,28 @@ func (b *Broker) Handler(w http.ResponseWriter, r *http.Request) {
 	defer heartbeat.Stop()
 
 	// Initial comment so proxies flush headers.
-	w.Write([]byte(": connected\n\n"))
+	_, _ = w.Write([]byte(": connected\n\n"))
 	fl.Flush()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ch:
-			w.Write([]byte("event: changed\ndata: 1\n\n"))
+		case ev := <-ch:
+			payload := []byte("1")
+			if ev.Data != nil {
+				b, err := json.Marshal(ev.Data)
+				if err != nil {
+					continue
+				}
+				payload = b
+			}
+			_, _ = w.Write([]byte("event: " + ev.Name + "\ndata: "))
+			_, _ = w.Write(payload)
+			_, _ = w.Write([]byte("\n\n"))
 			fl.Flush()
 		case <-heartbeat.C:
-			w.Write([]byte(": heartbeat\n\n"))
+			_, _ = w.Write([]byte(": heartbeat\n\n"))
 			fl.Flush()
 		}
 	}

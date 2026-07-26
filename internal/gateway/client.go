@@ -144,3 +144,121 @@ func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	}
 	return out, nil
 }
+
+// Job is one in-flight download as the gateway currently sees it. Used to
+// reconcile after a restart: acquire's Kafka consumer starts at the latest
+// offset, so without this it would never learn about downloads that began
+// while it was down.
+type Job struct {
+	Adapter      string  `json:"adapter"`
+	ClientJobID  string  `json:"client_job_id"`
+	WantedItemID string  `json:"wanted_item_id"`
+	Title        string  `json:"title"`
+	State        string  `json:"state"`
+	NativeState  string  `json:"native_state"`
+	ProgressPct  float64 `json:"progress_pct"`
+	Downloaded   int64   `json:"downloaded_bytes"`
+	SizeBytes    *int64  `json:"size_bytes"`
+	SpeedBps     int64   `json:"speed_bps"`
+	EtaSec       *int32  `json:"eta_sec"`
+	Seeders      *int32  `json:"seeders"`
+	Leechers     *int32  `json:"leechers"`
+	Health       *int32  `json:"health"`
+}
+
+// ClientStatus is one download client's health + aggregate throughput.
+type ClientStatus struct {
+	Name      string            `json:"name"`
+	Reachable bool              `json:"reachable"`
+	Error     string            `json:"error,omitempty"`
+	DownBps   int64             `json:"down_bps"`
+	UpBps     int64             `json:"up_bps"`
+	Paused    bool              `json:"paused"`
+	FreeDisk  *int64            `json:"free_disk_bytes,omitempty"`
+	Detail    map[string]string `json:"detail,omitempty"`
+}
+
+// List returns the gateway's in-flight jobs.
+func (c *Client) List(ctx context.Context) ([]Job, error) {
+	var out []Job
+	if err := c.getJSON(ctx, "/api/v1/downloads", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ClientsStatus reports per-client health and speed.
+func (c *Client) ClientsStatus(ctx context.Context) ([]ClientStatus, error) {
+	var out []ClientStatus
+	if err := c.getJSON(ctx, "/api/v1/clients/status", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Cancel removes a job from its download client (non-destructive: the bytes
+// already on disk stay).
+func (c *Client) Cancel(ctx context.Context, adapter, clientJobID string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/downloads/"+url.PathEscape(adapter)+"/"+url.PathEscape(clientJobID))
+}
+
+// Pause pauses a job; Resume restarts it. Not every client supports this —
+// the gateway answers 501 for those.
+func (c *Client) Pause(ctx context.Context, adapter, clientJobID string) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/downloads/"+url.PathEscape(adapter)+"/"+url.PathEscape(clientJobID)+"/pause")
+}
+
+func (c *Client) Resume(ctx context.Context, adapter, clientJobID string) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/downloads/"+url.PathEscape(adapter)+"/"+url.PathEscape(clientJobID)+"/resume")
+}
+
+// authorize attaches the service-account bearer when one is configured.
+func (c *Client) authorize(ctx context.Context, req *http.Request) {
+	if c.Tokens.Enabled() {
+		if tok, err := c.Tokens.Token(ctx); err == nil && tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+		}
+	}
+}
+
+func (c *Client) getJSON(ctx context.Context, path string, out any) error {
+	if !c.Enabled() {
+		return fmt.Errorf("download gateway not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	c.authorize(ctx, req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("gateway %s %d: %s", path, resp.StatusCode, string(b))
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) do(ctx context.Context, method, path string) error {
+	if !c.Enabled() {
+		return fmt.Errorf("download gateway not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	c.authorize(ctx, req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	return fmt.Errorf("gateway %s %d: %s", path, resp.StatusCode, string(b))
+}

@@ -42,7 +42,11 @@ func main() {
 	pr := prowlarr.New(cfg.ProwlarrURL, cfg.ProwlarrAPIKey)
 	br := sse.New()
 
-	svc := app.New(cfg, st, gw, kc, tm, pr, br.Notify)
+	svc := app.New(cfg, st, gw, kc, tm, pr, br)
+
+	// The consumer starts at the latest offset, so downloads that began while
+	// acquire was down would be invisible. Ask the gateway what is in flight.
+	go svc.Reconcile(ctx)
 
 	// Kafka consumer (download.client.* + catalog.item.packaged → svc reactions).
 	if cons, err := events.NewConsumer(cfg.KafkaBrokers, cfg.KafkaCertDir, cfg.KafkaTopicPrefix, cfg.KafkaGroupID); err != nil {
