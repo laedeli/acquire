@@ -200,6 +200,119 @@ func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 	return nil
 }
 
+// Candidate is one searchable release offered to the console's manual picker.
+type Candidate struct {
+	Title    string `json:"title"`
+	Indexer  string `json:"indexer"`
+	Protocol string `json:"protocol"`
+	Size     int64  `json:"size"`
+	Seeders  int    `json:"seeders"`
+	Adapter  string `json:"adapter"`
+	Source   string `json:"source"`
+	Reason   string `json:"reason"`
+	Best     bool   `json:"best"`
+}
+
+// Releases runs the same two-stage, NZB-first search AutoGrab uses, but returns
+// the ranked candidates instead of grabbing — this is the interactive search.
+func (s *Service) Releases(ctx context.Context, wantedID string) ([]Candidate, error) {
+	w, err := s.st.GetWanted(ctx, wantedID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.pr.Enabled() {
+		return nil, errAutoGrabDisabled
+	}
+	query := w.Title
+	if w.Year != 0 {
+		query = w.Title + " " + itoa(w.Year)
+	}
+	idx, _ := s.pr.Indexers(ctx)
+	var releases []prowlarr.Release
+	if s.cfg.PreferUsenet {
+		if ids := prowlarr.EnabledIDs(idx, "usenet"); len(ids) > 0 {
+			releases, _ = s.pr.SearchIn(ctx, query, ids)
+		}
+	}
+	ranked := prowlarr.Rank(releases, s.cfg.PreferUsenet)
+	if len(ranked) == 0 {
+		rel2, err := s.pr.SearchIn(ctx, query, prowlarr.EnabledIDs(idx, "torrent"))
+		if err != nil {
+			return nil, err
+		}
+		ranked = prowlarr.Rank(rel2, s.cfg.PreferUsenet)
+	}
+	out := make([]Candidate, 0, len(ranked))
+	for i, r := range ranked {
+		out = append(out, Candidate{
+			Title: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Size: r.Size,
+			Seeders: r.Seeders, Adapter: r.Adapter(), Source: r.Source(),
+			Reason: rankReason(r, s.cfg.PreferUsenet), Best: i == 0,
+		})
+	}
+	return out, nil
+}
+
+// GrabCandidate hands a specific release (chosen in the picker) to its client,
+// recording which one it was.
+func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidate) error {
+	w, err := s.st.GetWanted(ctx, wantedID)
+	if err != nil {
+		return err
+	}
+	adapter := c.Adapter
+	if adapter == "" {
+		adapter = "qbittorrent"
+	}
+	res, err := s.gw.Add(ctx, gateway.AddRequest{
+		Adapter: adapter, Source: c.Source, Title: w.Title,
+		SavePath: s.cfg.SavePath, WantedItemID: wantedID,
+	})
+	if err != nil {
+		s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())
+		return err
+	}
+	var seeders *int32
+	if c.Protocol == "torrent" {
+		n := int32(c.Seeders)
+		seeders = &n
+	}
+	_ = s.st.RecordGrabRelease(ctx, store.Grab{
+		WantedID: wantedID, Adapter: adapter, ClientJobID: res.ClientJobID,
+		Source: c.Source, ReleaseTitle: c.Title, Indexer: c.Indexer,
+		Protocol: c.Protocol, SizeBytes: c.Size, Seeders: seeders,
+		Reason: "picked manually",
+	})
+	proto := "torrent"
+	if c.Protocol == "usenet" {
+		proto = "NZB"
+	}
+	s.setStatus(ctx, wantedID, "downloading", "grabbed "+proto+" from "+c.Indexer+" via "+adapter)
+	return nil
+}
+
+// IndexerInfo is one configured indexer as shown in the console.
+type IndexerInfo struct {
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// Indexers lists the search backends currently configured.
+func (s *Service) Indexers(ctx context.Context) []IndexerInfo {
+	idx, _ := s.pr.Indexers(ctx)
+	out := make([]IndexerInfo, 0, len(idx))
+	for _, i := range idx {
+		out = append(out, IndexerInfo{Name: i.Name, Protocol: i.Protocol, Enabled: i.Enable})
+	}
+	return out
+}
+
+// GrabsFor returns what was handed to a client for a request (newest first).
+func (s *Service) LatestGrab(ctx context.Context, wantedID string) (store.Grab, error) {
+	return s.st.LatestGrab(ctx, wantedID)
+}
+
 // rankReason explains in one line why this release was picked, so the console
 // can show it next to the choice.
 func rankReason(r prowlarr.Release, preferUsenet bool) string {
