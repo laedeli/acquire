@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/laedeli/acquire/internal/release"
 )
 
 //go:embed migrations/*.sql
@@ -337,6 +338,87 @@ func (s *Store) UpsertDownload(ctx context.Context, d Download) (Download, error
 		return s.GetDownload(ctx, d.Adapter, d.ClientJobID)
 	}
 	return out, err
+}
+
+// QualityProfile is a named definition of what "good" means, stored as JSON so
+// the shape can grow without a migration per field.
+type QualityProfile struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	IsDefault bool            `json:"isDefault"`
+	Config    release.Profile `json:"config"`
+	UpdatedAt time.Time       `json:"updatedAt"`
+}
+
+// ListProfiles returns every profile, default first.
+func (s *Store) ListProfiles(ctx context.Context) ([]QualityProfile, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, is_default, config, updated_at FROM quality_profiles
+		  ORDER BY is_default DESC, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []QualityProfile{}
+	for rows.Next() {
+		var p QualityProfile
+		if err := rows.Scan(&p.ID, &p.Name, &p.IsDefault, &p.Config, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// DefaultProfile returns the profile ranking uses. A missing row is not an
+// error — scoring falls back to the built-in defaults so search never breaks.
+func (s *Store) DefaultProfile(ctx context.Context) release.Profile {
+	var cfg release.Profile
+	err := s.pool.QueryRow(ctx,
+		`SELECT config FROM quality_profiles WHERE is_default ORDER BY updated_at DESC LIMIT 1`).
+		Scan(&cfg)
+	if err != nil {
+		return release.DefaultProfile()
+	}
+	return cfg
+}
+
+// SaveProfile creates or updates a profile. Making one the default clears the
+// flag on the others, so the partial unique index is never violated.
+func (s *Store) SaveProfile(ctx context.Context, p QualityProfile) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if p.IsDefault {
+		if _, err := tx.Exec(ctx,
+			`UPDATE quality_profiles SET is_default = false WHERE id <> $1`, p.ID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO quality_profiles (id, name, is_default, config, updated_at)
+		 VALUES ($1,$2,$3,$4,now())
+		 ON CONFLICT (id) DO UPDATE SET
+		   name = EXCLUDED.name, is_default = EXCLUDED.is_default,
+		   config = EXCLUDED.config, updated_at = now()`,
+		p.ID, p.Name, p.IsDefault, p.Config); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteProfile removes a profile. The default one is kept — ranking needs it.
+func (s *Store) DeleteProfile(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM quality_profiles WHERE id=$1 AND NOT is_default`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("the default profile cannot be deleted")
+	}
+	return nil
 }
 
 // GetDownload returns one client job's row.
