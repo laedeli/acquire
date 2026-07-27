@@ -12,15 +12,34 @@ import { apiBase, type Config } from './lib/api'
 // the reference host), so the OIDC redirect target is derived, not hardcoded.
 const redirectUri = window.location.origin + apiBase
 
+// The IdP redirects back to the bare mount point, so the fragment identifying
+// the requested surface (#/settings from a launchpad tile) does not survive the
+// round trip. Park it before leaving and restore it on the way back.
+const ROUTE_KEY = 'acquire.route'
+
+function signIn(auth: ReturnType<typeof useAuth>) {
+  if (window.location.hash) sessionStorage.setItem(ROUTE_KEY, window.location.hash)
+  void auth.signinRedirect()
+}
+
 function Gate({ config }: { config: Config }) {
   const auth = useAuth()
 
-  // Strip the auth code from the URL once the exchange is done.
+  // Strip the auth code from the URL once the exchange is done, and put the
+  // caller back on the surface they asked for.
   useEffect(() => {
-    if (auth.isAuthenticated && window.location.search.includes('code=')) {
+    if (!auth.isAuthenticated) return
+    const parked = sessionStorage.getItem(ROUTE_KEY)
+    if (parked) sessionStorage.removeItem(ROUTE_KEY)
+    if (window.location.search.includes('code=')) {
       const url = new URL(window.location.href)
       const q = url.searchParams.get('q')
-      window.history.replaceState({}, '', apiBase + (q ? `?q=${encodeURIComponent(q)}` : ''))
+      window.history.replaceState(
+        {},
+        '',
+        apiBase + (q ? `?q=${encodeURIComponent(q)}` : '') + (parked || window.location.hash || ''),
+      )
+      if (parked) window.dispatchEvent(new HashChangeEvent('hashchange'))
     }
   }, [auth.isAuthenticated])
 
@@ -39,7 +58,7 @@ function Gate({ config }: { config: Config }) {
           <Text variant="muted" as="p">
             {auth.error.message}
           </Text>
-          <Button variant="primary" onClick={() => void auth.signinRedirect()}>
+          <Button variant="primary" onClick={() => signIn(auth)}>
             try again
           </Button>
         </Card>
@@ -56,7 +75,7 @@ function Gate({ config }: { config: Config }) {
           <Text variant="muted" as="p">
             Sign in to request and manage downloads.
           </Text>
-          <Button variant="primary" onClick={() => void auth.signinRedirect()}>
+          <Button variant="primary" onClick={() => signIn(auth)}>
             sign in
           </Button>
         </Card>
@@ -101,7 +120,11 @@ function Boot() {
       // dropping the user back to the sign-in panel.
       userStore={new WebStorageStateStore({ store: window.localStorage })}
       automaticSilentRenew
-      onSigninCallback={() => window.history.replaceState({}, '', apiBase)}
+      // Keep the fragment: Gate's effect restores the requested surface.
+      onSigninCallback={() => {
+        const parked = sessionStorage.getItem(ROUTE_KEY) || window.location.hash
+        window.history.replaceState({}, '', apiBase + parked)
+      }}
     >
       <Gate config={config} />
     </AuthProvider>
