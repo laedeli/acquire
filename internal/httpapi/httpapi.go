@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -180,6 +181,11 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/wanted/{id}/releases", s.listReleases)                  // admin
 		r.Post("/api/wanted/{id}/pick", s.pickRelease)                      // admin
 		r.Get("/api/indexers", s.listIndexers)
+		r.Get("/api/search", s.search)          // admin — manual, across indexers
+		r.Post("/api/search/grab", s.grabFound) // admin
+		r.Get("/api/profiles", s.listProfiles)
+		r.Put("/api/profiles/{id}", s.saveProfile)      // admin
+		r.Delete("/api/profiles/{id}", s.deleteProfile) // admin
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
@@ -221,6 +227,105 @@ func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "grabbed"})
+}
+
+// search runs a free-text query across the indexers, optionally scoped to some
+// of them (?indexers=3,7), ranked by the active quality profile.
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, 200, []any{})
+		return
+	}
+	var only []int
+	for _, part := range strings.Split(r.URL.Query().Get("indexers"), ",") {
+		if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+			only = append(only, n)
+		}
+	}
+	out, err := s.svc.Search(r.Context(), q, only)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+// grabFound grabs a release found in the manual search. When it names an
+// existing request it attaches to it; otherwise a request is created so the
+// download still reaches the catalog.
+func (s *Server) grabFound(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	var body struct {
+		app.Candidate
+		WantedID string `json:"wantedId"`
+		Title    string `json:"title2"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Source == "" {
+		http.Error(w, "source is required", http.StatusBadRequest)
+		return
+	}
+	var err error
+	if body.WantedID != "" {
+		err = s.svc.GrabCandidate(r.Context(), body.WantedID, body.Candidate)
+	} else {
+		err = s.svc.GrabAdHoc(r.Context(), body.Candidate, body.Title, subFrom(r.Context()))
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "grabbed"})
+}
+
+// listProfiles / saveProfile / deleteProfile back the settings tab.
+func (s *Server) listProfiles(w http.ResponseWriter, r *http.Request) {
+	out, err := s.svc.Profiles(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) saveProfile(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	var p store.QualityProfile
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		http.Error(w, "invalid profile", http.StatusBadRequest)
+		return
+	}
+	p.ID = chi.URLParam(r, "id")
+	if strings.TrimSpace(p.Name) == "" {
+		p.Name = p.ID
+	}
+	if err := s.svc.SaveProfile(r.Context(), p); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, p)
+}
+
+func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	if err := s.svc.DeleteProfile(r.Context(), chi.URLParam(r, "id")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // listIndexers reports the configured search backends.

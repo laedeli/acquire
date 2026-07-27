@@ -16,13 +16,38 @@ import { Requests } from './views/Requests'
 import { Downloads } from './views/Downloads'
 import { Discover } from './views/Discover'
 import { Indexers } from './views/Indexers'
+import { Search } from './views/Search'
+import { Settings } from './views/Settings'
 
 const FALLBACK_POLL_MS = 30_000
+
+// Each surface is its own launchpad tile, so it needs its own address. Hash
+// routing keeps that working behind the ingress that strips the /acquire prefix,
+// without the server having to know where it is mounted.
+const TABS = ['requests', 'downloads', 'search', 'discover', 'indexers', 'settings'] as const
+type Tab = (typeof TABS)[number]
+
+function tabFromHash(): Tab {
+  const h = window.location.hash.replace(/^#\/?/, '').split('?')[0]
+  return (TABS as readonly string[]).includes(h) ? (h as Tab) : 'requests'
+}
 
 export function App({ config }: { config: Config }) {
   const auth = useAuth()
   const token = auth.user?.access_token
-  const [tab, setTab] = useState('requests')
+  const [tab, setTabState] = useState<Tab>(tabFromHash)
+
+  // Keep the address bar and the view in step, so a tile deep-link lands on the
+  // right surface and back/forward behave.
+  const setTab = useCallback((t: string) => {
+    setTabState(t as Tab)
+    if (tabFromHash() !== t) window.location.hash = '#/' + t
+  }, [])
+  useEffect(() => {
+    const onHash = () => setTabState(tabFromHash())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
   const [wanted, setWanted] = useState<Wanted[]>([])
   const [downloads, setDownloads] = useState<Download[]>([])
   const [clients, setClients] = useState<ClientStatus[]>([])
@@ -114,8 +139,10 @@ export function App({ config }: { config: Config }) {
         items={[
           { value: 'requests', label: `requests${wanted.length ? ` (${wanted.length})` : ''}` },
           { value: 'downloads', label: `downloads${active ? ` (${active})` : ''}` },
+          { value: 'search', label: 'search' },
           { value: 'discover', label: 'discover' },
           { value: 'indexers', label: 'indexers' },
+          { value: 'settings', label: 'settings' },
         ]}
       />
 
@@ -146,7 +173,17 @@ export function App({ config }: { config: Config }) {
             refresh={() => void loadLists()}
           />
         )}
+        {tab === 'search' && (
+          <Search
+            api={api}
+            indexers={indexers}
+            wanted={wanted}
+            admin={admin}
+            refresh={() => void loadLists()}
+          />
+        )}
         {tab === 'indexers' && <Indexers rows={indexers} preferUsenet />}
+        {tab === 'settings' && <Settings api={api} admin={admin} />}
       </main>
     </div>
   )

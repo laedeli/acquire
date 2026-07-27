@@ -65,6 +65,11 @@ export interface Candidate {
   source: string
   reason: string
   best: boolean
+  score: number
+  rejected: boolean
+  resolution: string
+  codec: string
+  sourceType: string
 }
 
 export interface DiscoverHit {
@@ -78,9 +83,27 @@ export interface DiscoverHit {
 }
 
 export interface Indexer {
+  id: number
   name: string
   protocol: string
   enabled: boolean
+}
+
+export interface QualityProfile {
+  id: string
+  name: string
+  isDefault: boolean
+  updatedAt?: string
+  config: {
+    preferProtocol: string
+    resolutions: string[]
+    preferredCodecs: string[]
+    rejectTerms: string[]
+    minSizeMb: number
+    maxSizeMb: number
+    minSeeders: number
+    preferHdr: boolean
+  }
 }
 
 // The API lives next to the SPA, so paths are relative to wherever it is served
@@ -146,6 +169,25 @@ export function makeApi(token: string | undefined, onUnauthorized: () => void) {
     downloads: () => call<Download[]>('downloads'),
     clients: () => call<ClientStatus[]>('clients'),
     indexers: () => call<Indexer[]>('indexers'),
+    search: (q: string, indexerIds: number[] = []) =>
+      call<Candidate[]>(
+        'search?q=' +
+          encodeURIComponent(q) +
+          (indexerIds.length ? '&indexers=' + indexerIds.join(',') : ''),
+      ),
+    grabFound: (c: Candidate, opts: { wantedId?: string; title?: string }) =>
+      call<unknown>('search/grab', {
+        method: 'POST',
+        body: JSON.stringify({ ...c, wantedId: opts.wantedId || '', title2: opts.title || '' }),
+      }),
+    profiles: () => call<QualityProfile[]>('profiles'),
+    saveProfile: (p: QualityProfile) =>
+      call<QualityProfile>('profiles/' + encodeURIComponent(p.id), {
+        method: 'PUT',
+        body: JSON.stringify(p),
+      }),
+    deleteProfile: (id: string) =>
+      call<void>('profiles/' + encodeURIComponent(id), { method: 'DELETE' }),
     control: (adapter: string, jobId: string, action: 'pause' | 'resume' | 'cancel') =>
       call<unknown>(
         `downloads/${encodeURIComponent(adapter)}/${encodeURIComponent(jobId)}/${action}`,

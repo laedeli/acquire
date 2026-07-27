@@ -137,3 +137,56 @@ body {
     overflow-x: auto;
   }
 }
+
+/* Manual search: indexer scoping + rejected rows. */
+.acq__scope {
+  margin-bottom: var(--s-3);
+}
+
+.acq__scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  margin-top: var(--s-2);
+  max-height: 148px;
+  overflow-y: auto;
+  padding: var(--s-2);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* A release the profile refuses stays visible, but reads as unavailable. */
+.acq__dim {
+  opacity: 0.55;
+}
+
+/* Settings form. */
+.acq__settings {
+  display: grid;
+  gap: var(--s-4);
+  max-width: 640px;
+}
+
+.acq__settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.acq__settings-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s-3);
+}
+
+.acq__reslist {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.acq__resrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
