@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0B0F19" />
+    <title>acquire</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" crossorigin src="/assets/index-C44IXLfB.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/__federation_fn_import-DqFsJTMT.js">
+    <link rel="modulepreload" crossorigin href="/assets/index-yBjzXJbu.js">
+    <link rel="modulepreload" crossorigin href="/assets/__federation_expose_Console-CzONGjuL.js">
+    <link rel="modulepreload" crossorigin href="/assets/index-aCbGg6Ov.js">
+    <link rel="stylesheet" crossorigin href="/assets/console.css">
+  </head>
+  <body>
+    <!-- Assets and API calls are addressed relative to the mount point, so the
+         path must end in a slash: /acquire/x resolves next to /acquire/, while
+         /acquire would resolve against the host root. Module scripts are
+         deferred, so this classic script redirects before any of them run. -->
+    <script>
+      if (!location.pathname.endsWith('/')) {
+        location.replace(location.pathname + '/' + location.search + location.hash)
+      }
+    </script>
+    <div id="root"></div>
+  </body>
+</html>

@@ -1,28 +1,45 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import federation from '@originjs/vite-plugin-federation'
 
-// A second build producing the EMBED bundle: one self-contained ES module the
-// portal shell imports at runtime and mounts into its own page.
+// The REMOTE build.
 //
-// It is emitted alongside the standalone SPA (into embed/) and served by the
-// same binary, so the shell reaches it through the portal's app proxy at
-// /api/portal/apps/acquire/embed/console.js.
+// The console is exposed as a federated module so the portal shell renders it
+// inside its own React tree — one DOM, one React instance, no iframe. React and
+// react-dom are shared: the shell provides them at runtime, so the shell and
+// every app it hosts agree on a single copy (hooks and context only work if
+// they do).
+//
+// The output is served by the acquire binary and reached through the portal's
+// app proxy at /api/portal/apps/acquire/embed/remoteEntry.js.
 export default defineConfig({
-  plugins: [react()],
-  define: { 'process.env.NODE_ENV': '"production"' },
+  plugins: [
+    react(),
+    federation({
+      name: 'acquire',
+      filename: 'remoteEntry.js',
+      exposes: { './Console': './src/Console.tsx' },
+      shared: {
+        react: { requiredVersion: '^18.3.0' },
+        'react-dom': { requiredVersion: '^18.3.0' },
+      },
+    }),
+  ],
   build: {
     outDir: '../internal/httpapi/web/embed',
     emptyOutDir: true,
-    // The shell loads this with a plain dynamic import(), so the CSS has to
-    // come along inside the module rather than as a separate <link>.
+    // Federation emits ES modules with top-level await.
+    target: 'esnext',
+    minify: true,
     cssCodeSplit: false,
-    lib: {
-      entry: 'src/mount.tsx',
-      formats: ['es'],
-      fileName: () => 'console.js',
-    },
     rollupOptions: {
-      output: { inlineDynamicImports: true, assetFileNames: 'console.[ext]' },
+      output: {
+        format: 'es',
+        // A predictable stylesheet name: the shell links it when it mounts the
+        // app, and it cannot do that if the filename carries a build hash.
+        assetFileNames: (info) =>
+          info.name && info.name.endsWith('.css') ? 'assets/console.css' : 'assets/[name]-[hash][extname]',
+      },
     },
   },
 })
