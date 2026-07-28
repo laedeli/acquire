@@ -5,11 +5,12 @@ import { WebStorageStateStore } from 'oidc-client-ts'
 import { Button, Card, Heading, Spinner, Text } from '@nalet/design-system'
 import '@nalet/design-system/styles.css'
 import './app.css'
-import { App } from './App'
-import { apiBase, type Config } from './lib/api'
+import { Console } from './Console'
+import { defaultApiBase, type Config } from './lib/api'
 
 // The console is mounted wherever the deployment publishes it ('/acquire/' on
 // the reference host), so the OIDC redirect target is derived, not hardcoded.
+const apiBase = defaultApiBase()
 const redirectUri = window.location.origin + apiBase
 
 // The IdP redirects back to the bare mount point, so the fragment identifying
@@ -22,7 +23,7 @@ function signIn(auth: ReturnType<typeof useAuth>) {
   void auth.signinRedirect()
 }
 
-function Gate({ config }: { config: Config }) {
+function Gate({ config: _config }: { config: Config }) {
   const auth = useAuth()
 
   // Strip the auth code from the URL once the exchange is done, and put the
@@ -82,7 +83,28 @@ function Gate({ config }: { config: Config }) {
       </div>
     )
   }
-  return <App config={config} />
+  return (
+    <div className="acq">
+      <header className="acq__header">
+        <Heading level={1} chevron>
+          acquire
+        </Heading>
+        <div className="acq__who">
+          <Text variant="muted" as="span">
+            {String(auth.user?.profile?.preferred_username || auth.user?.profile?.email || '')}
+          </Text>
+          <Button size="sm" variant="ghost" onClick={() => void auth.removeUser()}>
+            sign out
+          </Button>
+        </div>
+      </header>
+      <Console
+        apiBase={apiBase}
+        token={auth.user?.access_token}
+        onUnauthorized={() => void auth.signinRedirect()}
+      />
+    </div>
+  )
 }
 
 function Boot() {

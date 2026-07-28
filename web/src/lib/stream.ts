@@ -6,7 +6,7 @@
 // events carrying one telemetry row to apply in place — so a progress bar moves
 // smoothly without refetching anything.
 import { useEffect, useRef } from 'react'
-import { apiBase, type Download } from './api'
+import { type Download } from './api'
 
 type Handlers = {
   onDownload: (d: Download) => void
@@ -14,7 +14,7 @@ type Handlers = {
   onReconnect: () => void
 }
 
-export function useEventStream(token: string | undefined, handlers: Handlers) {
+export function useEventStream(apiBase: string, token: string | undefined, handlers: Handlers) {
   // Keep the newest callbacks without restarting the stream on every render.
   const ref = useRef(handlers)
   ref.current = handlers
@@ -79,7 +79,7 @@ export function useEventStream(token: string | undefined, handlers: Handlers) {
       stopped = true
       ctrl.abort()
     }
-  }, [token])
+  }, [apiBase, token])
 }
 
 /** debounce collapses a burst of stream pings into one refetch. */

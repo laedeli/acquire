@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAuth } from 'react-oidc-context'
-import { Button, Heading, Tabs, Text } from '@nalet/design-system'
-import { LogOut } from 'lucide-react'
+import { Tabs } from '@nalet/design-system'
 import {
   makeApi,
   type ClientStatus,
@@ -32,9 +30,24 @@ function tabFromHash(): Tab {
   return (TABS as readonly string[]).includes(h) ? (h as Tab) : 'requests'
 }
 
-export function App({ config }: { config: Config }) {
-  const auth = useAuth()
-  const token = auth.user?.access_token
+/**
+ * Console is the whole acquire UI, with no opinion about how it is hosted: the
+ * portal shell mounts it in-page and supplies the proxied API base and the
+ * signed-in user's token, and the standalone entry supplies its own. It never
+ * runs an OIDC flow itself — whoever hosts it already did.
+ */
+export function Console({
+  apiBase,
+  token,
+  isAdmin,
+  onUnauthorized,
+}: {
+  apiBase: string
+  token: string | undefined
+  isAdmin?: boolean
+  onUnauthorized?: () => void
+}) {
+  const [config, setConfig] = useState<Config | null>(null)
   const [tab, setTabState] = useState<Tab>(tabFromHash)
 
   // Keep the address bar and the view in step, so a tile deep-link lands on the
@@ -54,14 +67,28 @@ export function App({ config }: { config: Config }) {
   const [indexers, setIndexers] = useState<Indexer[]>([])
 
   const api = useMemo(
-    () => makeApi(token, () => void auth.signinRedirect()),
-    [token, auth],
+    () => makeApi(apiBase, token, () => onUnauthorized?.()),
+    [apiBase, token, onUnauthorized],
   )
 
-  const admin = useMemo(
-    () => realmRoles(auth.user?.access_token).includes(config.adminRole),
-    [auth.user, config.adminRole],
-  )
+  // The host may already know; otherwise read the realm roles out of the token
+  // it handed us (they live in the access token, not the ID-token profile).
+  const admin = useMemo(() => {
+    if (typeof isAdmin === 'boolean') return isAdmin
+    if (!config) return false
+    return realmRoles(token).includes(config.adminRole)
+  }, [isAdmin, token, config])
+
+  useEffect(() => {
+    let live = true
+    api
+      .config()
+      .then((c) => live && setConfig(c))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [api])
 
   const loadLists = useCallback(async () => {
     const [w, d] = await Promise.allSettled([api.wanted(), api.downloads()])
@@ -89,7 +116,7 @@ export function App({ config }: { config: Config }) {
 
   const debouncedLists = useMemo(() => debounce(() => void loadLists(), 400), [loadLists])
 
-  useEventStream(token, {
+  useEventStream(apiBase, token, {
     // Telemetry arrives every few seconds — apply it in place rather than
     // refetching the whole list for each tick.
     onDownload: (d) =>
@@ -113,26 +140,6 @@ export function App({ config }: { config: Config }) {
 
   return (
     <div className="acq">
-      <header className="acq__header">
-        <Heading level={1} chevron>
-          acquire
-        </Heading>
-        <div className="acq__who">
-          <Text variant="muted" as="span">
-            {String(auth.user?.profile?.preferred_username || auth.user?.profile?.email || '')}
-            {admin ? ' · admin' : ''}
-          </Text>
-          <Button
-            size="sm"
-            variant="ghost"
-            leading={<LogOut size={14} />}
-            onClick={() => void auth.removeUser()}
-          >
-            sign out
-          </Button>
-        </div>
-      </header>
-
       <Tabs
         value={tab}
         onChange={setTab}
@@ -153,7 +160,7 @@ export function App({ config }: { config: Config }) {
             rows={wanted}
             downloads={downloads}
             admin={admin}
-            autoGrab={config.autoGrab}
+            autoGrab={!!config?.autoGrab}
             refresh={() => void loadLists()}
           />
         )}
