@@ -106,9 +106,12 @@ export interface QualityProfile {
   }
 }
 
-// The API lives next to the SPA, so paths are relative to wherever it is served
-// from ('/acquire/' on the reference deployment).
-const base = window.location.pathname.replace(/\/[^/]*$/, '/')
+// Where the API lives depends on how the console is running: standalone it sits
+// next to the SPA, embedded it is reached through the portal's proxy. The host
+// tells us, so nothing here assumes a mount point.
+export function defaultApiBase(): string {
+  return window.location.pathname.replace(/\/[^/]*$/, '/')
+}
 
 export class ApiError extends Error {
   constructor(
@@ -119,7 +122,7 @@ export class ApiError extends Error {
   }
 }
 
-export function makeApi(token: string | undefined, onUnauthorized: () => void) {
+export function makeApi(base: string, token: string | undefined, onUnauthorized: () => void) {
   async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
     const res = await fetch(base + 'api/' + path, {
       ...init,
@@ -198,4 +201,3 @@ export function makeApi(token: string | undefined, onUnauthorized: () => void) {
 }
 
 export type Api = ReturnType<typeof makeApi>
-export { base as apiBase }
