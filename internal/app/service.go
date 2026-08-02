@@ -518,9 +518,19 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 		y := int32(w.Year)
 		yearPtr = &y
 	}
-	res, err := s.kc.Ingest(ctx, katalog.IngestRequest{
-		Path: video, Type: typ, Title: w.Title, Year: yearPtr,
-	})
+	req := katalog.IngestRequest{Path: video, Type: typ, Title: w.Title, Year: yearPtr}
+	if typ == "episode" {
+		// katalog rejects an episode without coordinates, and it is right to:
+		// a NULL parent produces a playable orphan with no error anywhere.
+		// Until the request model carries them (P6), a single-file series
+		// download cannot say WHICH episode it is — so fail loudly here rather
+		// than send an ingest we know will be refused, or worse, one that would
+		// have created an orphan on an older katalog.
+		s.setStatus(ctx, w.ID, "failed",
+			"series downloads need episode coordinates before ingest (parent, season, episode)")
+		return nil
+	}
+	res, err := s.kc.Ingest(ctx, req)
 	if err != nil {
 		s.setStatus(ctx, w.ID, "failed", "ingest failed: "+err.Error())
 		return nil
