@@ -400,3 +400,100 @@ func TestSavingAProfileInvalidatesCachedScores(t *testing.T) {
 		t.Errorf("invalidating 'default' touched %d rows scored under another profile", n)
 	}
 }
+
+// The read views must agree with each other and with the underlying rows.
+// A Series view whose counts disagree with the Missing view is worse than none.
+func TestReadViewsAgree(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 1396, Kind: "series", Title: "Breaking Bad",
+		TVDBID: 81189, Monitored: true})
+	id := TitleID("series", 1396)
+	now := time.Now()
+	// 2 aired (one held, one wanted) + 1 unaired.
+	for i, spec := range []struct {
+		off  time.Duration
+		held bool
+	}{{-48 * time.Hour, true}, {-24 * time.Hour, false}, {72 * time.Hour, false}} {
+		season, ep := 1, i+1
+		tid := TargetID(id, &season, &ep)
+		if err := s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "episode",
+			SeasonNumber: &season, EpisodeNumber: &ep, Monitored: true, State: "wanted"}); err != nil {
+			t.Fatal(err)
+		}
+		air := now.Add(spec.off)
+		if err := s.SetAirWindow(ctx, tid, &air, 0); err != nil {
+			t.Fatal(err)
+		}
+		if spec.held {
+			if err := s.ApplyHolding(ctx, tid, "u"+tid, "rel", "default", "grab", map[string]any{}, 100); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	rows, err := s.SeriesOverview(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("series rows = %d", len(rows))
+	}
+	r := rows[0]
+	if r.Episodes != 3 || r.Held != 1 || r.Missing != 1 || r.Unaired != 1 {
+		t.Errorf("series counts = %+v, want episodes=3 held=1 missing=1 unaired=1", r)
+	}
+
+	miss, err := s.Missing(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(miss) != r.Missing {
+		t.Errorf("Missing view has %d rows but the Series view says %d", len(miss), r.Missing)
+	}
+	if len(miss) == 1 && !miss[0].Searchable {
+		t.Error("a series with a tvdb id was reported unsearchable")
+	}
+
+	c, err := s.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Targets != 3 || c.Held != 1 || c.Missing != 1 || c.Unaired != 1 || c.Series != 1 {
+		t.Errorf("counts = %+v", c)
+	}
+
+	cal, err := s.Calendar(ctx, now.AddDate(0, 0, -7), now.AddDate(0, 0, 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cal) != 3 {
+		t.Errorf("calendar returned %d episodes across the window, want 3", len(cal))
+	}
+}
+
+// A title with no id an indexer accepts must be reported as unsearchable rather
+// than sitting in the backlog looking like an ordinary miss.
+func TestMissingFlagsUnsearchableTitles(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 999, Kind: "series", Title: "No Ids Here", Monitored: true})
+	id := TitleID("series", 999)
+	season, ep := 1, 1
+	tid := TargetID(id, &season, &ep)
+	_ = s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "episode",
+		SeasonNumber: &season, EpisodeNumber: &ep, Monitored: true, State: "wanted"})
+	air := time.Now().Add(-24 * time.Hour)
+	_ = s.SetAirWindow(ctx, tid, &air, 0)
+
+	miss, err := s.Missing(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(miss) != 1 {
+		t.Fatalf("missing = %d", len(miss))
+	}
+	if miss[0].Searchable {
+		t.Error("a series with no tvdb id was reported searchable — it would sit in the backlog with no explanation")
+	}
+}

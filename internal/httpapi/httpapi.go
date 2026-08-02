@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-chi/chi/v5"
@@ -637,4 +638,69 @@ func (s *Server) deriveInv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, res)
+}
+
+// listSeries is the Series view: every tracked series with its acquisition
+// progress. Counts are aggregated in one query rather than per series — 402
+// rows makes an N+1 immediately visible.
+func (s *Server) listSeries(w http.ResponseWriter, r *http.Request) {
+	out, err := s.st.SeriesOverview(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"series": out})
+}
+
+// calendar answers "what airs when" — a capability nothing in the stack has
+// today, because until now no air date was persisted anywhere.
+//
+//	GET /api/calendar?days=14&back=7
+func (s *Server) calendar(w http.ResponseWriter, r *http.Request) {
+	days := intParam(r, "days", 14, 1, 90)
+	back := intParam(r, "back", 7, 0, 90)
+	now := time.Now()
+	out, err := s.st.Calendar(r.Context(), now.AddDate(0, 0, -back), now.AddDate(0, 0, days))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"episodes": out})
+}
+
+// missing is the backlog: monitored, aired, still wanted. Rows in search backoff
+// are INCLUDED and flagged rather than hidden — a backlog view that omits
+// everything currently failing is the least useful version of itself.
+func (s *Server) missing(w http.ResponseWriter, r *http.Request) {
+	out, err := s.st.Missing(r.Context(), intParam(r, "limit", 500, 1, 5000))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"missing": out})
+}
+
+func (s *Server) counts(w http.ResponseWriter, r *http.Request) {
+	c, err := s.st.Counts(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, c)
+}
+
+// intParam reads a bounded integer query parameter, so a hand-typed URL cannot
+// ask for a million rows.
+func intParam(r *http.Request, name string, def, lo, hi int) int {
+	v, err := strconv.Atoi(r.URL.Query().Get(name))
+	if err != nil {
+		return def
+	}
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
