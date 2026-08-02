@@ -59,6 +59,19 @@ func (s *Server) systemHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	add("outbox", outboxOK, fmt.Sprintf("%d pending", depth))
 
+	// Disk is the one dependency that destroys production rather than degrading
+	// it, and acquire has no deletion code.
+	if free := s.svc.FreeBytes(); free < 0 {
+		add("storage", fmt.Errorf("cannot read free space at the downloads root"), "")
+	} else {
+		var derr error
+		if free < s.cfg.StorageFloorBytes() {
+			derr = fmt.Errorf("%d GB free is below the %d GB floor; grabs are refused",
+				free>>30, s.cfg.StorageFloorBytes()>>30)
+		}
+		add("storage", derr, fmt.Sprintf("%d GB free", free>>30))
+	}
+
 	// A clock that has silently stopped looks identical to a quiet system.
 	overdue, oErr := s.st.OverdueSchedules(ctx, 3)
 	clockErr := oErr
@@ -120,6 +133,14 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		// The single most diagnostic number in the service: it climbs when the
 		// relay fails, and nothing else surfaces that.
 		gauge("acquire_outbox_pending", "Undelivered events.", int(depth))
+	}
+	if free := s.svc.FreeBytes(); free >= 0 {
+		gauge("acquire_storage_free_gb",
+			"Free space where downloads land. The export runs at 92%; beta shares it with production.",
+			int(free>>30))
+	}
+	if n, err := s.st.ActiveDownloads(ctx); err == nil {
+		gauge("acquire_downloads_active", "In-flight downloads.", n)
 	}
 	if n, err := s.st.BlocklistSize(ctx); err == nil {
 		gauge("acquire_blocklist", "Releases blocked from being re-picked.", n)
