@@ -125,3 +125,154 @@ func TestImdbPrefixStrippedOnTheWire(t *testing.T) {
 		t.Errorf("imdbid = %q, want the tt prefix stripped", v.Get("imdbid"))
 	}
 }
+
+func fleet() []Capability {
+	return []Capability{
+		{ID: 1, Name: "idCapable", AcceptsTVDBID: true, AcceptsSeasonEp: true},
+		{ID: 2, Name: "coordsOnly", AcceptsSeasonEp: true},
+		{ID: 3, Name: "textOnly"},
+	}
+}
+
+// The escalation must go precise -> broad, and must STOP as soon as a stage
+// produces verified results. Escalating past a good answer only spends quota.
+func TestEscalationStopsAtTheFirstUsefulStage(t *testing.T) {
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		hits = append(hits, r.URL.Path+"?"+q.Get("t")+"|tvdbid="+q.Get("tvdbid"))
+		if q.Get("tvdbid") != "" {
+			_, _ = w.Write([]byte(`<rss><channel><item>
+			  <title>Breaking.Bad.S02E05.1080p.WEB-DL.x265-G</title>
+			  <enclosure url="http://x/1" length="100"/></item></channel></rss>`))
+			return
+		}
+		_, _ = w.Write([]byte(`<rss><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	e := &Engine{Client: c, MaxConcurrent: 2}
+
+	got, err := e.Search(context.Background(), Target{
+		Title: "Breaking Bad", TVDBID: 81189, Season: ip(2), Episode: ip(5), Kind: "series",
+	}, fleet())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Stage != "id" {
+		t.Fatalf("results = %+v, want one id-stage hit", got)
+	}
+	// Only the id-capable indexer should have been asked.
+	if len(hits) != 1 {
+		t.Errorf("escalated past a successful stage: %v", hits)
+	}
+}
+
+// An empty typed stage is inconclusive, so the engine must fall back rather
+// than concluding the release does not exist.
+func TestEmptyTypedStageFallsBack(t *testing.T) {
+	var stages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch {
+		case q.Get("tvdbid") != "":
+			stages = append(stages, "id")
+			_, _ = w.Write([]byte(`<rss><channel></channel></rss>`)) // silent zero
+		case q.Get("season") != "":
+			stages = append(stages, "coords")
+			_, _ = w.Write([]byte(`<rss><channel><item>
+			  <title>Breaking.Bad.S02E05.720p.WEB-DL.x264-H</title>
+			  <enclosure url="http://x/2" length="100"/></item></channel></rss>`))
+		default:
+			stages = append(stages, "text")
+			_, _ = w.Write([]byte(`<rss><channel></channel></rss>`))
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	e := &Engine{Client: c, MaxConcurrent: 2}
+	got, _ := e.Search(context.Background(), Target{
+		Title: "Breaking Bad", TVDBID: 81189, Season: ip(2), Episode: ip(5), Kind: "series"}, fleet())
+	if len(got) == 0 {
+		t.Fatal("a silent-zero id stage was treated as proof of absence")
+	}
+	if got[0].Stage != "coords" {
+		t.Errorf("fell through to %q, want coords", got[0].Stage)
+	}
+}
+
+// The free-text stage is where the wrong show arrives. It must be filtered out
+// rather than handed to a ranker that has no title term.
+func TestFreeTextStageRejectsTheWrongShow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`<rss><channel>
+		  <item><title>The.Bad.Guys.Breaking.In.S02E05.1080p-X</title>
+		    <enclosure url="http://x/3" length="100"/></item>
+		  <item><title>Breaking.Bad.S02E05.1080p.WEB-DL.x265-G</title>
+		    <enclosure url="http://x/4" length="100"/></item>
+		</channel></rss>`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	e := &Engine{Client: c, MaxConcurrent: 1}
+	got, _ := e.Search(context.Background(), Target{
+		Title: "Breaking Bad", Season: ip(2), Episode: ip(5), Kind: "series"},
+		[]Capability{{ID: 3, Name: "textOnly"}})
+	if len(got) != 1 {
+		t.Fatalf("results = %d, want only the real show", len(got))
+	}
+	if got[0].Title != "Breaking.Bad.S02E05.1080p.WEB-DL.x265-G" {
+		t.Errorf("kept the wrong release: %s", got[0].Title)
+	}
+}
+
+// One indexer failing must not fail the search — a fleet where any member can
+// be down or banned is the normal case.
+func TestOneFailingIndexerDoesNotFailTheSearch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/indexer/2/newznab" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(`<rss><channel><item>
+		  <title>Breaking.Bad.S02E05.1080p-G</title>
+		  <enclosure url="http://x/5" length="100"/></item></channel></rss>`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	e := &Engine{Client: c, MaxConcurrent: 3}
+	got, err := e.Search(context.Background(), Target{
+		Title: "Breaking Bad", Season: ip(2), Episode: ip(5), Kind: "series"},
+		[]Capability{{ID: 2, Name: "broken", AcceptsSeasonEp: true}, {ID: 3, Name: "ok", AcceptsSeasonEp: true}})
+	if err != nil {
+		t.Fatalf("a single indexer failure failed the whole search: %v", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("results = %d, want the one healthy indexer's hit", len(got))
+	}
+}
+
+// A movie target must be scoped to movie categories: 12 enabled indexers are
+// adult-only and an unscoped family-movie search fans out to them.
+func TestMovieTargetIsCategoryScoped(t *testing.T) {
+	var cats []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cats = append(cats, r.URL.Query().Get("cat"))
+		_, _ = w.Write([]byte(`<rss><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	e := &Engine{Client: c, MaxConcurrent: 1}
+	_, _ = e.Search(context.Background(), Target{Title: "The Matrix", IMDBID: "tt0133093", Kind: "movie"},
+		[]Capability{{ID: 1, Name: "i", AcceptsIMDBID: true}})
+	for _, c := range cats {
+		if c != CatMovie {
+			t.Errorf("movie search used cat=%q, want %q", c, CatMovie)
+		}
+	}
+}
