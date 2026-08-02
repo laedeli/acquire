@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // The movie case has BOTH season_number and episode_number NULL. Under default
@@ -128,3 +129,110 @@ func TestWantModelHasNoForeignKeys(t *testing.T) {
 		t.Errorf("%s has %d foreign key(s) — re-running this migration will fail", tbl, n)
 	}
 }
+
+// A file that katalog loses must make the target wanted again. Modelling WANT
+// separately from HAVE is pointless if the projection is one-way.
+func TestClearingAHoldingMakesTheTargetWantedAgain(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title) VALUES ('t5',5,'movie','M')`)
+	if err := s.UpsertTarget(ctx, Target{ID: "g1", TitleID: "t5", Kind: "movie", Monitored: true, State: "wanted"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ApplyHolding(ctx, "g1", "uuid-9", "M.2024.1080p.WEB-DL.x265-G", "default", "grab",
+		map[string]any{"resolution": "1080p"}, 1497); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	_ = s.pool.QueryRow(ctx, `SELECT state FROM acquisition_targets WHERE id='g1'`).Scan(&state)
+	if state != "held" {
+		t.Fatalf("state after holding = %q, want held", state)
+	}
+	n, err := s.ClearHolding(ctx, "uuid-9")
+	if err != nil || n != 1 {
+		t.Fatalf("ClearHolding = %d, %v", n, err)
+	}
+	_ = s.pool.QueryRow(ctx, `SELECT state FROM acquisition_targets WHERE id='g1'`).Scan(&state)
+	if state != "wanted" {
+		t.Errorf("a deleted file left the target %q — it should be wanted again", state)
+	}
+}
+
+// An upgrade must never fire on a score guessed off a legacy file. 16,169
+// existing episode files have no grab row behind them.
+func TestCutoffNeverUpgradesADerivedScore(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title) VALUES ('t6',6,'series','S')`)
+	for i, src := range []string{"grab", "derived"} {
+		id := "c" + string(rune('1'+i))
+		ep := i + 1
+		if err := s.UpsertTarget(ctx, Target{ID: id, TitleID: "t6", Kind: "episode",
+			SeasonNumber: intp(1), EpisodeNumber: &ep, Monitored: true, State: "wanted"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ApplyHolding(ctx, id, "u"+id, "rel", "default", src, map[string]any{}, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.CutoffUnmet(ctx, 1000, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "c1" {
+		t.Errorf("cutoff returned %+v — only the real grab may be upgraded", got)
+	}
+}
+
+// Unaired episodes must not be searched: indexer quota is the scarce resource,
+// and a release that cannot exist yet burns it for nothing.
+func TestUnairedEpisodesAreNotDue(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title) VALUES ('t7',7,'series','S')`)
+	for i, when := range []string{"now() - interval '1 day'", "now() + interval '7 days'"} {
+		ep := i + 1
+		_, err := s.pool.Exec(ctx, `
+			INSERT INTO acquisition_targets (id,title_id,kind,season_number,episode_number,air_window_opens_at)
+			VALUES ($1,'t7','episode',1,$2, `+when+`)`, "u"+string(rune('1'+i)), ep)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	due, err := s.DueTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].ID != "u1" {
+		t.Errorf("due = %+v, want only the aired episode", due)
+	}
+}
+
+// Backoff must actually push the next attempt out, and grow.
+func TestSearchBackoffGrows(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title) VALUES ('t8',8,'movie','M')`)
+	_ = s.UpsertTarget(ctx, Target{ID: "b1", TitleID: "t8", Kind: "movie", Monitored: true, State: "wanted"})
+	var prev time.Duration
+	for i := 1; i <= 3; i++ {
+		if err := s.BackoffSearch(ctx, "b1", 10*time.Minute, 24*time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		var secs float64
+		_ = s.pool.QueryRow(ctx,
+			`SELECT EXTRACT(EPOCH FROM (search_backoff_until - now())) FROM acquisition_targets WHERE id='b1'`).Scan(&secs)
+		cur := time.Duration(secs) * time.Second
+		if cur <= prev {
+			t.Errorf("attempt %d backoff %v did not grow past %v", i, cur, prev)
+		}
+		prev = cur
+	}
+	// And it must not be due while backed off.
+	due, _ := s.DueTargets(ctx, 10)
+	if len(due) != 0 {
+		t.Errorf("a backed-off target was returned as due: %+v", due)
+	}
+}
+
+func intp(v int) *int { return &v }
