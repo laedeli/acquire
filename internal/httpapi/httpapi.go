@@ -212,8 +212,32 @@ func (s *Server) Handler() http.Handler {
 
 	// Embedded SPA at /  (assets + index fallback).
 	sub, _ := fs.Sub(webFS, "web")
+	// An unknown /api path must 404, never fall through to the SPA.
+	//
+	// http.FileServer answers a missing directory-ish path with 301 Moved
+	// Permanently, and a browser caches a PERMANENT redirect. So an API route
+	// that is temporarily absent — a handler written but not yet registered,
+	// exactly what happened here — poisons every client that touched it: the
+	// console kept looping on the cached 301 long after the server was fixed,
+	// and no amount of redeploying helped. A 404 is honest and uncacheable.
+	r.NotFound(func(w http.ResponseWriter, rq *http.Request) {
+		if strings.HasPrefix(rq.URL.Path, "/api/") {
+			http.Error(w, "no such endpoint: "+rq.URL.Path, http.StatusNotFound)
+			return
+		}
+		spaFallback(sub, http.FileServer(http.FS(sub)))(w, rq)
+	})
 	fileServer := http.FileServer(http.FS(sub))
-	r.Handle("/*", spaFallback(sub, fileServer))
+	r.Handle("/*", func() http.HandlerFunc {
+		fb := spaFallback(sub, fileServer)
+		return func(w http.ResponseWriter, rq *http.Request) {
+			if strings.HasPrefix(rq.URL.Path, "/api/") {
+				http.Error(w, "no such endpoint: "+rq.URL.Path, http.StatusNotFound)
+				return
+			}
+			fb(w, rq)
+		}
+	}())
 	return r
 }
 
