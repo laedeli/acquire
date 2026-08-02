@@ -704,3 +704,22 @@ func intParam(r *http.Request, name string, def, lo, hi int) int {
 	}
 	return v
 }
+
+// searchTarget runs a typed search for one tracked target.
+//
+// Distinct from /api/search, which is free text on purpose: a human typing a
+// query wants what they typed. A TARGET has ids and coordinates, so it can be
+// searched precisely — and must be, because the ranker has no title term and
+// will score a different show quite happily.
+func (s *Server) searchTarget(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	out, err := s.svc.SearchTarget(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"candidates": out})
+}

@@ -17,6 +17,7 @@ import (
 	"github.com/laedeli/acquire/internal/config"
 	"github.com/laedeli/acquire/internal/events"
 	"github.com/laedeli/acquire/internal/gateway"
+	"github.com/laedeli/acquire/internal/indexer"
 	"github.com/laedeli/acquire/internal/katalog"
 	"github.com/laedeli/acquire/internal/prowlarr"
 	"github.com/laedeli/acquire/internal/release"
@@ -38,11 +39,20 @@ type Service struct {
 	kc  *katalog.Client
 	tm  *tmdb.Client
 	pr  *prowlarr.Client
+	ix  *indexer.Engine
 	bus Bus
 }
 
 func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, bus Bus) *Service {
-	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, bus: bus}
+	// The typed engine talks to the SAME aggregator, but through the
+	// per-indexer newznab proxy rather than /api/v1/search — the latter accepts
+	// season/ep/tvdbid, returns 200 and discards them.
+	ix := &indexer.Engine{
+		Client:        indexer.New(cfg.IndexerURL, cfg.IndexerAPIKey),
+		MaxConcurrent: 4,
+		PerIndexer:    45 * time.Second,
+	}
+	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, ix: ix, bus: bus}
 }
 
 func (s *Service) notify() {
@@ -208,6 +218,11 @@ type Candidate struct {
 	Resolution string `json:"resolution"`
 	Codec      string `json:"codec"`
 	SourceType string `json:"sourceType"`
+	// Provenance: which search stage produced this and what identified it.
+	// A console that shows "id" vs "text" tells an operator whether the match
+	// is certain or merely plausible.
+	Stage      string `json:"stage,omitempty"`
+	MatchedVia string `json:"matchedVia,omitempty"`
 }
 
 // rankByProfile scores every release against the active quality profile and
