@@ -5,6 +5,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -92,7 +93,7 @@ func Load() Config {
 
 		IndexerURL:    firstEnv("INDEXER_URL", "PROWLARR_URL"),
 		IndexerAPIKey: firstEnv("INDEXER_API_KEY", "PROWLARR_API_KEY"),
-		PreferUsenet:   def("usenet", "ACQUIRE_PREFER") == "usenet",
+		PreferUsenet:  def("usenet", "ACQUIRE_PREFER") == "usenet",
 
 		KafkaBrokers:     env("KAFKA_BROKERS"),
 		KafkaCertDir:     def("/etc/kafka-cert", "KAFKA_CERT_DIR"),
@@ -114,4 +115,31 @@ func firstEnv(names ...string) string {
 		}
 	}
 	return ""
+}
+
+// StorageFloorBytes is the free space below which acquire refuses to grab.
+// Default 500 GB: the media export runs at 92% with 4.5 TB free and beta shares
+// the SAME filesystem as production, so an unbounded sweep would eat prod's
+// headroom. Override with ACQUIRE_STORAGE_FLOOR_GB.
+func (c Config) StorageFloorBytes() int64 {
+	gb := int64(500)
+	if v := env("ACQUIRE_STORAGE_FLOOR_GB"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			gb = n
+		}
+	}
+	return gb << 30
+}
+
+// MaxConcurrentGrabs bounds in-flight downloads. There is no such cap anywhere
+// today: a backlog sweep could start hundreds at once and fill the disk before
+// the first one finishes, with nothing to stop it.
+func (c Config) MaxConcurrentGrabs() int {
+	n := 3
+	if v := env("ACQUIRE_MAX_CONCURRENT_GRABS"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			n = p
+		}
+	}
+	return n
 }

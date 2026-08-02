@@ -245,3 +245,12 @@ func (s *Store) RetryableTargets(ctx context.Context, limit int) ([]Target, erro
 	defer rows.Close()
 	return scanTargets(rows)
 }
+
+// ActiveDownloads counts in-flight work, so a sweep cannot start unbounded
+// grabs. Terminal states are excluded; anything else is still consuming disk.
+func (s *Store) ActiveDownloads(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM downloads WHERE state NOT IN ('completed','failed','cancelled')`).Scan(&n)
+	return n, err
+}

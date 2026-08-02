@@ -121,6 +121,11 @@ func (s *Service) Grab(ctx context.Context, wantedID, source, adapter string) er
 	if adapter == "" {
 		adapter = "qbittorrent"
 	}
+	// Last gate before anything is written to disk. Fails closed: the media
+	// export is at 92% and beta shares it with production.
+	if err := s.AdmitGrab(ctx, 0); err != nil {
+		return err
+	}
 	res, err := s.gw.Add(ctx, gateway.AddRequest{
 		Adapter:      adapter,
 		Source:       source,
@@ -170,6 +175,11 @@ func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 	}
 	best := ranked[0]
 	adapter := best.Adapter
+	// Last gate before anything is written to disk. Fails closed: the media
+	// export is at 92% and beta shares it with production.
+	if err := s.AdmitGrab(ctx, 0); err != nil {
+		return err
+	}
 	res, err := s.gw.Add(ctx, gateway.AddRequest{
 		Adapter:      adapter,
 		Source:       best.Source,
@@ -314,6 +324,11 @@ func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidat
 	adapter := c.Adapter
 	if adapter == "" {
 		adapter = "qbittorrent"
+	}
+	// Last gate before anything is written to disk. Fails closed: the media
+	// export is at 92% and beta shares it with production.
+	if err := s.AdmitGrab(ctx, 0); err != nil {
+		return err
 	}
 	res, err := s.gw.Add(ctx, gateway.AddRequest{
 		Adapter: adapter, Source: c.Source, Title: w.Title,
