@@ -537,3 +537,92 @@ func TestTargetWithTitleAndAliases(t *testing.T) {
 		t.Errorf("aliases = %v, want 2", aliases)
 	}
 }
+
+// Ranking is deterministic, so a retry re-picks the identical failed release
+// unless it is blocked. That is the entire difference between "retry" and
+// "retry with the next best".
+func TestBlocklistExcludesAndExpires(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	const rel = "Movie.2024.1080p.WEB-DL.x265-BAD"
+	if err := s.Block(ctx, rel, "target-1", "anIndexer", "download failed", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := s.BlockedFor(ctx, "target-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked[rel] != "download failed" {
+		t.Fatalf("block not returned: %v", blocked)
+	}
+	// A different target is unaffected — a release that failed once is not
+	// globally condemned.
+	other, _ := s.BlockedFor(ctx, "target-2")
+	if _, found := other[rel]; found {
+		t.Error("a per-target block leaked to another target")
+	}
+	// Expiry: an indexer outage must not poison a release forever.
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE blocklist SET expires_at = now() - interval '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	blocked, _ = s.BlockedFor(ctx, "target-1")
+	if _, found := blocked[rel]; found {
+		t.Error("an expired block is still being enforced")
+	}
+	// The row survives so the history of WHY remains.
+	var n int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM blocklist`).Scan(&n)
+	if n != 1 {
+		t.Errorf("expired block row was deleted; the reason is lost")
+	}
+}
+
+// A retry is only eligible once its backoff has actually expired.
+func TestRetryableTargetsRespectBackoff(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 7, Kind: "movie", Title: "M"})
+	id := TitleID("movie", 7)
+	tid := TargetID(id, nil, nil)
+	_ = s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "movie", Monitored: true, State: "wanted"})
+
+	// No failures yet: not a retry candidate.
+	if got, _ := s.RetryableTargets(ctx, 10); len(got) != 0 {
+		t.Errorf("a target that never failed is not retryable: %+v", got)
+	}
+	if err := s.BackoffSearch(ctx, tid, time.Hour, 24*time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	// Backed off: still not eligible.
+	if got, _ := s.RetryableTargets(ctx, 10); len(got) != 0 {
+		t.Errorf("a target still in backoff was returned: %+v", got)
+	}
+	_, _ = s.pool.Exec(ctx,
+		`UPDATE acquisition_targets SET search_backoff_until = now() - interval '1 minute' WHERE id=$1`, tid)
+	got, err := s.RetryableTargets(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("an expired backoff should be retryable, got %d", len(got))
+	}
+}
+
+// History must record what happened even when the subject no longer exists.
+func TestHistoryRecordsAndReads(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	if err := s.RecordHistory(ctx, HistoryEntry{
+		Kind: "searched", Subject: "gone", Title: "Some.Release", Indexer: "ix",
+		Protocol: "usenet", SizeMb: 7000, Score: 1497, Reason: "3 candidates"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.RecentHistory(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0]["kind"] != "searched" || got[0]["score"] != 1497 {
+		t.Errorf("history round-trip failed: %+v", got)
+	}
+}

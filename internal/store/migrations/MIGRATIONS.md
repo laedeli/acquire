@@ -25,7 +25,8 @@ same commit that adds the file.**
 | `005` | P0 / WP0a — repair the live ranker profile row | shipped |
 | `006`–`009` | P2 / WP2 — outbox, sagas, schedules, history | **in progress** |
 | `010` | P3 / WP3 — the WANT model (titles, seasons, acquisition_targets, grab_targets) | **in progress** |
-| `011`–`019` | P3 / WP3 — remainder (requests split, holdings reconciler) | reserved |
+| `011` | P5 / WP5 — blocklist (failure recovery) | **in progress** |
+| `012`–`019` | P3/P5 remainder (requests split) | reserved |
 | `020`–`024` | P4 / WP4 — typed search, id translation cache | reserved |
 | `025`–`029` | P5 / WP5 — blocklist, retry, upgrades, retention | reserved |
 | `030`–`039` | P6 / WP6 — requests, discovery, notifications | reserved |

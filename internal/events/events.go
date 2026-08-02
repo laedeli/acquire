@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,12 @@ import (
 
 // Topics resolved from the tenant prefix.
 type Topics struct {
-	Started   string
-	Progress  string
-	Completed string
-	Failed    string
-	Packaged  string
+	Started     string
+	Progress    string
+	Completed   string
+	Failed      string
+	Packaged    string
+	ScheduleDue string
 }
 
 func TopicsFor(prefix string) Topics {
@@ -35,11 +37,12 @@ func TopicsFor(prefix string) Topics {
 		prefix = "stube."
 	}
 	return Topics{
-		Started:   prefix + "download.client.started",
-		Progress:  prefix + "download.client.progress",
-		Completed: prefix + "download.client.completed",
-		Failed:    prefix + "download.client.failed",
-		Packaged:  prefix + "catalog.item.packaged",
+		Started:     prefix + "download.client.started",
+		Progress:    prefix + "download.client.progress",
+		Completed:   prefix + "download.client.completed",
+		Failed:      prefix + "download.client.failed",
+		Packaged:    prefix + "catalog.item.packaged",
+		ScheduleDue: prefix + "acquire.schedule.due",
 	}
 }
 
@@ -131,6 +134,11 @@ type Handlers struct {
 	OnCompleted func(ctx context.Context, ev DownloadEvent) error
 	OnFailed    func(ctx context.Context, ev DownloadEvent) error
 	OnPackaged  func(ctx context.Context, ev ItemEvent) error
+	// OnScheduleDue closes the loop: the clock emits, the outbox makes it
+	// durable, and this acts on it. Handling it here rather than inside the
+	// timer is what makes a sweep replayable instead of silently skipped when a
+	// pod dies mid-run.
+	OnScheduleDue func(ctx context.Context, name string) error
 }
 
 // Run consumes until ctx is cancelled. Per-message errors are logged by the
@@ -142,7 +150,7 @@ func (c *Consumer) Run(ctx context.Context, h Handlers) error {
 		GroupID: c.group,
 		GroupTopics: []string{
 			c.topics.Started, c.topics.Progress,
-			c.topics.Completed, c.topics.Failed, c.topics.Packaged,
+			c.topics.Completed, c.topics.Failed, c.topics.Packaged, c.topics.ScheduleDue,
 		},
 		Dialer:      dialer,
 		StartOffset: kafka.LastOffset, // only new events; history isn't replayable state
@@ -177,6 +185,17 @@ func (c *Consumer) Run(ctx context.Context, h Handlers) error {
 			var ev DownloadEvent
 			if json.Unmarshal(msg.Value, &ev) == nil && h.OnFailed != nil {
 				_ = h.OnFailed(ctx, ev)
+			}
+		case c.topics.ScheduleDue:
+			if h.OnScheduleDue != nil {
+				var ev struct {
+					Name string `json:"name"`
+				}
+				if err := json.Unmarshal(msg.Value, &ev); err == nil && ev.Name != "" {
+					if err := h.OnScheduleDue(ctx, ev.Name); err != nil {
+						log.Printf("acquire: schedule %s failed: %v", ev.Name, err)
+					}
+				}
 			}
 		case c.topics.Packaged:
 			var ev ItemEvent
