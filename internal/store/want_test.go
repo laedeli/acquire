@@ -366,3 +366,37 @@ func TestAirWindowAppliesGrace(t *testing.T) {
 		t.Errorf("an episode that has not aired yet was returned as due: %+v", due)
 	}
 }
+
+// Saving a profile must invalidate the cached scores computed under it, or the
+// cutoff sweep silently compares new preferences against old numbers.
+func TestSavingAProfileInvalidatesCachedScores(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 42, Kind: "movie", Title: "M"})
+	id := TitleID("movie", 42)
+	tid := TargetID(id, nil, nil)
+	_ = s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "movie", Monitored: true, State: "wanted"})
+	if err := s.ApplyHolding(ctx, tid, "uuid-1", "M.2024.1080p.WEB-DL.x265-G",
+		"default", "grab", map[string]any{}, 1497); err != nil {
+		t.Fatal(err)
+	}
+	var scoredAt *time.Time
+	_ = s.pool.QueryRow(ctx, `SELECT held_scored_at FROM acquisition_targets WHERE id=$1`, tid).Scan(&scoredAt)
+	if scoredAt == nil {
+		t.Fatal("held_scored_at was not set when the holding was applied")
+	}
+	n, err := s.InvalidateHeldScores(ctx, "default")
+	if err != nil || n != 1 {
+		t.Fatalf("invalidate = %d, %v", n, err)
+	}
+	_ = s.pool.QueryRow(ctx, `SELECT held_scored_at FROM acquisition_targets WHERE id=$1`, tid).Scan(&scoredAt)
+	if scoredAt != nil {
+		t.Error("the cached score survived a profile change")
+	}
+	// A different profile's scores are untouched.
+	_ = s.ApplyHolding(ctx, tid, "uuid-1", "rel", "uhd", "grab", map[string]any{}, 10)
+	n, _ = s.InvalidateHeldScores(ctx, "default")
+	if n != 0 {
+		t.Errorf("invalidating 'default' touched %d rows scored under another profile", n)
+	}
+}

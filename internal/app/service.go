@@ -372,7 +372,14 @@ func (s *Service) Profiles(ctx context.Context) ([]store.QualityProfile, error) 
 }
 
 func (s *Service) SaveProfile(ctx context.Context, p store.QualityProfile) error {
-	return s.st.SaveProfile(ctx, p)
+	if err := s.st.SaveProfile(ctx, p); err != nil {
+		return err
+	}
+	// held_score is a cache of Score(held_quality, this profile). Saving without
+	// invalidating leaves every cutoff comparison running against the old
+	// preferences, wrong and silent.
+	s.InvalidateProfileScores(ctx, p.ID)
+	return nil
 }
 
 func (s *Service) DeleteProfile(ctx context.Context, id string) error {
