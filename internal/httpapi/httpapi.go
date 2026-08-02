@@ -198,6 +198,16 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/score/simulate", s.simulateScore)  // admin — pure, no indexer I/O
 		r.Post("/api/import/intent", s.importIntent)    // admin — read incumbent, write titles
 		r.Post("/api/import/inventory", s.deriveInv)    // admin — derive episodes from TMDB
+		// The WANT model's read side. These were written but never registered —
+		// unused methods compile, so nothing caught it until the console got a
+		// 301 to the SPA instead of JSON. A test now asserts every exported
+		// handler is reachable.
+		r.Get("/api/series", s.listSeries)
+		r.Get("/api/calendar", s.calendar)
+		r.Get("/api/missing", s.missing)
+		r.Get("/api/counts", s.counts)
+		r.Get("/api/history", s.history)
+		r.Get("/api/targets/{id}/search", s.searchTarget) // admin — TYPED search
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
