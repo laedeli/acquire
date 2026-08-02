@@ -26,6 +26,12 @@ type Info struct {
 	Languages  []string `json:"languages"`
 	Season     int      `json:"season"`
 	Episode    int      `json:"episode"`
+
+	// Normalized is the release name with scene separators collapsed to spaces
+	// and lowercased — the string every term match must run against. Matching
+	// the RAW title instead is why "Movie.2024.HDCAM.x264-GRP" slipped past a
+	// reject list containing "cam".
+	Normalized string `json:"-"`
 }
 
 var (
@@ -37,13 +43,23 @@ var (
 	wsRE         = regexp.MustCompile(`\s+`)
 
 	// Ordered: composite tokens before the single tokens they contain.
-	sources = []struct{ token, name string }{
-		{"bdremux", "remux"}, {"bd-remux", "remux"}, {"remux", "remux"},
-		{"bluray", "bluray"}, {"blu-ray", "bluray"}, {"brrip", "bluray"}, {"bdrip", "bluray"},
-		{"web-dl", "webdl"}, {"webdl", "webdl"}, {"webrip", "webrip"}, {"web", "webdl"},
-		{"hdtv", "hdtv"}, {"pdtv", "hdtv"},
-		{"dvdrip", "dvd"}, {"dvd", "dvd"},
-		{"telesync", "cam"}, {"camrip", "cam"}, {"hdcam", "cam"}, {"cam", "cam"},
+	// strict=true matches only as a whole word. The cam family needs it: a loose
+	// substring match makes "Film.2024.x264-CAMELOT" parse as Source=cam, which
+	// would hard-reject a legitimate release group.
+	sources = []struct {
+		token, name string
+		strict      bool
+	}{
+		{token: "bdremux", name: "remux"}, {token: "bd-remux", name: "remux"}, {token: "remux", name: "remux"},
+		{token: "bluray", name: "bluray"}, {token: "blu-ray", name: "bluray"},
+		{token: "brrip", name: "bluray"}, {token: "bdrip", name: "bluray"},
+		{token: "web-dl", name: "webdl"}, {token: "webdl", name: "webdl"},
+		{token: "webrip", name: "webrip"}, {token: "web", name: "webdl"},
+		{token: "hdtv", name: "hdtv"}, {token: "pdtv", name: "hdtv"},
+		{token: "dvdrip", name: "dvd"}, {token: "dvd", name: "dvd"},
+		{token: "telesync", name: "cam", strict: true}, {token: "camrip", name: "cam", strict: true},
+		{token: "hdcam", name: "cam", strict: true}, {token: "hdts", name: "cam", strict: true},
+		{token: "cam", name: "cam", strict: true},
 	}
 	codecs = []struct{ token, name string }{
 		{"x265", "x265"}, {"h265", "x265"}, {"h.265", "x265"}, {"hevc", "x265"},
@@ -80,7 +96,11 @@ func Parse(name string) Info {
 		}
 	}
 	for _, s := range sources {
-		if strings.Contains(padded, " "+s.token+" ") || strings.Contains(spaced, s.token) {
+		if strings.Contains(padded, " "+s.token+" ") {
+			in.Source = s.name
+			break
+		}
+		if !s.strict && strings.Contains(spaced, s.token) {
 			in.Source = s.name
 			break
 		}
@@ -120,6 +140,7 @@ func Parse(name string) Info {
 
 	// The title is whatever precedes the first piece of technical vocabulary.
 	in.Title = titleOf(spaced, in)
+	in.Normalized = spaced
 	return in
 }
 
