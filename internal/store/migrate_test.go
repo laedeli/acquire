@@ -123,8 +123,10 @@ func TestMigrateRepairsAProductionShapedProfileRow(t *testing.T) {
 	if got["preferProtocol"] != "usenet" {
 		t.Errorf("preferProtocol was clobbered: %v", got["preferProtocol"])
 	}
-	if got["minSizeMb"] != float64(500) {
-		t.Errorf("minSizeMb was clobbered: %v", got["minSizeMb"])
+	// ...but the seeded 500 MB floor is itself a bug — it is a movie assumption
+	// that rejects real TV — so an untouched seed value IS corrected.
+	if got["minSizeMb"] != float64(100) {
+		t.Errorf("the seeded 500 MB floor should have been corrected to 100, got %v", got["minSizeMb"])
 	}
 
 	// Re-running must now be a no-op: the guard is NOT (config ? 'sourceScores').
@@ -158,7 +160,7 @@ func TestMigrateRepairsAnEditedProfileWithoutLosingEdits(t *testing.T) {
 		UPDATE quality_profiles
 		   SET config = '{"preferProtocol":"torrent","minSeeders":5,"preferHdr":true,
 		                  "resolutions":["1080p"],"rejectTerms":["cam"],
-		                  "minSizeMb":500,"maxSizeMb":25000}'::jsonb,
+		                  "minSizeMb":250,"maxSizeMb":25000}'::jsonb,
 		       updated_at = now() + interval '1 hour'
 		 WHERE id = 'default'`); err != nil {
 		t.Fatal(err)
@@ -177,6 +179,10 @@ func TestMigrateRepairsAnEditedProfileWithoutLosingEdits(t *testing.T) {
 	}
 	if got["preferProtocol"] != "torrent" || got["minSeeders"] != float64(5) || got["preferHdr"] != true {
 		t.Errorf("operator edits were lost: %v", got)
+	}
+	// A floor the operator chose is NOT the seeded value, so it must survive.
+	if got["minSizeMb"] != float64(250) {
+		t.Errorf("a deliberately-set minSizeMb was clobbered: %v", got["minSizeMb"])
 	}
 	if _, ok := got["sourceScores"]; !ok {
 		t.Error("an edited profile did not receive the ranker repair")
