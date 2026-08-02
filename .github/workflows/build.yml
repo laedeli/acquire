@@ -8,6 +8,21 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Migrations re-run on every boot with no tracking table, so they are only
+    # as safe as a real double-boot proves. A real Postgres is the only way to
+    # test that, and to test the 005 repair against a production-shaped row.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: acquire_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      TEST_DSN: postgres://postgres:test@localhost:5432/acquire_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -16,6 +31,8 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      - name: the migration tests actually ran (they skip without a database)
+        run: go test ./internal/store/ -run Migrate -v | grep -q "PASS: TestMigrateRepairsAProductionShapedProfileRow"
 
   console:
     runs-on: ubuntu-latest
