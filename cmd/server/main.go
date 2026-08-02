@@ -7,17 +7,20 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/laedeli/acquire/internal/app"
+	"github.com/laedeli/acquire/internal/clock"
 	"github.com/laedeli/acquire/internal/config"
 	"github.com/laedeli/acquire/internal/events"
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/httpapi"
 	"github.com/laedeli/acquire/internal/katalog"
 	"github.com/laedeli/acquire/internal/prowlarr"
+	"github.com/laedeli/acquire/internal/relay"
 	"github.com/laedeli/acquire/internal/sse"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
@@ -62,6 +65,36 @@ func main() {
 		log.Printf("acquire: no Kafka brokers — status reactions disabled")
 	}
 
+	// ── substrate ──────────────────────────────────────────────────────────
+	// The outbox relay runs on EVERY replica (claims use SKIP LOCKED, so they
+	// partition rather than race); the clock runs on all of them too but a
+	// transaction-scoped advisory lock admits exactly one per tick.
+	prod, err := events.NewProducer(brokersOf(cfg.KafkaBrokers), cfg.KafkaCertDir)
+	if err != nil {
+		log.Printf("acquire: kafka producer init failed (events stay in the outbox): %v", err)
+	}
+	if prod != nil {
+		defer func() { _ = prod.Close() }()
+	}
+	go relay.New(st, prod, 2*time.Second).Run(ctx)
+	// Register the recurring jobs later phases hang off. EnsureSchedule never
+	// disturbs an existing row, so an operator's disable or interval survives a
+	// redeploy. Nothing consumes schedule.due yet — this establishes the
+	// cadence and the alerting surface before the work exists.
+	for _, sc := range []struct {
+		name  string
+		every time.Duration
+	}{
+		{"backlog-sweep", 30 * time.Minute},
+		{"retry-failed", 15 * time.Minute},
+		{"outbox-audit", 6 * time.Hour},
+	} {
+		if err := st.EnsureSchedule(ctx, sc.name, sc.every); err != nil {
+			log.Printf("acquire: could not register schedule %s: %v", sc.name, err)
+		}
+	}
+	go clock.New(st, app.NewClockEmitter(cfg.KafkaTopicPrefix), 10*time.Second).Run(ctx)
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           httpapi.NewServer(cfg, svc, st, br).Handler(),
@@ -79,4 +112,15 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// brokersOf splits the comma-separated KAFKA_BROKERS value the deployment sets.
+func brokersOf(v string) []string {
+	var out []string
+	for _, b := range strings.Split(v, ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
 }
