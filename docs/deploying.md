@@ -81,14 +81,14 @@ The `deploy:zaentrum-beta-addons` job creates:
 | `acquire-db` | `url` | `ACQUIRE_DB_URL` |
 | `acquire-svc-oidc` | `client-secret` | `ACQUIRE_SVC_SECRET` |
 | `katalog-tmdb` | `api-key` | `ACQUIRE_TMDB_KEY` (optional — `optional: true` mount) |
-| `prowlarr-api` | `api-key` | `PROWLARR_API_KEY` |
+| `prowlarr-api` | `api-key` | `INDEXER_API_KEY` |
 | `nzbget-control` | `user`=`nzbget`, `password` | `NZBGET_CONTROL_PASS` |
 | `nzbget-conf` | `nzbget.conf` | `NZBGET_CONF_B64` (base64) |
 
 The CI job only creates a secret when its variable is set. But `acquire`
 references `prowlarr-api` and `download-gateway` references `nzbget-control`
 **without** `optional: true` — so if you deploy the full overlay (which includes
-Prowlarr and NZBGet), set `PROWLARR_API_KEY`, `NZBGET_CONTROL_PASS` and
+the indexer aggregator and NZBGet), set `INDEXER_API_KEY`, `NZBGET_CONTROL_PASS` and
 `NZBGET_CONF_B64`, or those pods won't start. Only `katalog-tmdb` is a truly
 optional mount. The shared `kafka-mtls` secret is created by the core deploy, not
 the addon.
@@ -113,7 +113,7 @@ row — or the addon — removes the button and leaves the core neutral.
 
 Two components are yours to populate:
 
-- **Prowlarr** stores its indexers (and their keys) in `prowlarr.db` + `config.xml`
+- **the indexer aggregator** stores its indexers (and their keys) in its own database + `config.xml`
   under `packages/_config/prowlarr` on the NFS. Seed it with your own indexers;
   put its API key in the `prowlarr-api` secret.
 - **NZBGet** needs a `nzbget.conf` with your **news providers** (host/port/SSL/

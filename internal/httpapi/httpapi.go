@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/laedeli/acquire/internal/app"
 	"github.com/laedeli/acquire/internal/config"
+	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/sse"
 	"github.com/laedeli/acquire/internal/store"
 )
@@ -186,6 +188,7 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/profiles", s.listProfiles)
 		r.Put("/api/profiles/{id}", s.saveProfile)      // admin
 		r.Delete("/api/profiles/{id}", s.deleteProfile) // admin
+		r.Post("/api/score/simulate", s.simulateScore)  // admin — pure, no indexer I/O
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
@@ -504,4 +507,72 @@ func spaFallback(sub fs.FS, fileServer http.Handler) http.HandlerFunc {
 		}
 		fileServer.ServeHTTP(w, r)
 	}
+}
+
+// simulateScore ranks hypothetical releases against a profile without touching
+// an indexer or a download client. Scoring is pure, so this is the only way to
+// prove on a LIVE pod what the ranker will actually do — the alternative is
+// grabbing something to find out. Admin-only: it reveals the profile config.
+//
+// POST /api/score/simulate
+//
+//	{"profileId":"default",              // omitted -> the default profile
+//	 "candidates":[{"title":"…","protocol":"usenet","sizeMb":7000,"seeders":0}]}
+func (s *Server) simulateScore(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	var body struct {
+		ProfileID  string              `json:"profileId"`
+		Profile    *release.Profile    `json:"profile"`
+		Candidates []release.Candidate `json:"candidates"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if len(body.Candidates) == 0 {
+		http.Error(w, "candidates is required", http.StatusBadRequest)
+		return
+	}
+	if len(body.Candidates) > 200 {
+		http.Error(w, "at most 200 candidates", http.StatusBadRequest)
+		return
+	}
+
+	// An inline profile lets an operator try a change before saving it;
+	// otherwise use the stored one so this reports what would REALLY happen.
+	var prof release.Profile
+	var usedID string
+	if body.Profile != nil {
+		prof, usedID = *body.Profile, "(inline)"
+	} else {
+		prof, usedID = s.svc.ScoringProfile(r.Context(), body.ProfileID)
+	}
+
+	type scored struct {
+		Title    string       `json:"title"`
+		Score    int          `json:"score"`
+		Rejected bool         `json:"rejected"`
+		Reason   string       `json:"reason"`
+		Reasons  []string     `json:"reasons"`
+		Info     release.Info `json:"info"`
+	}
+	out := make([]scored, 0, len(body.Candidates))
+	for _, c := range body.Candidates {
+		v, in := release.Score(c, prof)
+		out = append(out, scored{
+			Title: c.Title, Score: v.Score, Rejected: v.Rejected,
+			Reason: v.Summary(), Reasons: v.Reasons, Info: in,
+		})
+	}
+	// Best first, rejections last — the same order the picker sees.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Rejected != out[j].Rejected {
+			return !out[i].Rejected
+		}
+		return out[i].Score > out[j].Score
+	})
+	writeJSON(w, 200, map[string]any{"profileId": usedID, "results": out})
 }

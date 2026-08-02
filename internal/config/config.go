@@ -33,10 +33,12 @@ type Config struct {
 	TMDBAPIKey   string // TMDB_API_KEY
 	TMDBLanguage string // TMDB_LANGUAGE (default en-US)
 
-	// Prowlarr indexer search (our own instance). Blank -> auto-grab disabled.
-	ProwlarrURL    string // PROWLARR_URL (http://prowlarr:9696)
-	ProwlarrAPIKey string // PROWLARR_API_KEY
-	PreferUsenet   bool   // ACQUIRE_PREFER (default "usenet" -> NZB-first)
+	// Indexer search backend (an aggregator you run). Blank -> auto-grab off.
+	// INDEXER_URL / INDEXER_API_KEY are the current names; the PROWLARR_*
+	// spellings are still read so an existing deployment keeps working.
+	IndexerURL    string // INDEXER_URL (PROWLARR_URL), e.g. http://prowlarr:9696
+	IndexerAPIKey string // INDEXER_API_KEY (PROWLARR_API_KEY)
+	PreferUsenet  bool   // ACQUIRE_PREFER (default "usenet" -> NZB-first)
 
 	// Kafka (shared cluster, mTLS). Prefix is the tenant namespace.
 	KafkaBrokers     string // KAFKA_BROKERS
@@ -88,8 +90,8 @@ func Load() Config {
 		TMDBAPIKey:   env("TMDB_API_KEY"),
 		TMDBLanguage: def("en-US", "TMDB_LANGUAGE"),
 
-		ProwlarrURL:    env("PROWLARR_URL"),
-		ProwlarrAPIKey: env("PROWLARR_API_KEY"),
+		IndexerURL:    firstEnv("INDEXER_URL", "PROWLARR_URL"),
+		IndexerAPIKey: firstEnv("INDEXER_API_KEY", "PROWLARR_API_KEY"),
 		PreferUsenet:   def("usenet", "ACQUIRE_PREFER") == "usenet",
 
 		KafkaBrokers:     env("KAFKA_BROKERS"),
@@ -101,4 +103,15 @@ func Load() Config {
 		DownloadsRoot: downloads,
 		SavePath:      def(downloads, "ACQUIRE_SAVE_PATH"),
 	}
+}
+
+// firstEnv returns the first of names that is set, so a renamed variable can be
+// introduced without breaking a deployment still setting the old one.
+func firstEnv(names ...string) string {
+	for _, n := range names {
+		if v := env(n); v != "" {
+			return v
+		}
+	}
+	return ""
 }

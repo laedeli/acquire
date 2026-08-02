@@ -39,7 +39,7 @@ func main() {
 	gw := gateway.New(cfg.GatewayURL, tokens)
 	kc := katalog.New(cfg.ManagerURL, cfg.KatalogURL, tokens)
 	tm := tmdb.New(cfg.TMDBAPIKey, cfg.TMDBLanguage)
-	pr := prowlarr.New(cfg.ProwlarrURL, cfg.ProwlarrAPIKey)
+	pr := prowlarr.New(cfg.IndexerURL, cfg.IndexerAPIKey)
 	br := sse.New()
 
 	svc := app.New(cfg, st, gw, kc, tm, pr, br)

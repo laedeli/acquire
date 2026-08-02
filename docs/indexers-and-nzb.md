@@ -8,21 +8,24 @@ prefers NZB (usenet) over torrents.
 acquire ships **no indexers**. It searches an indexer aggregator that **you**
 run and configure with your own indexers and keys.
 
-## Prowlarr as the search backend
+## The search backend
 
-acquire integrates [Prowlarr](https://prowlarr.com/) purely as a **search
-backend** — it does not manage indexers through acquire, and acquire does not
-re-implement any indexer protocol. Prowlarr manages your indexers and returns one
-merged, protocol-tagged result set:
+acquire does not ship or manage indexers. It talks to an **indexer aggregator**
+that you run, which holds your indexer definitions and credentials and returns
+one merged, protocol-tagged result set. Today acquire speaks that aggregator's
+v1 HTTP API rather than the indexer protocols directly; a native client is
+planned, so treat this as the current integration and not a permanent boundary.
 
-- `GET {PROWLARR_URL}/api/v1/indexer` — the configured indexers (`id`, `name`,
+- `GET {INDEXER_URL}/api/v1/indexer` — the configured indexers (`id`, `name`,
   `protocol` = `usenet`|`torrent`, `enable`).
-- `GET {PROWLARR_URL}/api/v1/search?query=…&type=search&limit=100` — a unified
+- `GET {INDEXER_URL}/api/v1/search?query=…&type=search&limit=100` — a unified
   search; each hit is a `Release{protocol, title, indexer, size, seeders,
   downloadUrl, magnetUrl}`. Requests carry `X-Api-Key`. The search can be scoped
   to specific `indexerIds`.
 
-Auto-grab turns on only when both `PROWLARR_URL` and `PROWLARR_API_KEY` are set.
+Auto-grab turns on only when both `INDEXER_URL` and `INDEXER_API_KEY` are set.
+The older `INDEXER_URL` / `INDEXER_API_KEY` spellings are still read, so an
+existing deployment keeps working unchanged.
 
 ## Ranking: NZB-first
 
@@ -83,13 +86,15 @@ ready-to-fetch source:
 
 | Release | Adapter | Source handed to the gateway |
 |---|---|---|
-| usenet | `nzbget` | the Prowlarr `downloadUrl` (embeds the apikey; NZBGet fetches it) |
+| usenet | `nzbget` | the aggregator `downloadUrl` (embeds the apikey; NZBGet fetches it) |
 | torrent | `qbittorrent` | the `magnetUrl` if present, else the `downloadUrl` |
 
-Prowlarr sometimes renders a `downloadUrl` with a `localhost` or `127.0.0.1`
-host; acquire swaps that origin (scheme + host + port) for the one in
-`PROWLARR_URL` so an in-cluster client can reach it — the path and apikey are
-preserved.
+The aggregator renders its links against its own view of its host, often
+`localhost` or `127.0.0.1`. acquire swaps that origin (scheme + host + port) for
+the one in `INDEXER_URL` so an in-cluster download client can reach it — the
+path and apikey are preserved. This applies to **both** `downloadUrl` and
+`magnetUrl`: the magnet is preferred for torrents, so leaving it unrewritten
+hands the torrent client a URL pointing at its own pod.
 
 The request's status then reads, e.g., `grabbed NZB from <indexer> via nzbget`.
 
