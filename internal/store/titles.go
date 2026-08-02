@@ -130,11 +130,17 @@ func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly boo
 // hours of grace would open its window at 06:00 the same day — fifteen hours
 // before the episode exists. That is the opposite of what the grace period is
 // for. air_date stays a date because that is the column type and what the
-// calendar view wants.
+// calendar view wants — but it is derived FROM the timestamp, not the other way
+// round.
+//
+// Every reference to $2 must be ::timestamptz. Postgres infers a parameter's
+// type from its first cast, so writing `air_date = $2::date` earlier in the
+// statement types the whole parameter as date; the later `$2::timestamptz` then
+// widens an already-truncated value and the bug survives the fix.
 func (s *Store) SetAirWindow(ctx context.Context, targetID string, air *time.Time, graceHours int) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE acquisition_targets
-		   SET air_date = $2::date,
+		   SET air_date = ($2::timestamptz)::date,
 		       air_window_opens_at = CASE WHEN $2::timestamptz IS NULL THEN NULL
 		                                  ELSE $2::timestamptz + make_interval(hours => $3) END,
 		       updated_at = now()
