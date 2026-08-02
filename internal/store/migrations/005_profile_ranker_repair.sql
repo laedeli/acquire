@@ -10,7 +10,11 @@
 --     so the cam family moves to rejectSources, which matches the PARSED source
 --   * sources scored nothing, so the size penalty ranked HDTV above Blu-ray remux
 --   * one global 25 GB cap rejected 71% of real Remux-1080p releases and every
---     Remux-2160p; caps are now per resolution, maxima only
+--     Remux-2160p; caps are now per resolution, maxima only, and sized against
+--     676 replayed production grabs (a 1080p remux reaches 57 GB, a 2160p
+--     season pack 109 GB)
+--   * the 500 MB floor was a movie assumption that rejected real TV: small-encode
+--     x265 episodes run 150-490 MB
 --   * resolutions listed 1080p ahead of 2160p
 --   * nothing expressed a language preference at a weight that could matter
 --
@@ -29,8 +33,9 @@ UPDATE quality_profiles SET
          'rejectTerms',           '["hdcam","camrip","hdts","telesync","screener","dvdscr","workprint"]'::jsonb,
          'rejectSources',         '["cam"]'::jsonb,
          'sourceScores',          '{"remux":400,"bluray":300,"webdl":200,"webrip":100,"hdtv":25,"dvd":0}'::jsonb,
-         'maxSizeMbByResolution', '{"2160p":80000,"1080p":40000,"720p":15000,"480p":8000}'::jsonb,
-         'maxSizeMb',             to_jsonb(100000),
+         'maxSizeMbByResolution', '{"2160p":150000,"1080p":70000,"720p":15000,"480p":8000}'::jsonb,
+         'maxSizeMb',             to_jsonb(150000),
+         'minSizeMb',             to_jsonb(100),
          'maxLanguages',          to_jsonb(3),
          'languagePenalty',       to_jsonb(60)
        ),

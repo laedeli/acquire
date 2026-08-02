@@ -55,14 +55,21 @@ func DefaultProfile() Profile {
 			"remux": 400, "bluray": 300, "webdl": 200,
 			"webrip": 100, "hdtv": 25, "dvd": 0,
 		},
-		// Maxima only. Minima were measured against 452 real grabs and would
-		// have rejected 126 of them (28%) — the median 2160p grab is 9,268 MB
-		// but the smallest legitimate one is 1,208 MB.
+		// Maxima only, and deliberately generous — every value here was raised
+		// after replaying 676 real production grabs (internal/release/testdata).
+		// Two things make tight caps wrong today: a 1080p Blu-ray remux is
+		// routinely 40-57 GB, and a SEASON PACK is one "release" of 80-110 GB.
+		// acquire has no season entity yet, so it cannot tell a pack from an
+		// episode; until it can (WP3), the cap has to clear the pack. Revisit
+		// once size can be judged per episode.
 		MaxSizeMbByResolution: map[string]int64{
-			"2160p": 80000, "1080p": 40000, "720p": 15000, "480p": 8000,
+			"2160p": 150000, "1080p": 70000, "720p": 15000, "480p": 8000,
 		},
-		MinSizeMb:       500,
-		MaxSizeMb:       100000, // backstop for an unknown resolution
+		// A junk floor, not a quality floor. 500 MB looks reasonable for a movie
+		// and silently rejects real TV: x265 episodes from the small-encode
+		// groups run 150-490 MB and production grabbed eight of them.
+		MinSizeMb:       100,
+		MaxSizeMb:       150000, // backstop for an unknown resolution
 		MinSeeders:      1,
 		PreferHDR:       false,
 		MaxLanguages:    3,
