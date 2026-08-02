@@ -16,6 +16,17 @@ type Client struct {
 	APIKey   string
 	Language string
 	HTTP     *http.Client
+	// BaseURL overrides the TMDB endpoint. Empty means the real one; tests set
+	// it to a local server so the inventory logic is exercised without network.
+	BaseURL string
+}
+
+// base returns the API root, defaulting to TMDB.
+func (c *Client) base() string {
+	if c.BaseURL != "" {
+		return strings.TrimRight(c.BaseURL, "/")
+	}
+	return "https://api.themoviedb.org/3"
 }
 
 func New(apiKey, language string) *Client {
