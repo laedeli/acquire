@@ -144,11 +144,15 @@ func (c *Client) SearchIn(ctx context.Context, query string, indexerIDs []int) (
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
 	}
-	// Prowlarr renders downloadUrl with its own view of the host — often
-	// localhost:9696. Rewrite to the in-cluster base so NZBGet/qBittorrent can
-	// fetch it.
+	// Prowlarr renders its download links with its own view of the host — often
+	// localhost:9696. Rewrite BOTH to the in-cluster base so NZBGet/qBittorrent
+	// can fetch them. magnetUrl matters most: Source() prefers it for torrents,
+	// so leaving it unrewritten hands qBittorrent a URL pointing at its own pod
+	// and every torrent grab fails. A real magnet: URI has no host, so
+	// rewriteHost leaves it untouched.
 	for i := range out {
 		out[i].DownloadURL = c.rewriteHost(out[i].DownloadURL)
+		out[i].MagnetURL = c.rewriteHost(out[i].MagnetURL)
 	}
 	return out, nil
 }
