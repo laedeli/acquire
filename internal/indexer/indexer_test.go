@@ -276,3 +276,59 @@ func TestMovieTargetIsCategoryScoped(t *testing.T) {
 		}
 	}
 }
+
+// Capabilities come from the aggregator, and disabled indexers must not appear:
+// asking a disabled indexer spends a request slot for a guaranteed nothing.
+func TestFleetMapsCapabilitiesAndSkipsDisabled(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[
+		 {"id":32,"name":"NZBgeek","protocol":"usenet","enable":true,
+		  "capabilities":{"tvSearchParams":["q","season","ep","tvdbId","rId"],
+		                  "movieSearchParams":["q","imdbId"]}},
+		 {"id":11,"name":"LimeTorrents","protocol":"torrent","enable":true,
+		  "capabilities":{"tvSearchParams":["q","season","ep"],"movieSearchParams":["q"]}},
+		 {"id":99,"name":"Disabled","protocol":"torrent","enable":false,
+		  "capabilities":{"tvSearchParams":["q","season","ep","tvdbId"]}}
+		]`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	got, err := c.Fleet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("fleet = %d, want 2 enabled", len(got))
+	}
+	if !got[0].AcceptsTVDBID || !got[0].AcceptsSeasonEp || !got[0].AcceptsIMDBID {
+		t.Errorf("NZBgeek caps mis-mapped: %+v", got[0])
+	}
+	if got[1].AcceptsTVDBID {
+		t.Errorf("LimeTorrents does not advertise tvdbId: %+v", got[1])
+	}
+	if !got[1].AcceptsSeasonEp {
+		t.Errorf("LimeTorrents advertises season+ep: %+v", got[1])
+	}
+	for _, g := range got {
+		if g.Name == "Disabled" {
+			t.Error("a disabled indexer entered the fleet")
+		}
+	}
+}
+
+// season+ep requires BOTH; advertising only one is not enough to build a
+// coordinate query from.
+func TestSeasonEpRequiresBoth(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":1,"name":"half","enable":true,
+		  "capabilities":{"tvSearchParams":["q","season"]}}]`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "k")
+	c.HTTP = srv.Client()
+	got, _ := c.Fleet(context.Background())
+	if len(got) != 1 || got[0].AcceptsSeasonEp {
+		t.Errorf("season without ep should not count as coordinate-capable: %+v", got)
+	}
+}
