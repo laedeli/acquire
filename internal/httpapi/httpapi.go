@@ -149,6 +149,11 @@ func (s *Server) Handler() http.Handler {
 	r.Use(chimw.RealIP, chimw.Recoverer)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
+	// Unauthenticated on purpose: Prometheus scrapes without a bearer, and a
+	// health surface that needs working auth is useless exactly when auth is
+	// what broke. Neither exposes secrets — only counts.
+	r.Get("/metrics", s.metrics)
+	r.Get("/api/health/system", s.systemHealth)
 	// Unauthenticated discovery doc so the SPA can bootstrap OIDC (PKCE).
 	r.Get("/api/config", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]any{
