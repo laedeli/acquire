@@ -151,7 +151,7 @@ progress message.
 | `OIDC_TOKEN_URL` | — | token endpoint for the service account |
 | `ACQUIRE_SVC_CLIENT_ID` / `ACQUIRE_SVC_CLIENT_SECRET` | — | client-credentials for gateway + ingest calls |
 | `TMDB_API_KEY` | — | discovery (optional) |
-| `PROWLARR_URL` / `PROWLARR_API_KEY` | — | indexer search (blank ⇒ auto-grab off) |
+| `INDEXER_URL` / `INDEXER_API_KEY` | — | indexer search (blank ⇒ auto-grab off) |
 | `ACQUIRE_PREFER` | `usenet` | ranking preference (`usenet` ⇒ NZB-first) |
 | `KAFKA_BROKERS` | — | bootstrap (blank ⇒ consumer off, service stays up) |
 | `KAFKA_CERT_DIR` | `/etc/kafka-cert` | mTLS cert dir (`user.crt`/`user.key`/`ca.crt`) |

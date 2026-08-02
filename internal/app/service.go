@@ -379,6 +379,23 @@ func (s *Service) DeleteProfile(ctx context.Context, id string) error {
 	return s.st.DeleteProfile(ctx, id)
 }
 
+// ScoringProfile returns the profile ranking would actually use: the one named,
+// or the default when id is empty or unknown. The second result is the id that
+// was really used, so a caller can report it rather than assume.
+func (s *Service) ScoringProfile(ctx context.Context, id string) (release.Profile, string) {
+	if id != "" {
+		all, err := s.st.ListProfiles(ctx)
+		if err == nil {
+			for _, p := range all {
+				if p.ID == id {
+					return p.Config, p.ID
+				}
+			}
+		}
+	}
+	return s.st.DefaultProfile(ctx), "default"
+}
+
 // Discover proxies a TMDB multi-search, flagging in-library hits.
 func (s *Service) Discover(ctx context.Context, q string) []DiscoverHit {
 	results, _ := s.tm.Search(ctx, q)

@@ -119,7 +119,7 @@ flowchart TB
         GW["download-gateway<br/><i>neutral client facade + events</i>"]
         QB["qBittorrent<br/><i>torrents</i>"]
         NZ["NZBGet<br/><i>usenet</i>"]
-        PRW["Prowlarr<br/><i>indexer aggregator (search only)</i>"]
+        PRW["the indexer aggregator<br/><i>indexer aggregator (search only)</i>"]
     end
     subgraph coreapp["zaentrum core"]
         POR["portal-api<br/><i>ui_extensions registry</i>"]
