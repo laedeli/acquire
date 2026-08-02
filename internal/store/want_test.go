@@ -343,4 +343,26 @@ func TestAirWindowAppliesGrace(t *testing.T) {
 	if len(due) != 1 {
 		t.Errorf("with no grace the aired episode should be due, got %d", len(due))
 	}
+
+	// The case a date-truncated window gets backwards: a late-evening broadcast.
+	// Computed from air_date it would open at 06:00 the SAME DAY — before the
+	// episode exists — and we would burn indexer quota on a release that cannot
+	// be there yet.
+	tonight := time.Now().UTC().Truncate(24 * time.Hour).Add(21 * time.Hour)
+	if tonight.Before(time.Now()) {
+		tonight = tonight.AddDate(0, 0, 1)
+	}
+	if err := s.SetAirWindow(ctx, tid, &tonight, 6); err != nil {
+		t.Fatal(err)
+	}
+	var opens time.Time
+	_ = s.pool.QueryRow(ctx,
+		`SELECT air_window_opens_at FROM acquisition_targets WHERE id=$1`, tid).Scan(&opens)
+	if !opens.After(tonight) {
+		t.Errorf("window opens %v, before the %v broadcast — grace was measured from midnight", opens, tonight)
+	}
+	due, _ = s.DueTargets(ctx, 10)
+	if len(due) != 0 {
+		t.Errorf("an episode that has not aired yet was returned as due: %+v", due)
+	}
 }
