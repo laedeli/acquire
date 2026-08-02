@@ -236,3 +236,111 @@ func TestSearchBackoffGrows(t *testing.T) {
 }
 
 func intp(v int) *int { return &v }
+
+// The import must be safe to re-run: ids derive from identity, so a second pass
+// updates the same rows instead of building a parallel library.
+func TestImportIsIdempotent(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	tt := Title{TMDBID: 1396, Kind: "series", Title: "Breaking Bad", TVDBID: 81189,
+		Monitored: true, MonitorNew: true, SeriesType: "standard"}
+	for i := 0; i < 3; i++ {
+		if err := s.UpsertTitle(ctx, tt); err != nil {
+			t.Fatalf("pass %d: %v", i, err)
+		}
+		if err := s.ReplaceAliases(ctx, TitleID("series", 1396), []string{"Totalna Melina"}, "incumbent"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var titles, aliases int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM titles`).Scan(&titles)
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM title_aliases`).Scan(&aliases)
+	if titles != 1 || aliases != 1 {
+		t.Fatalf("three imports produced %d titles and %d aliases, want 1 and 1", titles, aliases)
+	}
+}
+
+// An operator's console settings are not the import's to overwrite, and an id we
+// already resolved must never be blanked by a source that lacks it.
+func TestImportPreservesOperatorSettingsAndResolvedIDs(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	base := Title{TMDBID: 1396, Kind: "series", Title: "Breaking Bad", TVDBID: 81189, Monitored: true}
+	if err := s.UpsertTitle(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	id := TitleID("series", 1396)
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE titles SET profile_id='uhd', air_grace_hours=6 WHERE id=$1`, id); err != nil {
+		t.Fatal(err)
+	}
+	// Re-import from a source that has no tvdb id and no imdb id.
+	thin := base
+	thin.TVDBID, thin.IMDBID = 0, ""
+	if err := s.UpsertTitle(ctx, thin); err != nil {
+		t.Fatal(err)
+	}
+	var profile string
+	var grace int
+	var tvdb int64
+	_ = s.pool.QueryRow(ctx,
+		`SELECT profile_id, air_grace_hours, COALESCE(tvdb_id,0) FROM titles WHERE id=$1`, id).
+		Scan(&profile, &grace, &tvdb)
+	if profile != "uhd" || grace != 6 {
+		t.Errorf("operator settings clobbered: profile=%q grace=%d", profile, grace)
+	}
+	if tvdb != 81189 {
+		t.Errorf("a resolved tvdb id was blanked by a source that lacked one (got %d)", tvdb)
+	}
+}
+
+// Replacing aliases must remove ones the source dropped, not accumulate forever.
+func TestAliasesAreReplacedNotAccumulated(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 1, Kind: "series", Title: "S"})
+	id := TitleID("series", 1)
+	_ = s.ReplaceAliases(ctx, id, []string{"Alpha", "Beta"}, "incumbent")
+	_ = s.ReplaceAliases(ctx, id, []string{"Beta"}, "incumbent")
+	var n int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM title_aliases WHERE title_id=$1`, id).Scan(&n)
+	if n != 1 {
+		t.Errorf("aliases = %d, want 1 — a dropped alias must not linger", n)
+	}
+	// A different source's aliases are independent.
+	_ = s.ReplaceAliases(ctx, id, []string{"Gamma"}, "xem")
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FROM title_aliases WHERE title_id=$1`, id).Scan(&n)
+	if n != 2 {
+		t.Errorf("aliases across sources = %d, want 2", n)
+	}
+}
+
+// The air window is what keeps a sweep off unaired episodes.
+func TestAirWindowAppliesGrace(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "S"})
+	id := TitleID("series", 2)
+	season, ep := 1, 1
+	tid := TargetID(id, &season, &ep)
+	if err := s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "episode",
+		SeasonNumber: &season, EpisodeNumber: &ep, Monitored: true, State: "wanted"}); err != nil {
+		t.Fatal(err)
+	}
+	air := time.Now().Add(-2 * time.Hour)
+	if err := s.SetAirWindow(ctx, tid, &air, 6); err != nil {
+		t.Fatal(err)
+	}
+	// Aired two hours ago with six hours of grace: not yet due.
+	due, _ := s.DueTargets(ctx, 10)
+	if len(due) != 0 {
+		t.Errorf("grace period ignored, target already due: %+v", due)
+	}
+	if err := s.SetAirWindow(ctx, tid, &air, 0); err != nil {
+		t.Fatal(err)
+	}
+	due, _ = s.DueTargets(ctx, 10)
+	if len(due) != 1 {
+		t.Errorf("with no grace the aired episode should be due, got %d", len(due))
+	}
+}

@@ -396,6 +396,10 @@ func (s *Service) ScoringProfile(ctx context.Context, id string) (release.Profil
 	return s.st.DefaultProfile(ctx), "default"
 }
 
+// TMDB exposes the metadata client so an admin-triggered derivation can use the
+// same configured credentials as discovery rather than taking a key over HTTP.
+func (s *Service) TMDB() *tmdb.Client { return s.tm }
+
 // Discover proxies a TMDB multi-search, flagging in-library hits.
 func (s *Service) Discover(ctx context.Context, q string) []DiscoverHit {
 	results, _ := s.tm.Search(ctx, q)

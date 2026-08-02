@@ -21,6 +21,7 @@ import (
 
 	"github.com/laedeli/acquire/internal/app"
 	"github.com/laedeli/acquire/internal/config"
+	"github.com/laedeli/acquire/internal/importer"
 	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/sse"
 	"github.com/laedeli/acquire/internal/store"
@@ -189,6 +190,8 @@ func (s *Server) Handler() http.Handler {
 		r.Put("/api/profiles/{id}", s.saveProfile)      // admin
 		r.Delete("/api/profiles/{id}", s.deleteProfile) // admin
 		r.Post("/api/score/simulate", s.simulateScore)  // admin — pure, no indexer I/O
+		r.Post("/api/import/intent", s.importIntent)    // admin — read incumbent, write titles
+		r.Post("/api/import/inventory", s.deriveInv)    // admin — derive episodes from TMDB
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
@@ -575,4 +578,63 @@ func (s *Server) simulateScore(w http.ResponseWriter, r *http.Request) {
 		return out[i].Score > out[j].Score
 	})
 	writeJSON(w, 200, map[string]any{"profileId": usedID, "results": out})
+}
+
+// importIntent pulls tracked titles out of an incumbent automation service.
+//
+// An explicit operator action, NOT a boot backfill. A one-way data change on a
+// startup path turns a data problem into an outage class: there is no version
+// row to skip past, and the pod CrashLoopBackOffs with the fix unreachable.
+// dryRun is the default so the first thing anyone does is look.
+//
+//	POST /api/import/intent
+//	{"baseUrl":"http://series:8989","apiKey":"…","kind":"series","apply":false}
+func (s *Server) importIntent(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	var body struct {
+		BaseURL string `json:"baseUrl"`
+		APIKey  string `json:"apiKey"`
+		Kind    string `json:"kind"`
+		Apply   bool   `json:"apply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.BaseURL == "" || (body.Kind != "series" && body.Kind != "movie") {
+		http.Error(w, `baseUrl is required and kind must be "series" or "movie"`, http.StatusBadRequest)
+		return
+	}
+	res, err := s.svc.ImportIntent(r.Context(), importer.Source{
+		BaseURL: body.BaseURL, APIKey: body.APIKey, Kind: body.Kind,
+	}, !body.Apply)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
+// deriveInv turns tracked series into acquisition targets from TMDB.
+//
+//	POST /api/import/inventory  {"limit":10,"apply":false}
+func (s *Server) deriveInv(w http.ResponseWriter, r *http.Request) {
+	if !hasRole(r.Context(), s.cfg.AdminRole) {
+		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Limit int  `json:"limit"`
+		Apply bool `json:"apply"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	res, err := s.svc.DeriveInventory(r.Context(), s.svc.TMDB(), body.Limit, !body.Apply)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, 200, res)
 }
