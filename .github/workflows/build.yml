@@ -31,8 +31,12 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # Block scalar, not a plain one: the grep pattern contains a colon-space,
+      # which YAML reads as a mapping and fails the whole workflow to parse.
       - name: the migration tests actually ran (they skip without a database)
-        run: go test ./internal/store/ -run Migrate -v | grep -q "PASS: TestMigrateRepairsAProductionShapedProfileRow"
+        run: |
+          go test ./internal/store/ -run Migrate -v \
+            | grep -q 'PASS: TestMigrateRepairsAProductionShapedProfileRow'
 
   console:
     runs-on: ubuntu-latest
