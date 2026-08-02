@@ -1,6 +1,6 @@
 // Discover: search TMDB and request what is missing. Titles already in the
 // library are shown but not requestable.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Text } from '@nalet/design-system'
 import { Search } from 'lucide-react'
 import type { Api, DiscoverHit } from '../lib/api'
@@ -19,6 +19,17 @@ export function Discover({
   const [loading, setLoading] = useState(false)
   const [requested, setRequested] = useState<Set<number>>(new Set())
   const [error, setError] = useState('')
+
+  // Arriving from chino's "Request this" carries the title in ?q= — run that
+  // search immediately instead of showing an empty box the user must re-submit.
+  const autoRan = useRef(false)
+  useEffect(() => {
+    if (autoRan.current || !initialQuery.trim()) return
+    autoRan.current = true
+    void search()
+    // search() closes over the initial q, which is exactly what we want here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery])
 
   async function search() {
     if (!q.trim()) return
