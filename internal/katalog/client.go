@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -90,40 +91,70 @@ func (c *Client) Ingest(ctx context.Context, in IngestRequest) (IngestResult, er
 	return out, nil
 }
 
-// InLibrary is a best-effort title check against katalog-api's browse search.
-// Returns false on any error (the discovery UI just doesn't flag it).
-func (c *Client) InLibrary(ctx context.Context, title string) bool {
-	if c.KatalogURL == "" || strings.TrimSpace(title) == "" {
-		return false
+// Availability is what a library check can honestly report. "I could not tell"
+// is a THIRD state, distinct from yes and no: collapsing it into "not in
+// library" is why a katalog-api that had been returning HTTP 500 for weeks was
+// invisible — the discovery UI simply never flagged anything as owned, which
+// looks exactly like an empty library.
+type Availability int
+
+const (
+	NotInLibrary Availability = iota
+	InLibraryYes
+	AvailabilityUnknown
+)
+
+func (a Availability) String() string {
+	switch a {
+	case InLibraryYes:
+		return "in-library"
+	case AvailabilityUnknown:
+		return "unknown"
+	}
+	return "not-in-library"
+}
+
+// InLibrary reports whether katalog already holds a title. It answers Unknown
+// (with a reason) rather than guessing when the catalog cannot be reached or
+// refuses the query, so a broken dependency surfaces instead of silently
+// degrading into "you own nothing".
+func (c *Client) InLibrary(ctx context.Context, title string) (Availability, error) {
+	if c.KatalogURL == "" {
+		return AvailabilityUnknown, errors.New("katalog url not configured")
+	}
+	if strings.TrimSpace(title) == "" {
+		return NotInLibrary, nil
 	}
 	u := c.KatalogURL + "/api/v1/items?" + url.Values{"q": {title}, "limit": {"5"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return false
+		return AvailabilityUnknown, err
 	}
 	c.authHeader(ctx, req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return false
+		return AvailabilityUnknown, fmt.Errorf("katalog search: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return false
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return AvailabilityUnknown, fmt.Errorf("katalog search: http %d: %s",
+			resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var raw struct {
 		Items []struct {
 			Title string `json:"title"`
 		} `json:"items"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&raw) != nil {
-		return false
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return AvailabilityUnknown, fmt.Errorf("katalog search: decode: %w", err)
 	}
 	for _, it := range raw.Items {
 		if strings.EqualFold(strings.TrimSpace(it.Title), strings.TrimSpace(title)) {
-			return true
+			return InLibraryYes, nil
 		}
 	}
-	return false
+	return NotInLibrary, nil
 }
 
 // videoExts are the container extensions the pipeline can ingest.

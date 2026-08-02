@@ -400,11 +400,22 @@ func (s *Service) ScoringProfile(ctx context.Context, id string) (release.Profil
 func (s *Service) Discover(ctx context.Context, q string) []DiscoverHit {
 	results, _ := s.tm.Search(ctx, q)
 	out := make([]DiscoverHit, 0, len(results))
+	// The catalog is a dependency that can be down. Log the FIRST failure per
+	// call rather than once per result (a 20-hit search would otherwise emit 20
+	// identical lines), and mark the affected rows unknown instead of claiming
+	// the user does not own them.
+	var libErrLogged bool
 	for _, r := range results {
+		avail, err := s.kc.InLibrary(ctx, r.Title)
+		if err != nil && !libErrLogged {
+			libErrLogged = true
+			log.Printf("acquire: library check unavailable, discovery results are unannotated: %v", err)
+		}
 		out = append(out, DiscoverHit{
 			TMDBID: r.TMDBID, MediaType: r.MediaType, Title: r.Title, Year: r.Year,
 			PosterURL: r.PosterURL, Overview: r.Overview,
-			InLibrary: s.kc.InLibrary(ctx, r.Title),
+			InLibrary:    avail == katalog.InLibraryYes,
+			LibraryState: avail.String(),
 		})
 	}
 	return out
@@ -419,6 +430,9 @@ type DiscoverHit struct {
 	PosterURL string `json:"posterUrl"`
 	Overview  string `json:"overview"`
 	InLibrary bool   `json:"inLibrary"`
+	// LibraryState distinguishes "not in library" from "could not tell", so the
+	// console can say so instead of showing a confidently wrong answer.
+	LibraryState string `json:"libraryState"`
 }
 
 // ── event-side (reactions, called by events.Consumer) ───────────────────────
