@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,5 +188,55 @@ func TestMigrateRepairsAnEditedProfileWithoutLosingEdits(t *testing.T) {
 	}
 	if _, ok := got["sourceScores"]; !ok {
 		t.Error("an edited profile did not receive the ranker repair")
+	}
+}
+
+// The registry lives in the migrations directory, and migrate() Execs every file
+// it can see. Only *.sql is embedded, so a .md is invisible to it — but that is
+// one edit away from being false. Widening the embed to migrations/* would make
+// the boot path try to run Markdown as SQL and CrashLoopBackOff the service.
+func TestOnlySQLFilesAreEmbedded(t *testing.T) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if filepath.Ext(e.Name()) != ".sql" {
+			t.Errorf("%s is embedded but is not SQL — migrate() would Exec it at boot", e.Name())
+		}
+		n++
+	}
+	if n == 0 {
+		t.Fatal("no migrations embedded at all")
+	}
+}
+
+// A duplicate numeric prefix means both files run, in an order nobody chose.
+// Depending on which wins, that is either a silent no-op that fails at runtime
+// forever, or a boot error with no version row to skip and nothing to restore.
+func TestMigrationNumbersAreUnique(t *testing.T) {
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || filepath.Ext(name) != ".sql" {
+			continue
+		}
+		num, _, ok := strings.Cut(name, "_")
+		if !ok || len(num) != 3 {
+			t.Errorf("%s does not start with a 3-digit number", name)
+			continue
+		}
+		if prev, dup := seen[num]; dup {
+			t.Errorf("migration number %s claimed twice: %s and %s — see MIGRATIONS.md", num, prev, name)
+		}
+		seen[num] = name
 	}
 }
