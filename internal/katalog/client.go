@@ -47,6 +47,14 @@ type IngestRequest struct {
 	Title       string  `json:"title"`
 	Year        *int32  `json:"year,omitempty"`
 	Description *string `json:"description,omitempty"`
+
+	// Episode coordinates. katalog REJECTS type=episode without all three, and
+	// that rejection is deliberate: an episode with a NULL parent becomes a
+	// playable, metadata-less orphan named after the show, with no error
+	// anywhere in the pipeline.
+	ParentID      *string `json:"parentId,omitempty"`
+	SeasonNumber  *int32  `json:"seasonNumber,omitempty"`
+	EpisodeNumber *int32  `json:"episodeNumber,omitempty"`
 }
 
 type IngestResult struct {
