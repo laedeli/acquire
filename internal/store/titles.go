@@ -120,16 +120,23 @@ func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly boo
 	return out, rows.Err()
 }
 
-// SetAirWindow computes when a target becomes searchable: its air date plus the
+// SetAirWindow computes when a target becomes searchable: air time plus the
 // title's grace hours. Searching the instant an episode airs mostly finds
 // nothing and spends indexer quota, so the grace period is a real setting
 // rather than a constant.
+//
+// The window is computed from the full TIMESTAMP, not from air_date. Deriving
+// it from the date column truncates to midnight, so a 21:00 broadcast with six
+// hours of grace would open its window at 06:00 the same day — fifteen hours
+// before the episode exists. That is the opposite of what the grace period is
+// for. air_date stays a date because that is the column type and what the
+// calendar view wants.
 func (s *Store) SetAirWindow(ctx context.Context, targetID string, air *time.Time, graceHours int) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE acquisition_targets
-		   SET air_date = $2,
-		       air_window_opens_at = CASE WHEN $2::date IS NULL THEN NULL
-		                                  ELSE $2::date + make_interval(hours => $3) END,
+		   SET air_date = $2::date,
+		       air_window_opens_at = CASE WHEN $2::timestamptz IS NULL THEN NULL
+		                                  ELSE $2::timestamptz + make_interval(hours => $3) END,
 		       updated_at = now()
 		 WHERE id = $1`, targetID, air, graceHours)
 	return err
