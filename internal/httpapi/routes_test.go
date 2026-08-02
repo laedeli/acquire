@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
@@ -37,5 +39,26 @@ func TestEveryHandlerIsRouted(t *testing.T) {
 	}
 	if len(unrouted) > 0 {
 		t.Errorf("handler(s) defined but never routed — they will 301 to the SPA: %v", unrouted)
+	}
+}
+
+// An unknown /api path must 404, never redirect.
+//
+// http.FileServer answers a missing directory-ish path with 301 Moved
+// Permanently, and browsers cache permanent redirects. When six handlers were
+// briefly unrouted, every client that called them cached a 301 to the SPA — and
+// kept looping on it long after the server was fixed, so redeploying appeared
+// to do nothing. A 404 cannot poison a cache.
+func TestUnknownAPIPathReturns404NotARedirect(t *testing.T) {
+	s := &Server{}
+	h := s.Handler()
+	for _, p := range []string{"/api/nope", "/api/missing/deeper", "/api/"} {
+		r := httptest.NewRequest(http.MethodGet, p, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code >= 300 && w.Code < 400 {
+			t.Errorf("%s -> %d %q; a redirect on an API path gets cached and poisons the client",
+				p, w.Code, w.Header().Get("Location"))
+		}
 	}
 }
