@@ -35,9 +35,16 @@ UPDATE quality_profiles SET
          'sourceScores',          '{"remux":400,"bluray":300,"webdl":200,"webrip":100,"hdtv":25,"dvd":0}'::jsonb,
          'maxSizeMbByResolution', '{"2160p":150000,"1080p":70000,"720p":15000,"480p":8000}'::jsonb,
          'maxSizeMb',             to_jsonb(150000),
-         'minSizeMb',             to_jsonb(100),
          'maxLanguages',          to_jsonb(3),
          'languagePenalty',       to_jsonb(60)
-       ),
+       )
+    -- minSizeMb is corrected ONLY where it still holds the seeded 500. That
+    -- value is a movie assumption that rejects real TV (small-encode x265
+    -- episodes run 150-490 MB), but an operator who deliberately chose their
+    -- own floor keeps it — unlike the fields above, this one is a legitimate
+    -- preference as well as a bad default.
+    || CASE WHEN (config->>'minSizeMb') = '500'
+            THEN jsonb_build_object('minSizeMb', to_jsonb(100))
+            ELSE '{}'::jsonb END,
   updated_at = now()
 WHERE NOT (config ? 'sourceScores');
