@@ -14,6 +14,7 @@ import { Requests } from './views/Requests'
 import { Downloads } from './views/Downloads'
 import { Discover } from './views/Discover'
 import { Indexers } from './views/Indexers'
+import { Missing } from './views/Missing'
 import { Search } from './views/Search'
 import { Settings } from './views/Settings'
 
@@ -22,7 +23,7 @@ const FALLBACK_POLL_MS = 30_000
 // Each surface is its own launchpad tile, so it needs its own address. Hash
 // routing keeps that working behind the ingress that strips the /acquire prefix,
 // without the server having to know where it is mounted.
-const TABS = ['requests', 'downloads', 'search', 'discover', 'indexers', 'settings'] as const
+const TABS = ['requests', 'missing', 'downloads', 'search', 'discover', 'indexers', 'settings'] as const
 type Tab = (typeof TABS)[number]
 
 function tabFromHash(): Tab {
@@ -145,6 +146,9 @@ export function Console({
         onChange={setTab}
         items={[
           { value: 'requests', label: `requests${wanted.length ? ` (${wanted.length})` : ''}` },
+          // The backlog sits next to requests on purpose: "what was asked for"
+          // and "what is still owed" are the same question from two ends.
+          { value: 'missing', label: 'missing' },
           { value: 'downloads', label: `downloads${active ? ` (${active})` : ''}` },
           { value: 'search', label: 'search' },
           { value: 'discover', label: 'discover' },
@@ -164,6 +168,7 @@ export function Console({
             refresh={() => void loadLists()}
           />
         )}
+        {tab === 'missing' && <Missing api={api} />}
         {tab === 'downloads' && (
           <Downloads
             api={api}

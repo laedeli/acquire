@@ -197,7 +197,41 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
         { method: 'POST' },
       ),
     config: () => call<Config>('config'),
+    // The WANT model's read side. `missing` is the backlog: monitored, aired,
+    // still wanted — including rows in search backoff, flagged rather than
+    // hidden, because a backlog view that omits everything failing is the least
+    // useful version of itself.
+    missing: (limit = 500) =>
+      call<{ missing: MissingRow[] }>('missing?limit=' + limit).then((r) => r.missing ?? []),
+    counts: () => call<Counts>('counts'),
   }
+}
+
+// MissingRow is one thing we want and do not have.
+export type MissingRow = {
+  targetId: string
+  title: string
+  kind: string
+  season: number | null
+  episode: number | null
+  airDate: string | null
+  searchFailures: number
+  backoffUntil: string | null
+  // False when the title carries no id an indexer will accept. Zero of 70
+  // indexers accept a tmdbId, so such a row can only be searched as free text
+  // and needs to say so rather than look like an ordinary miss.
+  searchable: boolean
+}
+
+export type Counts = {
+  titles: number
+  series: number
+  movies: number
+  targets: number
+  held: number
+  missing: number
+  unaired: number
+  inBackoff: number
 }
 
 export type Api = ReturnType<typeof makeApi>
