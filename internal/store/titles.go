@@ -20,6 +20,7 @@ type Title struct {
 	SeriesType string
 	Monitored  bool
 	MonitorNew bool
+	ProfileID  string
 }
 
 // TitleID is the deterministic id for a title. Deriving it from the identity
@@ -116,6 +117,54 @@ func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly boo
 			return nil, err
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// TitleByID reads one title.
+func (s *Store) TitleByID(ctx context.Context, id string) (Title, error) {
+	var t Title
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, tmdb_id, COALESCE(tvdb_id,0), imdb_id, kind, title, sort_title,
+		       COALESCE(year,0), status, series_type, monitored, monitor_new, profile_id
+		  FROM titles WHERE id = $1`, id).
+		Scan(&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
+			&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID)
+	return t, err
+}
+
+// TargetWithTitle reads a target together with the title it belongs to, which
+// is always what a search needs — the ids and aliases live on the title.
+func (s *Store) TargetWithTitle(ctx context.Context, targetID string) (Target, Title, error) {
+	var t Target
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, title_id, kind, season_number, episode_number, air_date, monitored, state
+		  FROM acquisition_targets WHERE id = $1`, targetID).
+		Scan(&t.ID, &t.TitleID, &t.Kind, &t.SeasonNumber, &t.EpisodeNumber,
+			&t.AirDate, &t.Monitored, &t.State)
+	if err != nil {
+		return t, Title{}, err
+	}
+	ti, err := s.TitleByID(ctx, t.TitleID)
+	return t, ti, err
+}
+
+// AliasesFor returns every known alias, across sources. Production matched 119
+// of 500 grabs on an alias rather than the title.
+func (s *Store) AliasesFor(ctx context.Context, titleID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT alias FROM title_aliases WHERE title_id = $1`, titleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
 	}
 	return out, rows.Err()
 }

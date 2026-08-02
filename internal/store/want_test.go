@@ -497,3 +497,43 @@ func TestMissingFlagsUnsearchableTitles(t *testing.T) {
 		t.Error("a series with no tvdb id was reported searchable — it would sit in the backlog with no explanation")
 	}
 }
+
+// A search needs the target's coordinates AND the title's ids and aliases —
+// they live on different rows, and fetching them separately is an N+1 on the
+// hottest path in the system.
+func TestTargetWithTitleAndAliases(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	if err := s.UpsertTitle(ctx, Title{TMDBID: 1396, Kind: "series", Title: "Breaking Bad",
+		TVDBID: 81189, IMDBID: "tt0903747", Monitored: true}); err != nil {
+		t.Fatal(err)
+	}
+	id := TitleID("series", 1396)
+	if err := s.ReplaceAliases(ctx, id, []string{"Totalna Melina", "Vo vse tyazhkie"}, "incumbent"); err != nil {
+		t.Fatal(err)
+	}
+	season, ep := 2, 5
+	tid := TargetID(id, &season, &ep)
+	if err := s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "episode",
+		SeasonNumber: &season, EpisodeNumber: &ep, Monitored: true, State: "wanted"}); err != nil {
+		t.Fatal(err)
+	}
+
+	tgt, title, err := s.TargetWithTitle(ctx, tid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tgt.SeasonNumber == nil || *tgt.SeasonNumber != 2 || tgt.EpisodeNumber == nil || *tgt.EpisodeNumber != 5 {
+		t.Errorf("coordinates lost: %+v", tgt)
+	}
+	if title.TVDBID != 81189 || title.IMDBID != "tt0903747" {
+		t.Errorf("ids lost — every typed search needs them: %+v", title)
+	}
+	aliases, err := s.AliasesFor(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aliases) != 2 {
+		t.Errorf("aliases = %v, want 2", aliases)
+	}
+}
