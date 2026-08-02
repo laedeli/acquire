@@ -1,0 +1,4734 @@
+[
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "Silo S03E06 MULTI 1080p WEB H264 HiggsBoson"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1126,
+  "title": "[ToonsHub] BLEACH Thousand-Year Blood War S01E42 1080p HULU WEB-DL AAC2.0 H.264 (BLEACH: Sennen Kessen-hen, Multi-Subs)"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "Sugar 2024 S02E08 1080p ATVP WEB DL DDP5 1 Atmos H 264 FLUX"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "Star Trek Strange New Worlds S04E03 1080p WEB h264 ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4306,
+  "title": "Silo.S03E05.Memory.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 541,
+  "title": "Sugar.2024.S02E07.720p.HEVC.x265-MeGusta"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1893,
+  "title": "Star.Trek.Strange.New.Worlds.S04E02.The.Griffin.Incident.1080p.AMZN.WEB-DL.DDP5.1.H.264-playWEB"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 915,
+  "title": "House of the Dragon S03E07 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1433,
+  "title": "[Erai-raws] Youjo Senki II - 04 [1080p CR WEB-DL AVC AAC][MultiSub][899FA0CF]"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Reacher S04E01 720p WEB EZTV"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Star Trek Strange New Worlds S04E02 1080p WEB ENG SUBS EZTV"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Silo S03E05 1080p ENG SUBS HEVC x265 MeGust"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 721,
+  "title": "Rick and Morty S09E10 Field of Dreams 1080p AMZN WEB DL DDP5 1 H 264 FLUX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 673,
+  "title": "House of the Dragon S03E06 Faceless Man REPACK 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 915,
+  "title": "Star Trek Strange New Worlds S04E02 1080p WEB h264 ETHEL"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 915,
+  "title": "Rick and Morty S09E10 1080p x265 ELiTE"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 2355,
+  "title": "[Feibanyama] BLEACH Thousand Year Blood War S01E41 [BILIBILI WebRip 2160p NVENC AAC Multi-Subs] (BLEACH: Sennen Kessen-hen)"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 915,
+  "title": "Sugar 2024 S02E07 1080p ATVP WEB DL DDP5 1 Atmos H 264 FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 20653,
+  "title": "Kaulitz.and.Kaulitz.S03.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-TURG"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 2170,
+  "title": "Kaulitz and Kaulitz S02E06 1080p WEB h264-EDITH"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 2191,
+  "title": "Kaulitz and Kaulitz S02E05 1080p WEB h264-EDITH"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 2191,
+  "title": "Kaulitz and Kaulitz S02E04 1080p WEB h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1723,
+  "title": "Kaulitz.and.Kaulitz.S01E08.To.Be.Continued.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2262,
+  "title": "Kaulitz.and.Kaulitz.S01E07.Road.Trip.with.Obstacles.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2239,
+  "title": "Kaulitz.and.Kaulitz.S01E06.Quark.Balls.and.Heidi-ween.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2168,
+  "title": "Kaulitz.and.Kaulitz.S01E05.Finally.Free.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1995,
+  "title": "Kaulitz.and.Kaulitz.S01E04.Flirty.Wiesn.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2080,
+  "title": "Kaulitz.and.Kaulitz.S01E03.Back.to.the.Future.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2161,
+  "title": "Kaulitz.and.Kaulitz.S01E02.Strange.Childhood.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2125,
+  "title": "Kaulitz.and.Kaulitz.S01E01.The.Party.Has.Arrived.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-XEBEC"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1146,
+  "title": "House of the Dragon S03E06 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6508,
+  "title": "Criminal.Minds.S19E09.Special.Agent.Garrity.2160p.REPACK.ATV.WEB-DL.DDP5.1.DV.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8059,
+  "title": "Star.Trek.Strange.New.Worlds.S04E01.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1259,
+  "title": "Silo S03E05 MULTI 1080p WEB H264 HiggsBoson"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 8529,
+  "title": "Silo-S03E04-Whatever-You-Do-Dont-Go-Home-2160p-ATVP-WEB-DL-DDP5-1-Atmos-DV-HDR-H.."
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2803,
+  "title": "Sugar.2024.S02E06.Cautionary.Tale.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6191,
+  "title": "Criminal.Minds.S19E10.Bad.Blood.2160p.REPACK.ATV.WEB-DL.DDP5.1.DV.H.265-NTb"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1945,
+  "title": "[shincaps] Youjo Senki II - 03 (AT-X 1440x1080 MPEG2 AAC).ts"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1433,
+  "title": "Silo S03E04 MULTI 1080p WEB H264 HiggsBoson"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "Star Trek Strange New Worlds S04E01 Valles Marineris 1080p EZTV"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1105,
+  "title": "Rick and Morty S09E10 1080p WEB h264 EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1504,
+  "title": "Futurama.S11E09.A.New.New.York.Yankee.in.King.Elfos.Court.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1002,
+  "title": "Futurama.S11E08.Lord.Nibbler.in.the.Nothingverse.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 979,
+  "title": "Futurama.S11E07.Love.at.First.Scam.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1053,
+  "title": "Futurama.S11E06.Late.Bloomers.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 959,
+  "title": "Futurama.S11E05.The.Charm.Offensive.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1194,
+  "title": "Futurama.S11E04.Lords.of.the.Ring.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 980,
+  "title": "Futurama.S11E03.Our.Flag.Means.Medical.Coverage.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 986,
+  "title": "Futurama.S11E02.Catfish.Hunter.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 944,
+  "title": "Futurama.S11E01.Beef.1080p.DSNP.WEB-DL.DDP5.1.H.264.Dual-CM"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 819,
+  "title": "Rick and Morty S09E09 1080p WEB h264-EDITH"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1329,
+  "title": "Rick and Morty - S09E09 - 2160p HDR Ai Upscale 5.1 MultiSubs MKV -Mesc"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 754,
+  "title": "House.of.the.Dragon.S03E05.Unbowed.and.Unbent.REPACK.1080p.HEVC.x265-MeGusta"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4631,
+  "title": "Criminal.Minds.S19E08.Requiem.2160p.DSNP.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "House of the Dragon S03E06 1080p AMZN WEB ENGMultiSubs EZTV"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 4556,
+  "title": "The Agency 2024 S02E09 Rogue Cell 2160p PMTP WEB DL DDP5 1 DV HDR H 265 FLU"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 5079,
+  "title": "The Agency 2024 S02E05 Out Cold 2160p AMZN WEB DL DDP5 1 H 265 FLUX"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 6103,
+  "title": "The Agency 2024 S02E10 King Sacrifice 2160p AMZN WEB DL DDP5 1 H 265 FLUX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 4648,
+  "title": "The Agency 2024 S02E03 Spymaster 2160p PMTP WEB DL DDP5 1 DV HDR10Plus H 26"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 8734,
+  "title": "The Agency 2024 S02E01 Kick the Wasps Nest 2160p ATV WEB DL DD5 1 DoVi HDR H 265 playWEB"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 4771,
+  "title": "The Agency 2024 S02E02 A Bear in Wolfs Clothing 2160p PMTP WEB DL DDP5 1 DV"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9814,
+  "title": "The.Agency.2024.S02E09.Rogue.Cell.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10253,
+  "title": "The.Agency.2024.S02E05.Out.Cold.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 12193,
+  "title": "The.Agency.2024.S02E10.King.Sacrifice.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 11141,
+  "title": "The.Agency.2024.S02E03.Spymaster.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10811,
+  "title": "The.Agency.2024.S02E01.Kick.the.Wasps.Nest.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 9103,
+  "title": "The-Agency-2024-S02E08-False-Flag-Attack-2160p-ATV-WEB-DL-DD5-1-DoVi-HDR-H-265-p.."
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10459,
+  "title": "The.Agency.2024.S02E02.A.Bear.in.Wolfs.Clothing.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8340,
+  "title": "The.Agency.2024.S02E09.Rogue.Cell.2160p.ATV.WEB-DL.DDP5.1.DV.HDR.H.265-NTb"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 5294,
+  "title": "The Agency 2024 S02E07 Drown Him Then Throw Him a Lifejacket 2160p PMTP WEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9183,
+  "title": "The.Agency.2024.S02E04.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10361,
+  "title": "The.Agency.2024.S02E10.King.Sacrifice.2160p.ATV.WEB-DL.DDP5.1.DV.HDR.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9451,
+  "title": "The.Agency.2024.S02E03.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8698,
+  "title": "The.Agency.2024.S02E05.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9267,
+  "title": "The.Agency.2024.S02E01.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 11270,
+  "title": "The.Agency.2024.S02E08.False.Flag.Attack.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8955,
+  "title": "The.Agency.2024.S02E02.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8325,
+  "title": "The.Agency.2024.S02E09.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 11496,
+  "title": "The.Agency.2024.S02E07.Drown.Him.Then.Throw.Him.a.Lifejacket.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9233,
+  "title": "The.Agency.2024.S02E04.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10435,
+  "title": "The.Agency.2024.S02E10.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9466,
+  "title": "The.Agency.2024.S02E03.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7355,
+  "title": "The.Agency.2024.S02E05.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9566,
+  "title": "The.Agency.2024.S02E08.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9752,
+  "title": "The.Agency.2024.S02E07.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9175,
+  "title": "The.Agency.2024.S02E01.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8877,
+  "title": "The.Agency.2024.S02E02.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7770,
+  "title": "The.Agency.2024.S02E04.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8399,
+  "title": "The.Agency.2024.S02E09.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6284,
+  "title": "The.Agency.2024.S02E05.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10341,
+  "title": "The.Agency.2024.S02E10.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9468,
+  "title": "The.Agency.2024.S02E03.Spymaster.2160p.ATV.WEB-DL.DDP5.1.DV.HDR.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9619,
+  "title": "The.Agency.2024.S02E08.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9191,
+  "title": "The.Agency.2024.S02E01.Kick.the.Wasps.Nest.2160p.ATV.WEB-DL.DDP5.1.DV.HDR.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7988,
+  "title": "The.Agency.2024.S02E03.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9800,
+  "title": "The.Agency.2024.S02E07.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7545,
+  "title": "The.Agency.2024.S02E02.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7086,
+  "title": "The.Agency.2024.S02E09.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6623,
+  "title": "The.Agency.2024.S02E04.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8812,
+  "title": "The.Agency.2024.S02E10.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8112,
+  "title": "The.Agency.2024.S02E08.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7816,
+  "title": "The.Agency.2024.S02E01.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8227,
+  "title": "The.Agency.2024.S02E07.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6442,
+  "title": "The.Agency.2024.S02E02.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5288,
+  "title": "The.Agency.2024.S02E05.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6804,
+  "title": "The.Agency.2024.S02E03.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4795,
+  "title": "The.Agency.2024.S02E09.Rogue.Cell.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5904,
+  "title": "The.Agency.2024.S02E08.False.Flag.Attack.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6425,
+  "title": "The.Agency.2024.S02E10.King.Sacrifice.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6668,
+  "title": "The.Agency.2024.S02E01.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5630,
+  "title": "The.Agency.2024.S02E04.Dead.End.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5984,
+  "title": "The.Agency.2024.S02E07.Drown.Him.Then.Throw.Him.a.Lifejacket.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5780,
+  "title": "The.Agency.2024.S02E03.Spymaster.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5347,
+  "title": "The.Agency.2024.S02E05.Out.Cold.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5473,
+  "title": "The.Agency.2024.S02E02.A.Bear.in.Wolfs.Clothing.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5675,
+  "title": "The.Agency.2024.S02E01.Kick.the.Wasps.Nest.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5827,
+  "title": "The.Agency.2024.S02E10.King.Sacrifice.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5114,
+  "title": "The.Agency.2024.S02E09.Rogue.Cell.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5427,
+  "title": "The.Agency.2024.S02E08.False.Flag.Attack.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5577,
+  "title": "The.Agency.2024.S02E07.Drown.Him.Then.Throw.Him.a.Lifejacket.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7899,
+  "title": "The.Agency.2024.S02E06.NORDiC.2160p.SKST.WEB-DL.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4742,
+  "title": "The.Agency.2024.S02E05.Out.Cold.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5252,
+  "title": "The.Agency.2024.S02E04.Dead.End.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4924,
+  "title": "The.Agency.2024.S02E03.Spymaster.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5026,
+  "title": "The.Agency.2024.S02E02.A.Bear.in.Wolfs.Clothing.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5136,
+  "title": "The.Agency.2024.S02E01.Kick.the.Wasps.Nest.2160p.PMTP.WEB-DL.DDP5.1.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 111158,
+  "title": "The.Agency.2024.S02.2160p.ATV.WEB-DL.DD5.1.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 57722,
+  "title": "The.Agency.Central.Intelligence.2024.S01.2160p.NowPlayer.WEB-DL.50Fps.H265.DD5.1-UBWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 16034,
+  "title": "Arcane.2021.S01.2160p.DV.HDR.BluRay.x265.HEVC.10bit.AAC.5.1-Vyndros"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7850,
+  "title": "Silo.S03E03.A.Dark.Web.2160p.ATVP.WEB-DL.DDP5.1.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 27255,
+  "title": "Arcane.S01E04.Happy.Progress.Day.REPACK.UHD.BluRay.2160p.TrueHD.5.1.DV.HEVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3251,
+  "title": "Sugar.2024.S02E05.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6507,
+  "title": "Criminal.Minds.S19E10.Special.Agent.Garrity.2160p.ATV.WEB-DL.DDP5.1.DV.H.265-NTb"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "Star Trek Strange New Worlds S04E04 1080p HD ENGSubs EZTV"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Star Trek Strange New Worlds (Star Trek Nuevos mundos extranos) S04E02 1080p HD ESP"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1945,
+  "title": "[shincaps] Youjo Senki II - 02 (AT-X 1440x1080 MPEG2 AAC).ts"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 749,
+  "title": "Rick.and.Morty.S09E08.Rickuiem.Mort.a.Dream.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 711,
+  "title": "Rick and Morty S09E08 1080p WEB h264 EDITH"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 7567,
+  "title": "House of the Dragon S03E04 Episode 4 REPACK 2160p HMAX WEB DL DDP5 1 Atmos DV H 265 Kitsune"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1208,
+  "title": "Rick and Morty - S09E08 - 2160p HDR Ai Upscale 5.1 MultiSubs MKV -Mesc"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "House of the Dragon S03E05 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "Rick and Morty S09E09 1080p WEB H264 SYLiX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8400,
+  "title": "Silo.S03E02.Its.All.Good.2160p.ATVP.WEB-DL.DDP5.1.H.265-NTb"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1146,
+  "title": "Criminal Minds S19E09 1080p WEB h264 GRACE"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Silo S03E03 MULTI 1080p WEB H264 HiggsBoson"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2672,
+  "title": "Sugar.2024.S02E04.Off.15.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1433,
+  "title": "[ToonsHub] Saga of Tanya the Evil S02E01 1080p CR WEB-DL AAC2.0 H.264 (Youjo Senki, Multi-Subs)"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Silo S03E02 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1146,
+  "title": "Criminal Minds S19E08 1080p WEB h264 GRACE"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "House of the Dragon S03E04 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1146,
+  "title": "Rick and Morty S09E08 1080p WEB H264 SYLiX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1106,
+  "title": "Rick.and.Morty.S09E07.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8335,
+  "title": "House.of.the.Dragon.S03E03.2160p.REPACK.HMAX.WEB-DL.DDP5.1.DV.HDR.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5574,
+  "title": "House.of.the.Dragon.S03E03.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6345,
+  "title": "Criminal.Minds.S19E07.The.Furies.2160p.AMZN.WEB-DL.DDP5.1.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7844,
+  "title": "From.S04E08.Heavy.Is.the.Head.2160p.AMZN.WEB-DL.DDP5.1.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4762,
+  "title": "Criminal.Minds.S19E04.The.Witching.Hour.2160p.DSNP.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "Rick and Morty S09E07 1080p WEB H264 SYLiX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "Silo S03E02 MULTI 1080p WEB H264 HiggsBoson"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2859,
+  "title": "Sugar.2024.S02E03.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4212,
+  "title": "Silo.S03E01.Who.Are.You.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-Kitsune"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 729,
+  "title": "Rick and Morty S09E04 A Ricker Runs Through It 1080p AMZN WEB DL DDP5 1 H 264 Kitsune"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 317,
+  "title": "Rick and Morty S09E06 1080p WEB-DL HEVC x265-RMTeam"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 433,
+  "title": "Rick and Morty S09E04 1080p DUAL HMAX WEB DL x265 EAC3 5 1  HdT"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "House of the Dragon S03E03 1080p HEVC x265 MeGusta"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 8478,
+  "title": "House of the Dragon S03E02 Queens Landing REPACK 2160p HMAX WEB-DL DDP5 1 A"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5476,
+  "title": "House.of.the.Dragon.S03E02.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6165,
+  "title": "Widows.Bay.S01E03.2160p.WEB.h265-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7835,
+  "title": "Widows.Bay.S01E10.We.Hope.You.Enjoyed.Your.Time.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9205,
+  "title": "Widows.Bay.S01E10.We.Hope.You.Enjoyed.Your.Time.2160p.ATVP.WEB-DL.DD+5.1.Atmos.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5110,
+  "title": "Widows.Bay.S01E09.Emergency.Shelter.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5488,
+  "title": "Widows.Bay.S01E08.Your.Baggage.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6939,
+  "title": "Widows.Bay.S01E07.Seasickness.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6067,
+  "title": "Widows.Bay.S01E06.Our.History.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5999,
+  "title": "Widows.Bay.S01E05.2160p.WEB.h265-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5790,
+  "title": "Widows.Bay.S01E04.Beach.Reads.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6159,
+  "title": "Widows.Bay.S01E03.The.Inaugural.Swim.2160p.ATVP.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6021,
+  "title": "Widows.Bay.S01E02.2160p.WEB.h265-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6710,
+  "title": "Widows.Bay.S01E01.2160p.WEB.h265-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 86410,
+  "title": "Widows.Bay.S01.2160p.ATVP.WEB-DL.DD+5.1.Atmos.DoVi.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 86430,
+  "title": "Widows.Bay.S01.NORDiC.2160p.ATV.WEB-DL.DV.HDR.H.265-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 26388,
+  "title": "Widows.Bay.S01.2160p.ATVP.WEB-DL.DV.HDR10+.DDP5.1.Atmos.H.265.MP4-BEN.THE.MEN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 17752,
+  "title": "Widows.Bay.S01.2026.2160p.ATVP.WEB-DL.DDP5.1.Atmos.DV.H.265-HHWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2612,
+  "title": "From.S04E10.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "Criminal Minds S19E07 1080p WEB h264 GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5176,
+  "title": "Interview.with.the.Vampire.S02E05.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5147,
+  "title": "Interview.with.the.Vampire.S02E01.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6104,
+  "title": "Interview.with.the.Vampire.S02E08.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5990,
+  "title": "Interview.with.the.Vampire.S02E07.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5667,
+  "title": "Interview.with.the.Vampire.S02E06.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6518,
+  "title": "Interview.with.the.Vampire.S02E04.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5968,
+  "title": "Interview.with.the.Vampire.S02E03.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5332,
+  "title": "Interview.with.the.Vampire.S02E02.1080p.BluRay.x264-BORDURE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5455,
+  "title": "Interview.with.the.Vampire.S01E07.1080p.BluRay.Dts-HDMa5.1.AVC-PiR8"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5024,
+  "title": "Interview.with.the.Vampire.S01E06.1080p.BluRay.Dts-HDMa5.1.AVC-PiR8"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4928,
+  "title": "Interview.with.the.Vampire.S01E05.1080p.BluRay.Dts-HDMa5.1.AVC-PiR8"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4690,
+  "title": "Interview.with.the.Vampire.S01E04.1080p.BluRay.Dts-HDMa5.1.AVC-PiR8"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4607,
+  "title": "Interview.with.the.Vampire.S01E03.1080p.BluRay.Dts-HDMa5.1.AVC-PiR8"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5381,
+  "title": "Interview.with.the.Vampire.S01E02.1080p.BluRay.Dts-HDMa5.1.AVC-PiR8"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3193,
+  "title": "Interview.with.the.Vampire.S01E01.1080p.BluRay.10Bit.DDP5.1.HEVC-d3g"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1853,
+  "title": "The.Bear.S05E08.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "showRSS (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 512,
+  "title": "The Bear S05E07 1080p WEB h264 ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 975,
+  "title": "The.Bear.S05E06.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 969,
+  "title": "The.Bear.S05E05.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 765,
+  "title": "The.Bear.S05E03.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 857,
+  "title": "The.Bear.S05E02.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2616,
+  "title": "The.Bear.S05E01.DV.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 150,
+  "title": "The.Bear.S05E04.720p.HEVC.x265-MeGusta"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3407,
+  "title": "Sugar.2024.S02E02.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1955,
+  "title": "Criminal Minds S19E06 Proxy 1080p REPACK DSNP WEB-DL DDP5 1 H 264-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2218,
+  "title": "Avatar.The.Last.Airbender.2024.S02E06.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2765,
+  "title": "Avatar.The.Last.Airbender.2024.S02E07.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2561,
+  "title": "Avatar.The.Last.Airbender.2024.S02E05.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2447,
+  "title": "Avatar.The.Last.Airbender.2024.S02E04.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2430,
+  "title": "Avatar.The.Last.Airbender.2024.S02E03.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2669,
+  "title": "Avatar.The.Last.Airbender.2024.S02E02.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2718,
+  "title": "Avatar.The.Last.Airbender.2024.S02E01.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 2017,
+  "title": "The Legend of Vox Machina S04E12 The Ascension 1080p AMZN WEB-DL DDP5 1 H 2"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1812,
+  "title": "The.Legend.of.Vox.Machina.S04E11.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2024,
+  "title": "The.Legend.of.Vox.Machina.S04E10.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 755,
+  "title": "Attack.on.Titan.S03E17.Hero.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 691,
+  "title": "Attack.on.Titan.S03E16.Perfect.Game.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 639,
+  "title": "Attack.on.Titan.S03E15.Descent.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 766,
+  "title": "Attack.on.Titan.S03E14.Thunder.Spears.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 741,
+  "title": "Attack.on.Titan.S03E09.Ruler.of.the.Walls.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 530,
+  "title": "Attack.on.Titan.S03E05.Reply.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 565,
+  "title": "Attack.on.Titan.S03E04.Trust.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 489,
+  "title": "Attack.on.Titan.S03E03.Old.Story.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 501,
+  "title": "Attack.on.Titan.S03E01.Smoke.Signal.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 6737,
+  "title": "House of the Dragon S03E01 REPACK 2160p HMAX WEB-DL DDP5 1 Atmos DV HDR H 2"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7026,
+  "title": "House.of.the.Dragon.S03E01.DV.HDR.2160p.WEB.h265-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1013,
+  "title": "Attack.on.Titan.S02E05.Historia.1080p.BluRay.Dual-Audio.DD+.2.0.X265-Ralphy"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 2375,
+  "title": "FROM S04E09 The Calm Before REPACK 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1269,
+  "title": "Criminal Minds S19E06 1080p WEB h264 GRACE"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1269,
+  "title": "Rick and Morty S09E06 1080p WEB H264 SYLiX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3007,
+  "title": "Sugar.2024.S02E01.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2345,
+  "title": "Criminal.Minds.S19E05.1080p.WEB.h264-ETHEL"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 729,
+  "title": "Rick and Morty S09E05 Jer Bud 1080p AMZN WEB-DL DDP5 1 H 264-FLUX"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1689,
+  "title": "The.Legend.of.Vox.Machina.S04E09.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1966,
+  "title": "The.Legend.of.Vox.Machina.S04E08.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 1945,
+  "title": "The.Legend.of.Vox.Machina.S04E07.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1004,
+  "title": "From S04E09 1080p WEB h264 ETHEL"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1300,
+  "title": "Criminal Minds S19E04 1080p WEB h264 GRACE"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "From S04E08 1080p WEB h264 ETHEL"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1300,
+  "title": "Rick and Morty S09E04 1080p WEB H264 SYLiX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1894,
+  "title": "The Legend of Vox Machina S04E06 1080p WEB h264 EDITH"
+ },
+ {
+  "indexer": "showRSS (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 512,
+  "title": "The Legend of Vox Machina S04E05 1080p WEB h264 EDITH"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1792,
+  "title": "The.Legend.of.Vox.Machina.S04E04.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9626,
+  "title": "Saturday.Night.Live.S51E18.Olivia.Rodrigo.May.2.2026.2160p.PCOK.WEB-DL.DD+5.1.Atmos.HDR.H.265-playWEB"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1392,
+  "title": "Alice and Steve S01E06 1080p WEB h264-GRACE"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1095,
+  "title": "Alice and Steve S01E05 1080p WEB h264-GRACE"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1085,
+  "title": "Alice and Steve S01E03 1080p WEB h264-GRACE"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1280,
+  "title": "Alice and Steve S01E02 1080p WEB h264-GRACE"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1167,
+  "title": "Alice and Steve S01E01 1080p WEB h264-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 263,
+  "title": "Alice.and.Steve.S01E04.720p.HEVC.x265-MeGusta"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 824,
+  "title": "Rick.and.Morty.S09E03.Rick.Fu.Hustle.1080p.AMZN.WEB-DL.DDP5.1.H.264-playWEB"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 5713,
+  "title": "FROM S04E06 The Heart Is A Lonely Hunter 2160p AMZN WEB DL DDP5 1 H 265 Kit"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 7048,
+  "title": "From.S04E06.The.Heart.Is.A.Lonely.Hunter.2160p.AMZN.WEB-DL.DDP5.1.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6013,
+  "title": "FROM.S04E06.The.Heart.Is.A.Lonely.Hunter.2160p.AMZN.WEB-DL.DDP5.1.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2869,
+  "title": "Ghosts.US.S05E21.Up.the.Creek.2160p.AMZN.WEB-DL.DD+5.1.H.265-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5961,
+  "title": "The.Expanse.S05E01.HDR.2160p.WEB-DL.DDP5.1.H.265-ROCCaT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 493,
+  "title": "Bobs.Burgers.S16E14.Stuck.in.the.Middle.with.Hugo.1080p.DSNP.WEB-DL.DD+5.1.H.264-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 6013,
+  "title": "From.S04E06.The.Heart.Is.A.Lonely.Hunter.2160p.AMZN.WEB-DL.DDP5.1.H.265-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 10950,
+  "title": "Euphoria.S03E06.2026.2160p.MAX.WEB-DL.DDP5.1.Atmos.H.265.DV-HDSWEB"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1297,
+  "title": "Rick and Morty - S09E02 - 2160p HDR Ai Upscale 5.1 MultiSubs MKV -Mesc"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 8193,
+  "title": "For.All.Mankind.2026.S05E09.2160p.ATVP.WEB-DL.H.265.10bit.DDP5.1.Atmos-UBWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5921,
+  "title": "From.S04E07.Best.Laid.Plans.2160p.AMZN.WEB-DL.DDP5.1.H.265-NTb-4P"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 13315,
+  "title": "For.All.Mankind.2026.S05E10.2160p.ATVP.WEB-DL.H.265.10bit.DDP5.1.Atmos-UBWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9583,
+  "title": "Euphoria.S03E07.2026.2160p.MAX.WEB-DL.DDP5.1.Atmos.H.265.DV-HDSWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 11067,
+  "title": "Euphoria.US.S03E08.In.God.We.Trust.2160p.HMAX.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2004,
+  "title": "Ghosts.2021.S05E21.2160p.WEB.H265-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 9918,
+  "title": "For.All.Mankind.2026.S05E08.2160p.ATVP.WEB-DL.H.265.10bit.DDP5.1.Atmos-UBWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 53574,
+  "title": "Off.Campus.2026.S01.Complete.2160p.AMZN.WEB-DL.HDR10+.H.265.10bit.DDP5.1-UBWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 23335,
+  "title": "Allen.Iv3rson.S01.2160p.WEB.H.265-GRACE"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 3082,
+  "title": "Criminal Minds S19E01 Now and Then 1080p REPACK AMZN WEB-DL DDP5 1 H 264-NT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2374,
+  "title": "Criminal.Minds.S19E03.Body.Count.1080p.REPACK.AMZN.WEB-DL.DDP5.1.H.264-NTb"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3777,
+  "title": "Heated.Rivalry.S01E06.2025.2160p.MAX.WEB-DL.DDP5.1.H.265-HDSWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2420,
+  "title": "Heated.Rivalry.S01E05.2025.2160p.MAX.WEB-DL.DDP5.1.H.265-HDSWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2928,
+  "title": "Heated.Rivalry.S01E04.2025.2160p.MAX.WEB-DL.DDP5.1.H.265-HDSWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2516,
+  "title": "Heated.Rivalry.S01E03.2025.2160p.MAX.WEB-DL.DDP5.1.H.265-HDSWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3347,
+  "title": "Heated.Rivalry.S01E02.Olympians.REPACK.2160p.HMAX.WEB-DL.DDP5.1.H.265-RAWR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 2295,
+  "title": "Heated.Rivalry.S01E01.Rookies.REPACK.2160p.HMAX.WEB-DL.DDP5.1.H.265-RAWR"
+ },
+ {
+  "indexer": "showRSS (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 512,
+  "title": "the legend of vox machina s04e03 1080p web h264 evelyn"
+ },
+ {
+  "indexer": "showRSS (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 512,
+  "title": "the legend of vox machina s04e02 1080p web h264 evelyn"
+ },
+ {
+  "indexer": "showRSS (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 512,
+  "title": "the legend of vox machina s04e01 1080p web h264 evelyn"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1300,
+  "title": "Rick and Morty S09E03 1080p WEB H264 SYLiX"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1249,
+  "title": "From S04E07 1080p WEB h264 ETHEL"
+ },
+ {
+  "indexer": "LimeTorrents (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 1300,
+  "title": "Criminal Minds S19E03 1080p WEB h264 GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5154,
+  "title": "Spider-Noir.S01E08.The.Man.in.the.Mask.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4551,
+  "title": "Spider-Noir.S01E07.Nobodys.Hero.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4516,
+  "title": "Spider-Noir.S01E06.Nightmare.on.a.Gurney.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3250,
+  "title": "Spider-Noir.S01E05.Betrayal.2160p.BW.WEBRip.DDP.5.1.Atmos.DV.HDR10Plus.x265.10bit-MarkII"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5290,
+  "title": "Spider-Noir.S01E04.A.Mistake.Ill.Never.Make.Again.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5092,
+  "title": "Spider-Noir.S01E03.Double.Cross.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 4554,
+  "title": "Spider-Noir.S01E02.Tread.Lightly.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5024,
+  "title": "Spider-Noir.S01E01.Step.Into.My.Office.Authentic.BW.2160p.AMZN.WEB-DL.DDP5.1.Atmos.H.265-FLUX"
+ },
+ {
+  "indexer": "Uindex (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 277,
+  "title": "For All Mankind S05E07 720p 10bit WEBRip 2CH x265 HEVC-PSA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 5414,
+  "title": "Criminal.Minds.S19E02.2160p.WEB.h265-GRACE"
+ },
+ {
+  "indexer": "Uindex (Prowlarr)",
+  "kind": "tv",
+  "protocol": "torrent",
+  "sizeMb": 3031,
+  "title": "Criminal Minds S19E01 1080p WEB h264-GRACE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "tv",
+  "protocol": "usenet",
+  "sizeMb": 3988,
+  "title": "Spider-Noir.S01E08.REPACK.NORDiC.1080p.AMZN.WEB-DL.H.264-NORViNE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 72796,
+  "title": "Greenland.2.Migration.2026.2160p.UHD.BluRay.REMUX.DV.HDR10+.MULTi-Ben.The.Men"
+ },
+ {
+  "indexer": "Nyaa.si (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2764,
+  "title": "Megazone 23 (1985) [BD.1080p. ITA.JPN.ENG.Subs.Eng.] [2.71 GB] [TheHatefulEdo]"
+ },
+ {
+  "indexer": "NoNaMe Club (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 14052,
+  "title": "\u041a\u043e\u0440\u0430\u0431\u043b\u044c-\u043f\u0440\u0438\u0437\u0440\u0430\u043a / Ghost Ship (2002) BDRip [AV1/2160p] [4K, SDR, 10-bit] [handmade Upscale AI]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 23959,
+  "title": "Supergirl.2026.2160p.iT.WEB-DL.DV.HDR10+-Ben.The.Men"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4414,
+  "title": "Colony.2026.1080p.WAVVE.WEB-DL.AAC2.0.H.264-BittenButChillin"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 14421,
+  "title": "Avatar.Aang.The.Last.Airbender.2026.2160p.ATVP.WEB-DL.DD5.1.H.265-RUDR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21119,
+  "title": "Ghost.in.the.Shell.1995.Remux-1080p.AVC-HIFI"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9482,
+  "title": "Disclosure.Day.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-KyoGo"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30046,
+  "title": "Star.Wars.The.Mandalorian.And.Grogu.2026.2160p.WEB-DL.DV.HDR10+-Ben.The.Men"
+ },
+ {
+  "indexer": "NoNaMe Club (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 53676,
+  "title": "\u041e\u0445\u043e\u0442\u0430 \u0437\u0430 \u0442\u0435\u043d\u044c\u044e / Bu feng zhui ying / The Shadow's Edge (2025) UHD BDRemux [H.265/2160p] [4K, HDR10, DV 7.6, 10-bit]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 702,
+  "title": "Illumination.Presents.Minions.Holiday.Special.2020.1080p.WEB.h264-BAE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21012,
+  "title": "Backrooms.2026.2160p.iT.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-BYNDR"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 6604,
+  "title": "The Furious 2026 1080p AMZN WEB-DL DDP5 1 H 264-KyoGo"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 8593,
+  "title": "Man.Of.War.2026.1080p.AMZN.WEB-DL.DD+5.1.H.264-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21066,
+  "title": "Caddo.Lake.2024.iTA-ENG.WEB-DL.2160p.HEVC.HDR.x265-CYBER"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4811,
+  "title": "Ghost.in.the.Shell.1995.1080p.Bluray.DTSES.x264-SHiTSoNy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11932,
+  "title": "Ghost.in.the.Shell.1995.REPACK.1080p.UHD.BluRay.DDP7.1.DoVi.HDR.x265-PTer"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 6348,
+  "title": "Ghost.In.The.Shell.1995.1080p.REAL.RERIP.BluRay.x264-MOOVEE-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 67910,
+  "title": "Ghost.in.the.Shell.1995.PROPER.UHD.BluRay.2160p.TrueHD.Atmos.7.1.HEVC.HYBRID.REMUX-FraMeSToR-Scrambled"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 63211,
+  "title": "Ghost.in.the.Shell.1995.REPACK.4K.HDR.DV.2160p.BDRemux.Ita.Eng.Jap.x265-NAHOM"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1824,
+  "title": "Ghost.in.the.Shell.1995.1080p.BluRay.DDP5.1.x265.10bit-GalaxyRG2 ..."
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 68942,
+  "title": "Ghost.in.the.Shell.1995.US.REPACK.4K.HDR.DV.2160p.BDRemux.Ita.Eng.Jap.x265-NAHOM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 34348,
+  "title": "Toy.Story.4.2019.V2.UHD.BluRay.REMUX.2160p.HEVC.Atmos.TrueHD7.1.3Audio-CHD-RakuvArrow"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 42427,
+  "title": "Toy.Story.2.1999.REPACK.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HEVC.HYBRID.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7047,
+  "title": "Obsession.2025.NORDiC.1080p.WEB-DL.H.264-NORViNE"
+ },
+ {
+  "indexer": "World-torrent (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 18595,
+  "title": "The.Devil.Wears.Prada.2.2026.MULTi.VF2.HDR.2160p.WEB.H265-SUPPLY (Le Diable s'habille en Prada 2)\n\t\n\t\n\t\n\tLe Diable s'habille en Prada 2 - The Devil Wears Prada 2 MULTI TRUEFRENCH ULTRA HD 4K x265 2026Taille: 18.16 GB Seeders: 57 Leechers: 180 Compl\u00e9t\u00e9s: 143 Cat\u00e9gories: Films Sous-Cat\u00e9gories: Com\u00e9die dramatique"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2396,
+  "title": "Masters of the Universe (2026) 1080p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 57029,
+  "title": "Sleeping Beauty (1959) 2160p 60fps x265 Upscaled"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2867,
+  "title": "Mein Name ist Eugen 2005 Swissgerman 720p BluRay x264 ETM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 18052,
+  "title": "Blades.of.the.Guardians.2026.REPACK.1080p.BluRay.DDP7.1.x264-ZoroSenpai"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 12768,
+  "title": "Federer.Twelve.Final.Days.2024.HDR.2160p.WEB.H265-RogerThat"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 3862,
+  "title": "Mortal.Kombat.II.2026.2160p.HDR10Plus.DV.WEBRip.DDP5.1.Atmos.x265.HEVC-PSA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 12188,
+  "title": "Michael.2026.2160p.WEB.h265-GRACE"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 17703,
+  "title": "\u0417\u043e\u043c\u0431\u0438 \u043e\u0434\u043d\u0438\u043c \u043f\u043b\u0430\u043d\u043e\u043c! / Kamera wo Tomeru na! / One Cut of the Dead [2017, \u042f\u043f\u043e\u043d\u0438\u044f, \u0443\u0436\u0430\u0441\u044b, \u043a\u043e\u043c\u0435\u0434\u0438\u044f, BDRemux 1080p] AVO + Sub Rus, Eng, Jpn + Original Jpn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7721,
+  "title": "Balloon.2018.720p.BluRay.DD.5.1.x264-SPHD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27613,
+  "title": "Ballon.2018.UHD.BluRay.2160p.TrueHDAtmos.7.1.HDR.10bit.x265-beAst"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1546,
+  "title": "Ballon 2018 GERMAN 720p BluRay H264 AAC VXT"
+ },
+ {
+  "indexer": "NoNaMe Club (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 54341,
+  "title": "\u0412\u043e\u0437\u0434\u0443\u0448\u043d\u044b\u0439 \u0448\u0430\u0440 / Ballon (2018) UHD BDRemux [H.265/2160p] [4K, HDR, 10-bit] [MVO]"
+ },
+ {
+  "indexer": "Zamunda RIP (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 11223,
+  "title": "Ballon.2018.GERMAN.1080p.BluRay.AVC.x264.AC3-HANDJOB | Ballon / \u0411\u0430\u043b\u043e\u043d (2018)"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 54343,
+  "title": "Ballon 2018 BDRemux 2160p HDR by Silverok"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 62949,
+  "title": "Color.Out.of.Space.2019.4K.SDR.2160p.BDRemux.Ita.Eng.x265-NAHOM"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1587,
+  "title": "needle park baby 2020 german 1080p bluray dd5 1 hevc x265 rmteam mkv"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 73582,
+  "title": "8.Mile.2002.2160p.BluRay.REMUX.HEVC.DTS-X.7.1-FGT"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 4372,
+  "title": "Hokum 2026 REPACK 1080p AMZN WEB-DL DDP5 1 H 264-BYNDR"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 4239,
+  "title": "Hokum.2026.1080p.AMZN.WEB-DL.DDP.2.0.H264.MP4-BTM"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 16977,
+  "title": "One Cut of the Dead 2017 [1080p Bluray Remux x264 PCM]"
+ },
+ {
+  "indexer": "Zamunda RIP (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 53944,
+  "title": "Ballon.2018.2160p.UHD.BluRay.REMUX.HEVC.TrueHD.7.1-HDRemuX | Ballon / \u0411\u0430\u043b\u043e\u043d (2018) [UHD]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21571,
+  "title": "Suzuki.Bakudan.2025.1080p.BluRay.DDP5.1.x264-ZoroSenpai"
+ },
+ {
+  "indexer": "Uindex (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 32675,
+  "title": "Hundreds of Beavers 2022 REPACK 1080p BluRay REMUX AVC DTS-HD MA 5 1-BLURANiUM"
+ },
+ {
+  "indexer": "Knaben (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 17029,
+  "title": "Lee.Cronins.The.Mummy.2026.2160p.WEB-DL.DV.HDR10+.ENG.LAT.Atmos.H265.MP4-BTM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5858,
+  "title": "The.Mummy.2026.2160p.WEB.HEVC.10bit.AAC5.1-LuCY"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 47608,
+  "title": "Kiss.the.Girls.1997.UHD.BluRay.2160p.DTS-HD.MA.5.1.DV.HEVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 23935,
+  "title": "Pillion.2025.2160p.iT.WEB-DL.Hybrid.H.265.DV.HDR10+.DDP.5.1.English-HONE-REPACK"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 92733,
+  "title": "Schindlers.List.1993.PROPER.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 15303,
+  "title": "Schindlers.List.1993.1080p.BluRay.x264-HD4U"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 69417,
+  "title": "F1.The.Movie.2025.Hybrid.2160p.UHD.Blu-ray.Remux.DV.HDR10plus.HEVC.TrueHD.Atmos.7.1-CiNEPHiLES"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10025,
+  "title": "Driveways.2019.1080p.BluRay.x264.DTS-HD.MA.5.1-FGT"
+ },
+ {
+  "indexer": "TorrentGalaxyClone (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 58265,
+  "title": "Send.Help.2026.2160p.Hybrid.UHD.Bluray.REMUX.DV.HDR10+.MULTi.TrueHD.Atmos-BTM"
+ },
+ {
+  "indexer": "World-torrent (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 19323556,
+  "title": "The.Bride.2026.MULTI.VF2.2160p.WEBRip.HDR10Plus.EAC3.5.1.x265-Neostark"
+ },
+ {
+  "indexer": "TorrentGalaxyClone (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 3686,
+  "title": "Driveways 2020 1080p BluRay x264-OFT"
+ },
+ {
+  "indexer": "Uindex (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1925,
+  "title": "Swapped (2026) [1080p] [WEBRip] [5.1]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 62756,
+  "title": "Send.Help.2026.2160p.UHD.BluRay.DV.REMUX.HDR10.HEVC.TrueHD.7.1.Atmos-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11197,
+  "title": "Driveways.2020.1080p.Bluray.DTS-HD.MA.5.1.X264-EVO"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24844,
+  "title": "La.Sposa2026.iTA-ENG.WEB-DL.2160p.HEVC.HDR.x265-CYBER"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4056,
+  "title": "Swapped.2026.1080p.WEBRip.DDP.5.1.Atmos.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "TorrentGalaxyClone (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 17100,
+  "title": "They.Will.Kill.You.2026.2160p.iT.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-SCOPE"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1198,
+  "title": "Lee Cronins The Mummy 2026 1080p HD X264 1080pscr"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 3416,
+  "title": "The.Legend.of.Aang.The.Last.Airbender.2026.1080p.WEB-DL.AAC.H264-AOC"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1853,
+  "title": "The Orange Man 2015 1080p WEBRip x264 RARBG"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1740,
+  "title": "Fat Sick And Nearly Dead 2 2014 1080p WEBRip x264 RARBG"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2324,
+  "title": "Prophecy 2015 JAPANESE 1080p BluRay H264 AAC VXT"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 18319,
+  "title": "Detective Conan Movie 04-Captured In Her Eyes 2000 1080p REMUX AVC Dolby TrueHD-.."
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 11560,
+  "title": "Say I Love You 2014 1080p BluRay x264 DTS WiKi [MovietaM]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2522,
+  "title": "Ready.Or.Not.2.Here.I.Come.2026.1080p.WEBRip.x264.AAC5.1-LAMA"
+ },
+ {
+  "indexer": "TorrentGalaxyClone (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 10956,
+  "title": "Project.Hail.Mary.2026.2160p.WEBrip.h265.Dual.YG\u2b50"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1105,
+  "title": "Lee Cronins The Mummy 2026 1080p HD X264 1080p"
+ },
+ {
+  "indexer": "TorrentDownload (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 0,
+  "title": "The Devil Wears Prada 2 (2026) [1080p] [WEBRip] [5 1]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4209,
+  "title": "Ready.Or.Not.2.Here.I.Come.2026.1080p.WEBRip.AAC2.0.HEVC-LuCY"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 1570,
+  "title": "the.super.mario.galaxy.movie.2026.internal.1080p.10bit.hdrip.2ch.x265.hevc-psa"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 3159,
+  "title": "hoppers.2026.720p.web.h264-jff"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 15781,
+  "title": "War.Machine.2026.DV.2160p.WEB.h265-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7055,
+  "title": "Sword.of.Vengeance.2015.1080p.BluRay.x264-ROVERS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10449,
+  "title": "Balla.coi.Lupi-Dances.with.the.Wolves-Directors.Cut.1990.UpScaled.2160p.H265.10.bit.DV.HDR10ita.eng.AC3.5.1.sub.ita.eng.Licdom"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38074,
+  "title": "The.Horse.Whisperer.1998.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-PmP"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 1022,
+  "title": "Frozen.Fever.2015.2160p.DSNP.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25425,
+  "title": "Scream.7.2026.2160p.iTunes.WEB-DL.DDP.5.1.Atmos.HDR10+.H.265-CHDWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 44004,
+  "title": "Avatar.Fire.and.Ash.2025.2160p.iT.WEB-DL.DoVi.HDR.HEVC.DDP.5.1-ThorHDSWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 14130,
+  "title": "I.Swear.2025.2160p.WEB-DL.DDP5.1.SDR.H265-AOC"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1914,
+  "title": "U Are the Universe (2024) 1080p WEBRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7940,
+  "title": "The.Last.Sacrifice.2024.1080p.WEB.h264-EDITH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9020,
+  "title": "Another.Round.2020.REPACK.1080p.WEB.H264-ESZC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 35522,
+  "title": "Spirited.Away.2001.JAPANESE.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38983,
+  "title": "Spirited.Away.2001.BluRay.1080p.DTS-HD.MA.6.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 8781,
+  "title": "After.Ever.Happy.2022.2160p.WEB.H265-KBOX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25875,
+  "title": "Good.Luck.Have.Fun.Dont.Die.2025.Hybrid.2160p.WEB-DL.DV.HDR.DDP5.1.Atmos.H265-AOC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 6228,
+  "title": "heel.2025.1080p.amzn.web-dl.ddp5.1.264-scope"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19822,
+  "title": "Dust.Bunny.2025.Hybrid.2160p.WEB-DL.DV.HDR.DDP5.1.Atmos.H265-AOC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7529,
+  "title": "The.Bluff.2026.1080p.AMZN.WEB-DL.DD+5.1.H.264-playWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2053,
+  "title": "Return.To.Silent.Hill.2026.1080p.WEBRip.LAMA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11800,
+  "title": "Hercules.2014.2160p.WEB-DL.SDR.ENG.LATINO.DDP5.1.H265-BEN.THE.MEN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 22693,
+  "title": "Mercy.2026.2160p.iTunes.WEB-DL.HEVC.10bit.DV.DDP5.1.Atmos.3Audios-QHstudIo"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10513,
+  "title": "The.Orphans.2025.2160p.iTunes.WEB-DL.HEVC.10bit.DD5.1.2Audios-QHstudIo"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28035,
+  "title": "Hamnet.2025.2160p.iT.WEB-DL.Hybrid.H.265.DV.HDR10+.DDP.Atmos.5.1.English-HONE"
+ },
+ {
+  "indexer": "ZkTorrent (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 3225,
+  "title": "Hamnet 2025 FRENCH WEBRIP 720p"
+ },
+ {
+  "indexer": "ZkTorrent (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 6952,
+  "title": "Hamnet 2025 MULTI WEBRIP 1080p"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 5744,
+  "title": "Hamnet (2025) 2160p WEBRip 5.1 10Bit x265 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19371,
+  "title": "I.Saw.the.TV.Glow.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.H.265-FLUX-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 17108,
+  "title": "Dagon 2001 1080p Bluray Remux DTS-HD MA 5.1 AVC-decatora27"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 20086,
+  "title": "28.Years.Later-The.Bone.Temple.[2026].[2160p.iT.WEB-DL.Hybrid.H265.DV.HDR10+.DDP.Atmos.5.1.English-HONE]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 23791,
+  "title": "Er.ist.wieder.da.2015.BluRay.1080p.DTS-HD.MA.5.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1389,
+  "title": "The.Most.Beautiful.1944.(Akira.Kurosawa-Drama).720p.x264-Classics"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5134,
+  "title": "The Most Beautiful 1944 Subfrench 720p BluRay x264-FIDELIO"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10310,
+  "title": "The.Most.Beautiful.1944.SUBFRENCH.1080p.BluRay.x264-FiDELiO"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1628,
+  "title": "The Ghosts in Our Machine (2013) Vegan ENG RUS 720p H264 AAC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 8219,
+  "title": "Fat.Sick.and.Nearly.Dead.2010.1080p.WEB.H264-STRiFE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 36220,
+  "title": "Rounders.1998.PROPER.BluRay.1080p.DTS-HD.MA.5.1.AVC.HYBRID.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26245,
+  "title": "Going.in.Style.2017.REMUX.1080p.Bluray.AVC.DTS-HD.MA.5.1-LEGi0N-Rakuvfinhel"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 61722,
+  "title": "Sliver.1993.Unrated.2160p.UHD.BluRay.REMUX.HDR.DV.HEVC.DTS-HD.MA.5.1-chr00t"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1648,
+  "title": "The Hut (1981) 1080p BRRip x264 -YTS"
+ },
+ {
+  "indexer": "ZkTorrent (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 6748,
+  "title": "Irati 2023 FRENCH WEBRIP 1080p"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2464,
+  "title": "Only.the.River.Flows.2023.1080p.BluRay.DDP.5.1.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 53078,
+  "title": "Vermines.AKA.Infested.2023.2160p.UHD.BluRay.REMUX.DV.HEVC.DTS-HD.MA.5.1-Hiei"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30702,
+  "title": "Geostorm.2017.2160p.HDR.WEBRip.DTS-HD.MA.5.1.x265"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 4065,
+  "title": "Manitou's Canoe (2025) 2160p BRRip 5.1 10Bit x265 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10146,
+  "title": "Aladdin.1992.UHD.BluRay.2160p.TrueHD.Atmos.7.1.HEVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21122,
+  "title": "The.Rip.2026.2160p.Hybrid.MULTI.WEB-DL.DV.HDR.H265-AOC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 54882,
+  "title": "The.Little.Mermaid.1989.Hybrid.2160p.Remux.HEVC.DoVi.TrueHD.7.1-3L"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11228,
+  "title": "Tangled.2010.UHD.BluRay.2160p.DDP.7.1.DV.HDR.x265-hallowed"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 47675,
+  "title": "Zootopia.2016.2160p.UHD.BluRay.REMUX.HEVC.HDR10.TrueHD7.1-CHD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 45935,
+  "title": "Cars.2006.REMUX.2160p.10bit.BluRay.UHD.HDR.HEVC.Atmos.DTS-HD.MA.7.1-LEGi0N-RakuvArrow"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4715,
+  "title": "Carved.The.Slit-Mouthed.Woman.2007.720p.AMZN.WEB-DL.DDP2.0.H.264-Kitsune"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 3512,
+  "title": "Joseph.King.of.Dreams.2000.1080p.BluRay.x264-OFT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 52821,
+  "title": "Terminator.2.Judgment.Day.1991.Theatrical.Cut.UHD.BluRay.2160p.DTS-HD.MA.5.1.HEVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 62179,
+  "title": "Terminator.2.Judgment.Day.1991.2160p.UHD.Blu-ray.REMUX.HEVC.DTS-HD.MA5.1-HDH"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1360,
+  "title": "Ju-on.The.Final.Curse.2015.1080p.BRRip.x264.Japanese.AAC-ETRG"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 905,
+  "title": "Love Machine (2016) Explicit 720p HDRip x264 AAC -QRips"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2037,
+  "title": "One in a Thousand (2020) 1080p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38838,
+  "title": "Underworld.Blood.Wars.2016.REPACK.2160p.UHD.Remux.HEVC.HDR.TrueHD.Atmos.7.1-playBD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 49041,
+  "title": "Underworld.Awakening.2012.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 43065,
+  "title": "Monster.Hunter.2020.UHD.BluRay.2160p.TrueHD.Atmos.7.1.HEVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 59256,
+  "title": "Predator.1987.2160p.BluRay.REMUX.HEVC.DTS-HD.MA.5.1-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 59369,
+  "title": "Fantastic.Beasts.The.Crimes.Of.Grindelwald.2018.UHD.BluRay.2160p.TrueHD.Atmos.7.1.HEVC.REMUX-FraMeSToR-AsRequested"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 38972,
+  "title": "The Hateful Eight 2015 4K UHD 2160p REMUX DCPRip DTS-HD 5.1-DDR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 6063,
+  "title": "The.Hunt.2012.1080p.AMZN.WEB-DL.H.264.DDP2.0-PTerWEB"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5801,
+  "title": "Fantastic.Beasts The.Crimes.of.Grindelwald.2018.WEB-DL.2160p.H265.DDP5.1.2Audios-CHDWEB-Rakuvfinhel"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4480,
+  "title": "Cobweb.2023.2160p.WEB-DL.DV.HDR10DDP.5.1.H265-4LHD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5394,
+  "title": "Clash.Of.The.Titans.2010.2160p.4K.BluRay.5.1-LAMA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 1415,
+  "title": "Blackrock.1997.480p.DVDRip"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7816,
+  "title": "Avengers.Endgame.2019.Bluray.2160p.AV1.10bit.AC3.5.1-UH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5858,
+  "title": "Beauty.and.the.Beast.2017.1080p.BluRay.x264-OFT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9120,
+  "title": "Black.Panther.Wakanda.Forever.2022.1080p.BluRay.x265.10bit.DTS-WiKi"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5518,
+  "title": "The.Avengers.2012.1080p.BluRay.DDP.5.1.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9265,
+  "title": "Jurassic World Dominion (2022) Extended (1080p BluRay x265 HEVC 10bit AAC 7.1 Tigole)"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 32023,
+  "title": "Twisters 2024 BluRay Remux 1080p AVC TrueHD 7 1 Atmos-ZQ"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 5007,
+  "title": "A Quiet Place 2018 REPACK UHD BluRay 1080p DD Atmos 5 1 DoVi HDR10 x265-SM7"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28600,
+  "title": "Anchorman.The.Legend.of.Ron.Burgundy.2004.BluRay.1080p.DTS-HD.MA.5.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 8779,
+  "title": "Fly.Me.To.The.Moon.2024.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX[TGx]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19052,
+  "title": "A.Quiet.Place.2018.1080p.BluRay.REMUX.AVC.TrueHD.7.1.Atmos-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 23580,
+  "title": "Twisters.2024.1080p.BluRay.REMUX.AVC.TrueHD.7.1-UnKn0wn"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 25254,
+  "title": "Trap 2024 1080p BluRay REMUX AVC Atmos-TRiToN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28900,
+  "title": "Anchorman.The.Legend.of.Ron.Burgundy.2004.1080p.BluRay.Remux.DTS-HD.5.1"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 1730,
+  "title": "Fly.Me.To.The.Moon.2024.1080p.AMZN.WEBRip.1600MB.DD5.1.x264-GalaxyRG"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25293,
+  "title": "Trap.2024.1080p.BluRay.REMUX.AVC.TrueHD.Atmos.7.1-AsToNMarTiN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19634,
+  "title": "A.Quiet.Place.2018.REMUX.1080p.BluRay.AVC.Atmos.TrueHD.7.1-iFT"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2539,
+  "title": "The Lord of the Rings The War of the Rohirrim (2024) 1080p BRRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24130,
+  "title": "Twisters.2024.1080p.BluRay.Remux.AVC.TrueHD.Atmos.7.1-playBD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29362,
+  "title": "Anchorman.The.Legend.Of.Ron.Burgundy.UNRATED.2004.1080p.BluRay.DTSHD-MA.h264.Remux-decibeL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11188,
+  "title": "Fly.Me.to.the.Moon.2024.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264.DUAL-BiOMA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25520,
+  "title": "Trap.2024.1080p.BluRay.Remux.AVC.TrueHD.7.1-HDT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5540,
+  "title": "The.Lord.Of.The.Rings.The.War.Of.The.Rohirrim.2024.1080p.BluRay.DV.HDR.X265.DDP.7.1-Chivaman"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24130,
+  "title": "Twisters.2024.1080p.Remux.AVC.TrueHD.Atmos.7.1-playBD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29377,
+  "title": "Anchorman.The.Legend.of.Ron.Burgundy.2004.BluRay.1080p.DTS-HD.MA.5.1.AVC.REMUX-FraMeSToR-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2529,
+  "title": "Fly.Me.to.the.Moon.2024.1080p.WEBRip.DDP.Atmos.5.1.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21985,
+  "title": "A.Quiet.Place.2018.REMUX.1080p.Blu-ray.AVC.TrueHD.DTS-HD.MA.7.1-LEGi0N-Rakuvfinhel"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9805,
+  "title": "The.Lord.of.the.Rings.The.War.of.the.Rohirrim.2024.1080p.BluRay.x264-PiGNUS"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 30662,
+  "title": "Godzilla.x.Kong.The.New.Empire.2024.1080p.BluRay.REMUX.MULTi.Atmos.7.1.H265-BTM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25478,
+  "title": "Trap.2024.1080p.BluRay.REMUX.AVC.TrueHD.7.1-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2823,
+  "title": "Fly.Me.to.the.Moon.2024.1080p.WEBRip.x265-KONTRAST"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24130,
+  "title": "Twisters.2024.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 23928,
+  "title": "Beetlejuice.Beetlejuice.2024.1080p.BluRay.REMUX.ENG.LATINO.ITALIAN.Atmos-BTM"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11974,
+  "title": "Argylle.2024.1080p.AMZN.WEB-DL.H.264.Dual.YG"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26295,
+  "title": "Godzilla.x.Kong.The.New.Empire.2024.1080p.BluRay.REMUX.AVC.Atmos-TRiToN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9628,
+  "title": "Argylle.2024.1080p.AMZN.WEB-DL.DDP.5.1.H.264-PiRaTeS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 13309,
+  "title": "The.Lord.of.the.Rings.The.War.of.the.Rohirrim.2024.1080p.BluRay.DD.7.1.x264-playHD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 22674,
+  "title": "Beetlejuice.Beetlejuice.2024.1080p.BluRay.Remux.AVC.TrueHD.Atmos.7.1-playBD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30798,
+  "title": "Top.Gun.1986.Blu-ray.1080p.REMUX.AVC.TrueHD.5.1-HDH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25362,
+  "title": "A.Quiet.Place.2018.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.Atmos"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 26259,
+  "title": "Transformers One 2024 1080p BluRay REMUX AVC TrueHD 7 1-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24180,
+  "title": "Twisters.2024.1080p.Blu-ray.REMUX.AVC.Atmos.TrueHD7.1-HDH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25860,
+  "title": "Trap.2024.NORDiC.1080p.REMUX.BluRay.AVC.TrueHD.7.1.Atmos-NorTekst"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9236,
+  "title": "Fly.Me.to.the.Moon.2024.1080p.AMZN.WEB-DL.DDP.5.1.H.264-PiRaTeS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19061,
+  "title": "Barbie.2023.MULTi.1080p.BluRay.x264-Ulysse"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26295,
+  "title": "Godzilla.x.Kong.The.New.Empire.2024.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 22748,
+  "title": "Beetlejuice.Beetlejuice.2024.1080p.BluRay.REMUX.AVC.True-HD.7.1-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31708,
+  "title": "Top.Gun.1986.Special.Collectors.Edition.BluRay.1080p.DTS-HD.MA.6.1.AVC.REMUX-FraMeSToR-AsRequested"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2140,
+  "title": "Salem's Lot (2024) 1080p BRRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27698,
+  "title": "Transformers.One.2024.1080p.Blu-ray.Remux.AVC.TrueHD.7.1-HDT"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 32405,
+  "title": "Shazam.Fury.of.the.Gods.2023.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.Atmos"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25630,
+  "title": "Twisters.2024.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR-AsRequested"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 10579,
+  "title": "Watchmen Chapter I 2024 1080p Blu-ray Remux AVC DTS-HD MA 5 1-HDT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26183,
+  "title": "Barbie.2023.REMUX.1080p"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26354,
+  "title": "Trap.2024.1080p.BluRay.Remux.AVC.TrueHD.7.1.Atmos-PTP"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9679,
+  "title": "L.Armee.Des.Morts.2021.MULTi.1080p.WEB.H264-MoRT2021"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29362,
+  "title": "Anchorman.The.Legend.Of.Ron.Burgundy.2004.1080p.UNRATED.BluRay.DTSHD-MA.h264.Remux-decibeL"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 8559,
+  "title": "Mr.Holmes.2015.INTERNAL.1080p.BluRay.x264-CLASSiC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26353,
+  "title": "Godzilla.X.Kong.The.New.Empire.2024.1080p.BluRay.REMUX.AVC.TrueHD.7.1-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2158,
+  "title": "The.Lord.of.the.Rings.The.War.of.the.Rohirrim.2024.1080p.BluRay.DDP.5.1.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19652,
+  "title": "A.Quiet.Place.2018.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 23000,
+  "title": "Evil.Dead.Rise.2023.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10059,
+  "title": "Argylle.2024.1080p.AMZN.WEB-DL.DDP5.1.Atmos.H.264-FLUX"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 35179,
+  "title": "Sonic the Hedgehog 3 2024 BluRay 1080p MULTI REMUX AVC Atmos DTS-HD MA 7 1-"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27753,
+  "title": "Annabelle.Comes.Home.2019.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30233,
+  "title": "Sonic.the.Hedgehog.3.2024.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 34407,
+  "title": "Chaos.Walking.2021.REMUX.1080p.Blu-ray.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 33323,
+  "title": "Top.Gun.1986.REMASTERED.REMUX.1080p.Blu-ray.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25648,
+  "title": "The.Flash.2023.BluRay.REMUX.1080p.AVC.TrueHD7.1.Atmos-HDS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10795,
+  "title": "Watchmen.Chapter.I.2024.1080p.Blu-ray.Remux.AVC.DTS-HD.MA.5.1-HDT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10027,
+  "title": "Fountain.of.Youth.2025.1080p.ATVP.WEB-DL.DDPA.5.1.H.264-PiRaTeS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27575,
+  "title": "Transformers.Rise.of.the.Beasts.2023.1080p.BluRay.REMUX.AVC.Atmos-TRiToN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25630,
+  "title": "Twisters.2024.1080p.BluRay.Remux.AVC.TrueHD.Atmos.7.1-playBD-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29955,
+  "title": "Guillermo.del.Toros.Pinocchio.2022.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29358,
+  "title": "Anchorman.The.Legend.of.Ron.Burgundy.2004.Unrated.Extended.REPACK.BluRay.1080p.DTS-HD.MA.5.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27158,
+  "title": "Creed.III.2023.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9019,
+  "title": "Mr.Holmes.2015.1080p.BluRay.x264-DRONES-WhiteRev"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 20043,
+  "title": "In.A.Violent.Nature.2024.BluRay.1080p.REMUX.AVC.DTS-HD.MA.5.1-AishaRFX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 33561,
+  "title": "Harry.Potter.20th.Anniversary.Return.to.Hogwarts.2022.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26732,
+  "title": "Barbie.2023.BluRay.1080p.Remux.AVC.H264.DTS-HD.MA.7.1-Jolan"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24688,
+  "title": "Beetlejuice.Beetlejuice.2024.1080p.BluRay.REMUX.ENG.LATINO.ITALIAN.TrueHD.Atmos.7.1.H264-BEN.THE.MEN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27807,
+  "title": "Annabelle.Comes.Home.2019.REMUX.1080p.Blu-ray.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N-RakuvArrow"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29566,
+  "title": "Godzilla.x.Kong.The.New.Empire.2024.BluRay.1080p.REMUX.AVC.Atmos.DTS-HD.MA.7.1-AishaRFX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11157,
+  "title": "Argylle.2024.1080p.ATVP.WEB-DL.DDPA.5.1.H.264-PiRaTeS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10664,
+  "title": "Fly.Me.to.the.Moon.2024.1080p.ATVP.WEB-DL.DDPA.5.1.H.264-PiRaTeS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 20669,
+  "title": "Creed.II.2018.1080p.BluRay.DTS-HD.MA.5.1.x264-FuzerHD-WhiteRev"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27698,
+  "title": "Transformers.One.2024.1080p.BluRay.Remux.AVC.TrueHD.7.1-HDT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 14702,
+  "title": "Army.of.the.Dead.2021.1080p.NF.WEBRip.DDP5.1.Atmos.x264-TOMMY"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2186,
+  "title": "Salems.Lot.2024.1080p.BluRay.5.1-LAMA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 20232,
+  "title": "Immaculate.2024.1080p.Remux.AVC.DTS-HD.MA.5.1-playBD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27891,
+  "title": "Shazam.Fury.of.the.Gods.2023.Blu-ray.1080p.REMUX.AVC.Atmos.TrueHD7.1-HDH"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28582,
+  "title": "Trap.2024.BluRay.1080p.REMUX.AVC.Atmos.DTS-HD.MA.7.1-AishaRFX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 33721,
+  "title": "Top.Gun.1986.REMASTERED.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.Atmos-FGT"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 3770,
+  "title": "The.Most.Beautiful.1944.720p.BluRay.x264.AC3-EA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29231,
+  "title": "Creed.II.2018.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 20573,
+  "title": "A.Quiet.Place.2018.1080p.BluRay.REMUX.AVC.TrueHD.Atmos.7.1-MrTentsaw"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 35064,
+  "title": "Chaos.Walking.2021.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.Atmos-MonteDiaz"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38817,
+  "title": "Clash.of.the.Titans.2010.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 40627,
+  "title": "The.Avengers.2012.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 35980,
+  "title": "Terminator.2.Judgment.Day.1991.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 19889,
+  "title": "The.Little.Hours.2017.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-FGT"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 11305,
+  "title": "Avatar: Fire and Ash (2025) 1080p WEB-DL [Ukr Dub]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10331,
+  "title": "Fountain.of.Youth.2025.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 32030,
+  "title": "Harry.Potter.20th.Anniversary.Return.to.Hogwarts.2022.1080p.BluRay.REMUX.AVC.DTS-HD-MA.5.1-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9945,
+  "title": "Luck.2022.1080p.ATVP.WEB-DL.DDP5.1.Atmos.H.264-FLUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 18719,
+  "title": "Immaculate.2024.REPACK.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-PiRAMiDHEAD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29944,
+  "title": "Trap.2024.Eng.Fre.Ger.Ita.Spa.Jpn.1080p.BluRay.Remux.AVC.Atmos-SGF"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30046,
+  "title": "The.Lord.of.the.Rings.The.War.of.the.Rohirrim.2024.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30787,
+  "title": "Twisters.2024.BluRay.1080p.Multi.REMUX.AVC.Atmos.DTS-HD.MA.7.1-AishaRFX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 10794,
+  "title": "Watchmen.Chapter.I.2024.BluRay.1080p.REMUX.AVC.DTS-HD.MA.5.1-Aisha"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30610,
+  "title": "Transformers.One.2024.BluRay.1080p.REMUX.AVC.Atmos.DTS-HD.MA.7.1-Aisha"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2186,
+  "title": "Salems.Lot.2024.[1080p].[BluRay].[5.1].[YTS.MX]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25749,
+  "title": "Beetlejuice.Beetlejuice.2024.BluRay.1080p.REMUX.AVC.Atmos.DTS-HD.MA.7.1-AishaRFX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9793,
+  "title": "Culpa ma.2023.1080p.AMZN.WEB-DL.DDP5.1.H.264.DUAL-SiGLA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30973,
+  "title": "Godzilla.x.Kong.The.New.Empire.2024.1080p.BluRay.REMUX.ENG.LATINO.GER.ITA.FRE.HINDI.PORTUGUESE.CHI.TrueHD.Atmos.7.1.H265-BEN.THE.MEN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26680,
+  "title": "Barbie.2023.1080p.BluRay.REMUX.AVC.Atmos-TRiToN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27483,
+  "title": "The.Flash.2023.1080p.Bluray.Remux.Multi.Audio.AVC.TrueHD.Atmos.7.1-VARR0A"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28916,
+  "title": "Transformers-Rise.of.the.Beasts.2023.1080p.BluRay.REMUX.AVC.[Hindi.DDP-DTS.5.1.+.English.TrueHD.Atmos.7.1].x264-CiNEPHiLES[ARRW]"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28032,
+  "title": "Shazam.Fury.of.the.Gods.2023.1080p.Blu-ray.REMUX.AVC.TrueHD.Atmos.7.1-CiNEPHiLES"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30381,
+  "title": "Creed.III.2023.BluRay.1080p.REMUX.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25962,
+  "title": "Evil.Dead.Rise.2023.BluRay.1080p.REMUX.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31331,
+  "title": "Guillermo.Del.Toros.Pinocchio.2022.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 5746,
+  "title": "Gantz 2010 1080p BluRay x264-OFT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 58573,
+  "title": "Ben-Hur.1959.PROPER.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-FGT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 45533,
+  "title": "Beauty.and.the.Beast.2017.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27841,
+  "title": "Annabelle.Comes.Home.2019.Blu-Ray.Remux.1080p.AVC.Atmos-HDCenter"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30261,
+  "title": "Anchorman.The.Legend.of.Ron.Burgundy.2004.REPACK.Unrated.1080p.BluRay.Remux.DTS-HD.MA.5.1.H.264-FraMeSToR-AsRequested"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2058,
+  "title": "13 Game of Death (2006) 1080p BRRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 11762,
+  "title": "Il Bisbetico Domato 1980.1080p BluRay x264 Ita Dd2.0-HDMANIACS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9659,
+  "title": "Mr.Holmes.2015.1080p.BluRay.DTS.x264-CyTSuNee"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 902,
+  "title": "#Female Pleasure (2018) 720p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 33060,
+  "title": "The.Hobbit.The.Battle.of.the.Five.Armies.2014.Extended.Edition.2014.BluRay.1080p.DTS-HD.MA.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 871,
+  "title": "Monsieur Ibrahim (2003) 720p BRRip x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1699,
+  "title": "Taste of Cherry (1997) 1080p BRRip x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4893,
+  "title": "Detective.Conan.the.Movie.Magician.of.the.Silver.Sky.2004.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4882,
+  "title": "Detective.Conan.the.Movie.Crossroad.in.the.Ancient.Capital.2003.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2129,
+  "title": "Detective Conan Sunflowers of Inferno (2015) 1080p BRRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4832,
+  "title": "Detective.Conan.the.Movie.Jolly.Roger.in.the.Deep.Azure.2007.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1546,
+  "title": "Vernost (2019) 1080p BRRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1648,
+  "title": "The Punch Bowl (1944) 1080p BRRip x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1873,
+  "title": "Ready, Steady, Ommm! (2013) 1080p BRRip 5.1 x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1689,
+  "title": "The Good Girls (2018) 1080p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1792,
+  "title": "The Blade (1995) 1080p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1597,
+  "title": "Graveyard of Honor (1975) 1080p BRRip x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1976,
+  "title": "The Long Walk (2019) 1080p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 1116,
+  "title": "You & Me & Me (2023) 720p WEBRip x264 -YTS"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 21818,
+  "title": "MadS (2024) BDRemux 1080p"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 31060,
+  "title": "Only the River Flows 2023 1080p BluRay REMUX AVC DTS-HD-MA 5 1-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27531,
+  "title": "In.a.Violent.Nature.2024.BluRay.1080p.DTS-HD.MA.5.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 24035,
+  "title": "Vermines 2023 1080p Blu-ray Remux AVC DTS-HD MA 5.1-HDT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 32587,
+  "title": "Live.and.Let.Die.1973.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-TRiToN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30541,
+  "title": "Goosebumps.2015.MULTI.REMUX.1080p.Blu-ray.AVC.TrueHD.DTS-HD.MA.7.1-LEGi0N-RakuvWoo"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 20151,
+  "title": "Godzilla.Raids.Again.1955.BluRay.1080p.FLAC.1.0.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 30416,
+  "title": "For.Your.Eyes.Only.1981.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-TRiToN"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27911,
+  "title": "You.Only.Live.Twice.1967.REMUX.BluRay.1080p.AVC.DTS-HD.MA.5.1-LEGi0N-Rakuvfinhel"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 44523,
+  "title": "Black.Panther.Wakanda.Forever.2022.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 33830,
+  "title": "Underworld.Blood.Wars.2016.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31167,
+  "title": "Underworld.Awakening.2012.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 42530,
+  "title": "Monster.Hunter.2020.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 42432,
+  "title": "Predator.1987.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 49136,
+  "title": "Jurassic.World.Dominion.2022.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 44354,
+  "title": "Fantastic.Beasts.The.Crimes.of.Grindelwald.2018.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 45434,
+  "title": "Avengers.Endgame.2019.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5029,
+  "title": "Detective.Conan.The.Private.Eyes.Requiem.2006.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4871,
+  "title": "Detective.Conan.the.Movie.The.Phantom.of.Baker.Street.2002.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4631,
+  "title": "Detective.Conan.the.Movie.The.Time-Bombed.Skyscraper.1997.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 6885,
+  "title": "Aquaman.2018.1080p.BluRay.DDP.5.1.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 34849,
+  "title": "Aquaman.2018.IMAX.1080p.BluRay.REMUX.AVC.DTS-HD.MA.TrueHD.7.1.At"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31358,
+  "title": "Aquaman.2018.BluRay.Remux.1080p.AVC.TrueHD7.1-MTeam-WhiteRev"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 33068,
+  "title": "Aquaman.2018.REMUX.1080p.Blu-ray.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N-Rakuvfinhel"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 7467,
+  "title": "Aquaman.2018.[2160p].[4K].[BluRay].[5.1].[YTS.MX]"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 5693,
+  "title": "Ant-Man and the Wasp Quantumania (2023) 2160p WEBRip 5.1 10Bit x265 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19136,
+  "title": "Mission.Impossible.Fallout.2018.1080p.BluRay.10bit.Dts-HDMa5.1.HEVC-d3g"
+ },
+ {
+  "indexer": "NZBFinder (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25742,
+  "title": "Guardians.of.the.Galaxy.Vol.3.2023.BluRay.1080p.DTS-HD.MA.7.1.x264-MTeam"
+ },
+ {
+  "indexer": "NZBFinder (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 14091,
+  "title": "Aladdin.2019.1080P.10bit.Bluray.x265.DTS-HD.MA.7.1"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4952,
+  "title": "Detective.Conan.the.Movie.The.Fist.of.Blue.Sapphire.2019.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 5221,
+  "title": "Detective.Conan.the.Movie.The.Fourteenth.Target.1998.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 4530,
+  "title": "Detective.Conan.the.Movie.The.Last.Wizard.of.the.Century.1999.1080p.NF.WEB-DL.AAC2.0.H.264-OldT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 27654,
+  "title": "Man.on.a.Ledge.2012.MULTi.1080p.Bluray.Remux.AVC.TrueHD.7.1.Atmos-KIRIX"
+ },
+ {
+  "indexer": "Torrent Downloads (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 20951,
+  "title": "Transformers Dark Of The Moon 2011 RERiP 1080p BluRay x264 DTS-WiKi"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 12702,
+  "title": "Transformers.Dark.Of.The.Moon.2011.PROPER.MULTi.1080p.BluRay.x264-LOST"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29682,
+  "title": "Transformers.Dark.of.the.Moon.2011.REPACK.1080p.UHD.BluRay.DD.7.1.DoVi.x265-DON"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 36076,
+  "title": "Dune.2021.BluRay.REMUX.1080p.AVC.TrueHD7.1.Atmos-HDS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38602,
+  "title": "Dune.Part.One.2021.BluRay.1080p.MULTi.REMUX.AVC.Atmos.DTS-HD.MA.7.1-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38515,
+  "title": "Transformers.3-Dark.of.the.Moon.2011.German.AC3.DL.1080p.BluRay.AVC.Remux-HDS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 41146,
+  "title": "Dune.Part.One.2021.BD3D.1080p.REMUX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 40026,
+  "title": "Transformers.Dark.Of.The.Moon.2011.3D.BD50.Remux.GER.DTS.HD-MA7.1The3DTeam"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31995,
+  "title": "Dune.Part.One.2021.1080p.BluRay.REMUX.AVC.TrueHD.Atmos.7.1-MrTentsaw"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 249,
+  "title": "Transformers.Dark.of.the.Moon.2011.1080p.Remux.AVC.TrueHD.7.1-playBD-RakuvArrow"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2504,
+  "title": "Jack.Reacher.Never.Go.Back.2016.1080p.BluRay.DDP.5.1.10bit.H.265-iVy"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 37107,
+  "title": "Transformers.Dark.Of.The.Moon.2011.1080p.BluRay.AVC.TrueHD.7.1.Remux-BONZO"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 17918,
+  "title": "Top.Gun.Maverick.2022.1080p.BluRay.x264-REEDNFO"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 24590,
+  "title": "Jack.Reacher.Never.Go.Back.2016.BluRay.Remux.1080p.AVC.Atmos.7.1-NCmt"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 51454,
+  "title": "Zack.Snyders.Justice.League.2021.1080p.REMUX.ENG.RUS.ITA.LATINO.TrueHD.7.1.Atmos"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 25085,
+  "title": "Jack.Reacher.Never.Go.Back.2016.BluRay.REMUX.1080p.AVC.Atmos.TrueHD7.1-CHDBits"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19032,
+  "title": "Top.Gun.Maverick.2022.MULTi.1080p.BluRay.x264-Ulysse"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19140,
+  "title": "Top.Gun.Maverick.2022.IMAX.1080p.BluRay.DDP.7.1.DV.x265-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31995,
+  "title": "Dune.Part.One.2021.1080p.BluRay.REMUX.AVC.TrueHD.Atmos.7.1-MrTentsaw 1"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 28109,
+  "title": "The.Conjuring.The.Devil.Made.Me.Do.It.2021.1080p.Bluray.REMUX.AVC.TrueHD.Atmos.7.1-4K4U"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38050,
+  "title": "Transformers.Dark.of.the.Moon.2011.Blu-ray.Remux.1080p.AVC.TrueHD.7.1-HDRemuX"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 48434,
+  "title": "Zack.Snyders.Justice.League.2021.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26384,
+  "title": "Jack.Reacher.Never.Go.Back.2016.1080p.BluRay.Remux.AVC.TrueHD.7.1-playBD-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 8225,
+  "title": "Shaft.2019.1080p.BluRay.x264-GECKOS-Scrambled"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 18652,
+  "title": "Overlord.2018.1080p.BluRay.TrueHD7.1.x264-FuzerHD-WhiteRev"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 29632,
+  "title": "It Chapter Two 2019 BluRay 1080p TrueHD Atmos 7 1 AVC REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 50376,
+  "title": "Zack.Snyders.Justice.League.2021.1080p.BluRay.REMUX.AVC.TrueHD.7.1.Atmos-PmP-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 14123,
+  "title": "Transformers.The.Last.Knight.2017.REPACK.3D.1080p.BluRay.x264.1-PSYCHD-Obfuscated"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 38890,
+  "title": "Transformers.Dark.of.the.Moon.2011.REMUX.1080p.Bluray.AVC.DTS-HD.MA.7.1-LEGi0N-Rakuvfinhel"
+ },
+ {
+  "indexer": "YTS (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 2457,
+  "title": "Sex and the City (2008) 1080p BRRip x264 -YTS"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 22731,
+  "title": "Top.Gun.Maverick.2022.1080p.BluRay.x264.TrueHD.Atmos.Soup"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 50376,
+  "title": "Zack.Snyders.Justice.League.2021.1080p.BluRay.Remux.AVC.TrueHD.Atmos.7.1-playBD-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 9022,
+  "title": "Shaft.2019.1080p.BluRay.x264-GECKOS-WhiteRev"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 19501,
+  "title": "Overlord.2018.BluRay.1080p.Atmos.TrueHD7.1.x264-HDH-WhiteRev"
+ },
+ {
+  "indexer": "The Pirate Bay (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 16623,
+  "title": "Beetlejuice 1988 1080p HYBRiD BluRay Remux VC-1 TrueHD Atmos-7 1-RU4HD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 3637,
+  "title": "The.Voyeurs.2021.1080p.UHD.WEBRip.HDR.x265.DDP5.1-SM737"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 26376,
+  "title": "Jack.Reacher.Never.Go.Back.2016.BluRay.Remux.1080p.AVC.Atmos.7.1-NCmt-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 31150,
+  "title": "It.Chapter.Two.2019.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 15318,
+  "title": "Transformers.The.Last.Knight.2017.REPACK.3D.1080p.BluRay.x264-PSYCHD"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 1824,
+  "title": "Jackass.3.5.2011.UNRATED.1080p.BluRay.H264.AAC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29381,
+  "title": "The.Conjuring.The.Devil.Made.Me.Do.It.2021.1080p.BluRay.Remux.AVC.TrueHD.7.1.Atmos-UnKn0wn"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 6974,
+  "title": "Sex.and.the.City.2008.Extended.1080p.BluRay.x264-OFT"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 39144,
+  "title": "Transformers.Dark.Of.The.Moon.2011.1080p.BluRay.Remux.AVC.TrueHD.7.1-KRaLiMaRKo-AsRequested"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 6767,
+  "title": "Top.Gun.Maverick.2022.BluRay.1080p.HEVC.10bit.HDR.Dolby.TrueHD.with.Dolby.Atmos.8ch-CAPTCHA"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 29524,
+  "title": "Enemy.2013.BluRay.1080p.MULTi.REMUX.AVC.DTS-HD.MA.5.1-LEGi0N"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 8537,
+  "title": "Extinction.2018.1080p.WEBRip.X264-DEFLATE"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 21018,
+  "title": "Der.Herr.der.Ringe.Die.Gefaehrten.SEE.2001.GERMAN.DL.DTS-HD.1080p.Bluray.x265.HEVC"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 2222,
+  "title": "Jurassic.Park.1993.REMASTERED.PROPER.1080p.BluRay.x265"
+ },
+ {
+  "indexer": "NZBgeek (Prowlarr)",
+  "kind": "movie",
+  "protocol": "usenet",
+  "sizeMb": 50376,
+  "title": "Zack.Snyders.Justice.League.2021.BluRay.1080p.TrueHD.Atmos.7.1.AVC.REMUX-FraMeSToR-AsRequested"
+ },
+ {
+  "indexer": "Torrent Downloads (Prowlarr)",
+  "kind": "movie",
+  "protocol": "torrent",
+  "sizeMb": 4044,
+  "title": "Late Shift 2025 MULTi 1080p WEB x264-FW mkv"
+ }
+]
