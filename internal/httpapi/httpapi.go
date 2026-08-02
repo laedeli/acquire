@@ -728,3 +728,14 @@ func (s *Server) searchTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"candidates": out})
 }
+
+// history is the activity view. It reads the append-only table, which has no
+// foreign key precisely so a record outlives the request it describes.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	out, err := s.st.RecentHistory(r.Context(), intParam(r, "limit", 100, 1, 500))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"history": out})
+}

@@ -657,10 +657,11 @@ func (s *Service) Reconcile(ctx context.Context) {
 // Handlers returns the consumer callback set bound to this service.
 func (s *Service) Handlers() events.Handlers {
 	return events.Handlers{
-		OnStarted:   s.OnStarted,
-		OnProgress:  s.OnProgress,
-		OnCompleted: s.OnCompleted,
-		OnFailed:    s.OnFailed,
-		OnPackaged:  s.OnPackaged,
+		OnStarted:     s.OnStarted,
+		OnProgress:    s.OnProgress,
+		OnCompleted:   s.OnCompleted,
+		OnFailed:      s.OnFailed,
+		OnPackaged:    s.OnPackaged,
+		OnScheduleDue: s.OnScheduleDue,
 	}
 }

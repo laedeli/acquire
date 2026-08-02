@@ -177,3 +177,71 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		Scan(&c.Titles, &c.Series, &c.Movies, &c.Targets, &c.Held, &c.Missing, &c.Unaired, &c.InBackoff)
 	return c, err
 }
+
+// HistoryEntry is one thing that happened. History has no foreign key on
+// purpose — it must outlive its subject.
+type HistoryEntry struct {
+	Kind     string
+	Subject  string
+	Title    string
+	Indexer  string
+	Protocol string
+	SizeMb   int64
+	Score    int
+	Reason   string
+}
+
+func (s *Store) RecordHistory(ctx context.Context, h HistoryEntry) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO history (kind, subject, title, indexer, protocol, size_mb, score, reason)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		h.Kind, h.Subject, h.Title, h.Indexer, h.Protocol, h.SizeMb, h.Score, h.Reason)
+	return err
+}
+
+// RecentHistory powers the console's activity view.
+func (s *Store) RecentHistory(ctx context.Context, limit int) ([]map[string]any, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT at, kind, subject, title, indexer, protocol, size_mb, score, reason
+		  FROM history ORDER BY at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var at time.Time
+		var kind, subject, title, indexer, protocol, reason string
+		var sizeMb int64
+		var score int
+		if err := rows.Scan(&at, &kind, &subject, &title, &indexer, &protocol, &sizeMb, &score, &reason); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"at": at, "kind": kind, "subject": subject, "title": title,
+			"indexer": indexer, "protocol": protocol, "sizeMb": sizeMb,
+			"score": score, "reason": reason,
+		})
+	}
+	return out, rows.Err()
+}
+
+// RetryableTargets are wanted targets whose search backoff has expired.
+func (s *Store) RetryableTargets(ctx context.Context, limit int) ([]Target, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, title_id, kind, season_number, episode_number, air_date, monitored, state
+		  FROM acquisition_targets
+		 WHERE state = 'wanted' AND monitored
+		   AND search_failures > 0
+		   AND search_backoff_until IS NOT NULL AND search_backoff_until <= now()
+		 ORDER BY search_backoff_until
+		 LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanTargets(rows)
+}

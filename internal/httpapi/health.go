@@ -121,6 +121,9 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		// relay fails, and nothing else surfaces that.
 		gauge("acquire_outbox_pending", "Undelivered events.", int(depth))
 	}
+	if n, err := s.st.BlocklistSize(ctx); err == nil {
+		gauge("acquire_blocklist", "Releases blocked from being re-picked.", n)
+	}
 	if overdue, err := s.st.OverdueSchedules(ctx, 3); err == nil {
 		gauge("acquire_schedules_overdue",
 			"Enabled schedules more than 3 intervals late; >0 means the clock has stopped.",
