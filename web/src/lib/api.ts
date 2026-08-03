@@ -204,6 +204,7 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
     missing: (limit = 500) =>
       call<{ missing: MissingRow[] }>('missing?limit=' + limit).then((r) => r.missing ?? []),
     counts: () => call<Counts>('counts'),
+    series: () => call<{ series: SeriesRow[] }>('series').then((r) => r.series ?? []),
   }
 }
 
@@ -221,6 +222,22 @@ export type MissingRow = {
   // indexers accept a tmdbId, so such a row can only be searched as free text
   // and needs to say so rather than look like an ordinary miss.
   searchable: boolean
+}
+
+// SeriesRow is one tracked series with its acquisition progress.
+export type SeriesRow = {
+  titleId: string
+  tmdbId: number
+  tvdbId: number
+  title: string
+  year: number
+  status: string
+  type: string
+  monitored: boolean
+  episodes: number
+  held: number
+  missing: number
+  unaired: number
 }
 
 export type Counts = {
