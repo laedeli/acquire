@@ -6,6 +6,12 @@ requests or downloads; the addon is the only thing that does. This keeps the cor
 honest (it's a catalog + player for a library you own) and makes the whole
 acquisition capability something you can add or remove cleanly.
 
+> **Canonical contracts live platform-side.** This page explains how *acquire*
+> uses the seams; the authoritative definition of each — the slot registry, the
+> hosted-console federation contract, ingest, events, and addon identity — is
+> the platform's [Extending zaentrum](https://github.com/zaentrum/zaentrum/wiki/extending)
+> documentation. If this page and those ever disagree, those win.
+
 ## The two seams
 
 The core exposes exactly two extension points. The addon uses both; the core
