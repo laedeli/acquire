@@ -154,6 +154,9 @@ func (s *Server) Handler() http.Handler {
 	// what broke. Neither exposes secrets — only counts.
 	r.Get("/metrics", s.metrics)
 	r.Get("/api/health/system", s.systemHealth)
+	// Capability descriptor for the zae CLI — metadata, aggregated by the
+	// platform's portal. See capability.go.
+	r.Get("/.well-known/zaentrum-capability.json", s.capabilityHandler)
 	// Unauthenticated discovery doc so the SPA can bootstrap OIDC (PKCE).
 	r.Get("/api/config", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]any{
