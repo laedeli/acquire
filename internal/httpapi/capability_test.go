@@ -58,3 +58,18 @@ func TestCapabilityEndpoint(t *testing.T) {
 		t.Fatalf("descriptor must identify itself: %+v", d)
 	}
 }
+
+// The ui section is what the platform materialises on install; it must be
+// self-consistent so that installing through settings cannot half-work.
+func TestCapabilityUIIsInstallable(t *testing.T) {
+	ui := capabilityDoc().UI
+	if ui == nil || ui.App.Title == "" || !ui.Console {
+		t.Fatalf("acquire declares an app with a console: %+v", ui)
+	}
+	if len(ui.Slots) != 1 || ui.Slots[0].Key != "search-request" || ui.Slots[0].Slot != "search.empty" {
+		t.Fatalf("acquire contributes exactly the search-request row: %+v", ui.Slots)
+	}
+	if !strings.HasPrefix(ui.Slots[0].URL, "/portal/app/acquire") {
+		t.Errorf("slot url must be portal-relative and open this addon: %q", ui.Slots[0].URL)
+	}
+}

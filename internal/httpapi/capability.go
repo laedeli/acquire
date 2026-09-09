@@ -29,6 +29,32 @@ type capCheck struct {
 	Path string `json:"path"`
 }
 
+// capUI is what the addon contributes to the portal and the product apps. The
+// platform reads it when an admin installs the addon in settings and creates
+// the app, the tile and the slot rows itself. Slot URLs are portal-relative;
+// the platform absolutises them at install.
+type capUI struct {
+	App     capApp    `json:"app"`
+	Console bool      `json:"console"`
+	Slots   []capSlot `json:"slots"`
+}
+
+type capApp struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+}
+
+type capSlot struct {
+	Key   string `json:"key"`
+	Slot  string `json:"slot"`
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	Icon  string `json:"icon"`
+	URL   string `json:"url"`
+	Ord   int    `json:"ord"`
+}
+
 type capability struct {
 	Service  string       `json:"service"`
 	Kind     string       `json:"kind"`
@@ -36,6 +62,7 @@ type capability struct {
 	Commands []capCommand `json:"commands"`
 	Checks   []capCheck   `json:"checks"`
 	Topics   []string     `json:"topics"`
+	UI       *capUI       `json:"ui,omitempty"`
 }
 
 // capVersion is stamped by the image build when it can; "": omitted.
@@ -71,6 +98,27 @@ func capabilityDoc() capability {
 			"download.client.progress",
 			"download.client.completed",
 			"download.client.failed",
+		},
+		UI: &capUI{
+			App: capApp{
+				Title:       "acquire",
+				Description: "requests and downloads",
+				Icon:        "download",
+			},
+			Console: true,
+			// The one row the addon contributes: "Request this" on an empty
+			// search, carrying the query into the discover view. Key matches
+			// the row the reference deploy registered by hand, so installing
+			// through the platform is idempotent over an existing install.
+			Slots: []capSlot{{
+				Key:   "search-request",
+				Slot:  "search.empty",
+				Kind:  "link",
+				Label: "Request this",
+				Icon:  "download",
+				URL:   "/portal/app/acquire?q={q}#/discover",
+				Ord:   10,
+			}},
 		},
 	}
 }
