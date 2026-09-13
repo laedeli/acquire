@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -72,4 +76,70 @@ func TestCapabilityUIIsInstallable(t *testing.T) {
 	if !strings.HasPrefix(ui.Slots[0].URL, "/portal/app/acquire") {
 		t.Errorf("slot url must be portal-relative and open this addon: %q", ui.Slots[0].URL)
 	}
+}
+
+// The declared launchpad layout must be installable as-is: its own section,
+// entry points that are real routes of this console, no duplicate keys.
+func TestCapabilityTilesAreInstallable(t *testing.T) {
+	ui := capabilityDoc().UI
+	if ui.Space == nil || ui.Space.Key != "acquire" {
+		t.Fatalf("acquire brings its own launchpad section: %+v", ui.Space)
+	}
+	if len(ui.Tiles) == 0 {
+		t.Fatal("acquire declares its entry points")
+	}
+	seen := map[string]bool{}
+	for _, tl := range ui.Tiles {
+		if tl.Key == "" || tl.Title == "" {
+			t.Errorf("tile needs a key and a title: %+v", tl)
+		}
+		if seen[tl.Key] {
+			t.Errorf("duplicate tile key %q — the platform would collapse them", tl.Key)
+		}
+		seen[tl.Key] = true
+		// Targets open a view INSIDE this console, never somewhere else.
+		if !strings.HasPrefix(tl.Target, "#/") {
+			t.Errorf("tile %q target must be a hash route of this SPA: %q", tl.Key, tl.Target)
+		}
+		if tl.Description == "" {
+			t.Errorf("tile %q should say what it is for", tl.Key)
+		}
+	}
+}
+
+// The same drift-killer the commands have, for the launchpad tiles: every
+// declared target must be a tab the console actually renders. A renamed tab
+// would otherwise leave a tile that opens the app on its fallback view, and
+// nothing would fail until someone clicked it.
+func TestCapabilityTileTargetsAreRealTabs(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "Console.tsx"))
+	if err != nil {
+		t.Skip("console source not present (source-only build):", err)
+	}
+	m := regexp.MustCompile(`(?s)const TABS = \[(.*?)\]`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal("could not find the TABS list in web/src/Console.tsx — has the console been restructured?")
+	}
+	tabs := map[string]bool{}
+	for _, q := range regexp.MustCompile(`'([^']+)'`).FindAllSubmatch(m[1], -1) {
+		tabs[string(q[1])] = true
+	}
+	if len(tabs) == 0 {
+		t.Fatal("parsed no tabs out of the TABS list")
+	}
+	for _, tl := range capabilityDoc().UI.Tiles {
+		tab := strings.TrimPrefix(tl.Target, "#/")
+		if !tabs[tab] {
+			t.Errorf("tile %q targets %q, which is not a tab of the console (have: %v)", tl.Key, tl.Target, keysOf(tabs))
+		}
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

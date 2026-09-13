@@ -36,7 +36,29 @@ type capCheck struct {
 type capUI struct {
 	App     capApp    `json:"app"`
 	Console bool      `json:"console"`
+	Space   *capSpace `json:"space,omitempty"`
+	Tiles   []capTile `json:"tiles,omitempty"`
 	Slots   []capSlot `json:"slots"`
+}
+
+// capSpace is a launchpad section of this addon's own. It goes away with the
+// addon, so nothing of ours is left sitting in someone else's section.
+type capSpace struct {
+	Key   string `json:"key"`
+	Title string `json:"title"`
+	Ord   int    `json:"ord"`
+}
+
+// capTile is one entry point into this console. Targets are hash routes of
+// the SPA — the places an operator actually starts from, not a mirror of
+// every view the app has.
+type capTile struct {
+	Key         string `json:"key"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+	Target      string `json:"target"`
+	Ord         int    `json:"ord"`
 }
 
 type capApp struct {
@@ -106,6 +128,17 @@ func capabilityDoc() capability {
 				Icon:        "download",
 			},
 			Console: true,
+			// The layout an operator wants on day one, declared rather than
+			// hand-built per instance: acquire's own section with the five
+			// places worth starting from.
+			Space: &capSpace{Key: "acquire", Title: "acquire", Ord: 30},
+			Tiles: []capTile{
+				{Key: "requests", Title: "requests", Description: "who asked for what", Icon: "download", Target: "#/requests", Ord: 10},
+				{Key: "downloads", Title: "downloads", Description: "the queue, live", Icon: "gauge", Target: "#/downloads", Ord: 20},
+				{Key: "search", Title: "search", Description: "across all indexers", Icon: "radar", Target: "#/search", Ord: 30},
+				{Key: "indexers", Title: "indexers", Description: "configured sources", Icon: "globe", Target: "#/indexers", Ord: 40},
+				{Key: "settings", Title: "quality profiles", Description: "what counts as good", Icon: "settings", Target: "#/settings", Ord: 50},
+			},
 			// The one row the addon contributes: "Request this" on an empty
 			// search, carrying the query into the discover view. Key matches
 			// the row the reference deploy registered by hand, so installing
