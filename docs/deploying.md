@@ -20,7 +20,7 @@ specifics below match the `zaentrum-beta` reference deployment.
 | Client | Type | Used for |
 |---|---|---|
 | `laedeli-acquire` | public (PKCE) | the SPA login (`ACQUIRE_OIDC_CLIENT_ID`) |
-| `laedeli-acquire-svc` | confidential (client-credentials) | acquire → gateway + ingest calls, and the self-registration job. Carries the `zaentrum-addon` realm role. |
+| `laedeli-acquire-svc` | confidential (client-credentials) | acquire → gateway + ingest calls. Carries the `zaentrum-addon` realm role. Not needed to install the addon — only for the calls acquire makes itself. |
 
 Roles: `zaentrum-user` (request), `zaentrum-admin` (grab/auto-grab/remove),
 `zaentrum-addon` (manage only this addon's extension-registry rows).
@@ -38,12 +38,11 @@ flowchart TB
         QB["Deployment/Service<br/>qbittorrent (linuxserver)"]
         NZ["Deployment/Service<br/>nzbget (linuxserver)"]
         PR["Deployment/Service<br/>prowlarr (linuxserver)"]
-        REG["Job<br/>acquire-register"]
         PAPI["portal-api<br/>(core seam)"]
     end
     ACQ --> GW --> QB & NZ
     ACQ --> PR
-    REG -.->|"POST /api/portal/extensions"| PAPI
+    PAPI -.->|"GET /.well-known/zaentrum-capability.json"| ACQ
 ```
 
 | Component | Image | Port | Storage |
@@ -93,21 +92,32 @@ the indexer aggregator and NZBGet), set `INDEXER_API_KEY`, `NZBGET_CONTROL_PASS`
 optional mount. The shared `kafka-mtls` secret is created by the core deploy, not
 the addon.
 
-## Self-registration → the “Request this” button
+## Install it in the portal
 
-A one-shot `Job` (`acquire-register`) waits for portal-api, mints a
-client-credentials token for `laedeli-acquire-svc`, and upserts one extension row:
+Deploying the workload is half the job. What acquire *contributes* to the
+platform — its launchpad section, its five tiles, the **Request this** button —
+is declared in its capability manifest, and an admin installs it in one action:
 
-```
-POST http://portal-api/api/portal/extensions
-{ "key":"acquire.search-request", "addon":"acquire", "slot":"search.empty",
-  "kind":"link", "label":"Request this", "icon":"download",
-  "url":"https://<host>/acquire/?q={q}", "ord":10, "enabled":true }
-```
+> portal → settings → **addons** → address `http://acquire` → **install**
 
-This is what makes a native **Request this** button appear under an empty chino
-search. It's idempotent (upsert by key) and re-runs on each deploy. Removing the
-row — or the addon — removes the button and leaves the core neutral.
+portal-api fetches `/.well-known/zaentrum-capability.json`, reads the `ui`
+section, and creates what it declares, all owned by the addon key:
+
+| Declared | Created |
+|---|---|
+| `ui.app` | the portal app `acquire`, proxied at the address you typed |
+| `ui.space` | the `acquire` launchpad section |
+| `ui.tiles[]` | requests, downloads, search, indexers, quality profiles |
+| `ui.slots[]` | the **Request this** row in chino's `search.empty` slot |
+
+acquire writes nothing and needs no credential for any of this. A new version
+that declares a different layout is picked up with **refresh**; **remove**
+deletes the app, the tiles, the rows and the section, and the core is neutral
+again — it never knew the addon's name.
+
+Before this, a one-shot Job authenticated as `laedeli-acquire-svc` and upserted
+the extension row itself, and the tiles were built by hand per instance. Both
+are gone: the manifest is the single place that says what acquire contributes.
 
 ## Bring your own indexer config + providers
 

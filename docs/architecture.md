@@ -35,16 +35,19 @@ so the core ships the *socket*, and the addon ships the *plug*.
   (`GET /api/v1/extensions?slot=`); an unreachable or unset portal simply yields
   an empty slot.
 
-When acquire is installed, its deploy registers one row:
+acquire *declares* the row in its capability manifest; the platform creates it
+when an admin installs the addon (see [deploying](./deploying.md#install-it-in-the-portal)):
 
 ```json
-{ "key": "acquire.search-request", "addon": "acquire", "slot": "search.empty",
-  "kind": "link", "label": "Request this", "icon": "download",
-  "url": "https://<host>/acquire/?q={q}", "ord": 10, "enabled": true }
+"slots": [
+  { "key": "search-request", "slot": "search.empty", "kind": "link",
+    "label": "Request this", "icon": "download",
+    "url": "/portal/app/acquire?q={q}#/discover", "ord": 10 }
+]
 ```
 
-Now “no results for _X_” grows a **Request this** button. Delete the row (or
-uninstall the addon) and the button is gone — the core never knew its name.
+Now “no results for _X_” grows a **Request this** button. Remove the addon and
+the button is gone — the core never knew its name.
 
 ### Seam 2 — the neutral ingest contract (a file becomes a catalog item)
 
@@ -134,7 +137,7 @@ flowchart TB
     end
     BUS[["shared Kafka (mTLS, tenant-prefixed)"]]
 
-    ACQ -->|"POST /api/portal/extensions (register)"| POR
+    POR -.->|"reads the capability manifest on install"| ACQ
     WEB -->|"read slot"| POR
     ACQ -->|"grab"| GW
     ACQ -->|"search"| PRW
