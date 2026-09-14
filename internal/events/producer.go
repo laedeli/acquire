@@ -67,7 +67,7 @@ func NewProducer(brokers []string, certDir string) (*Producer, error) {
 	}
 	return &Producer{w: &kafka.Writer{
 		Addr:                   kafka.TCP(brokers...),
-		Transport:              transport, // mTLS is required on the shared cluster
+		Transport:              transport,     // mTLS is required on the shared cluster
 		Balancer:               &kafka.Hash{}, // key -> stable partition, so per-subject order holds
 		RequiredAcks:           kafka.RequireAll,
 		Async:                  false,
