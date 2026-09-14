@@ -67,7 +67,13 @@ rather than a smaller set.
 **The gateway's environment.** `NZBGET_*`, `QBITTORRENT_*` and `ODOWNLOADER_*`
 still create a client each, with the type name as its id and source `env`. They
 cannot be replaced or removed through the API, and a pushed client with the same
-id is refused. acquire routes grabs only to the clients it stores: an
+id is refused. A push refused in part applies its valid clients, but the
+gateway keeps reporting its previous revision and acquire shows the reason on
+the clients screen and in setup. acquire offers that same set again after one
+interval, then waits twice as long each time up to 10 minutes — at once when
+the stored clients change or the gateway reports something different running —
+and logs the refusal once, not on every attempt. acquire routes grabs only to
+the clients it stores: an
 environment client shows up in the downloads tab's client health, but no grab
 is sent to it.
 

@@ -1,12 +1,18 @@
 package configsync
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"io"
+	"log"
+	"os"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/secretbox"
@@ -26,6 +32,7 @@ func (f *fakeStore) ClientsRevision(context.Context) (int64, error) { return f.r
 type fakeGateway struct {
 	mu       sync.Mutex
 	revision int64
+	running  []gateway.ConfigClientView
 	puts     []gateway.ConfigPut
 	getErr   error
 	putErr   error
@@ -36,8 +43,11 @@ func (g *fakeGateway) Enabled() bool { return true }
 func (g *fakeGateway) ConfigClients(context.Context) (gateway.ConfigState, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return gateway.ConfigState{Revision: g.revision}, g.getErr
+	return gateway.ConfigState{Revision: g.revision, Clients: g.running}, g.getErr
 }
+
+// PutConfigClients answers as the gateway does: a push with per-client errors
+// applies its valid entries but keeps the previous revision in effect.
 func (g *fakeGateway) PutConfigClients(_ context.Context, body gateway.ConfigPut) (gateway.ApplyResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -45,12 +55,20 @@ func (g *fakeGateway) PutConfigClients(_ context.Context, body gateway.ConfigPut
 		return gateway.ApplyResult{}, g.putErr
 	}
 	g.puts = append(g.puts, body)
-	g.revision = body.Revision
+	if len(g.errors) == 0 {
+		g.revision = body.Revision
+	}
 	applied := []string{}
 	for _, c := range body.Clients {
 		applied = append(applied, c.ID)
 	}
-	return gateway.ApplyResult{Revision: body.Revision, Applied: applied, Errors: g.errors}, nil
+	return gateway.ApplyResult{Revision: g.revision, Applied: applied, Errors: g.errors}, nil
+}
+
+func (g *fakeGateway) putCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.puts)
 }
 
 func box(t *testing.T) *secretbox.Box {
@@ -176,5 +194,87 @@ func TestApplyErrorsAreNotInSync(t *testing.T) {
 	}
 	if s := r.Status(); s.InSync() || len(s.Errors) != 1 {
 		t.Fatalf("per-client apply error hidden: %+v", s)
+	}
+}
+
+// A refused push leaves the gateway on its previous revision, so every check
+// sees a difference. Sending the same refused set again every interval, and
+// logging it each time, helps nobody: the repeat backs off and is logged once.
+func TestRefusedPushBacksOffAndIsLoggedOnce(t *testing.T) {
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	st := &fakeStore{rev: 5, clients: []store.DownloadClient{{ID: "nzbget", Type: "nzbget", Auth: "none", Enabled: true}}}
+	envClient := []gateway.ConfigClientView{{ID: "nzbget", Type: "nzbget", Source: "env"}}
+	gw := &fakeGateway{revision: 2, running: envClient,
+		errors: []gateway.ApplyError{{ID: "nzbget", Message: "id is owned by an environment client"}}}
+	r := New(st, gw, nil, 30*time.Second)
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	ctx := context.Background()
+
+	if _, err := r.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		if err := r.Check(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := gw.putCount(); n != 1 {
+		t.Fatalf("%d pushes within the first wait, want the one refused push", n)
+	}
+	if s := r.Status(); s.InSync() || len(s.Errors) != 1 {
+		t.Fatalf("holding back must not hide the refusal: %+v", s)
+	}
+
+	// The wait runs out: offered again, and refused again — the same outcome is
+	// not logged a second time, and the next wait is longer.
+	now = now.Add(31 * time.Second)
+	_ = r.Check(ctx)
+	if n := gw.putCount(); n != 2 {
+		t.Fatalf("%d pushes after the wait, want 2", n)
+	}
+	now = now.Add(31 * time.Second)
+	_ = r.Check(ctx)
+	if n := gw.putCount(); n != 2 {
+		t.Fatalf("%d pushes, want the second wait to be longer than the first", n)
+	}
+	if n := strings.Count(logs.String(), "configsync pushed"); n != 1 {
+		t.Fatalf("the same refusal was logged %d times:\n%s", n, logs.String())
+	}
+
+	// The gateway restarts with its environment changed: pushed straight away.
+	gw.mu.Lock()
+	gw.running, gw.errors = nil, nil
+	gw.mu.Unlock()
+	if err := r.Check(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := gw.putCount(); n != 3 || !r.Status().InSync() {
+		t.Fatalf("a changed gateway was not pushed to at once: %d pushes, %+v", gw.putCount(), r.Status())
+	}
+	if n := strings.Count(logs.String(), "configsync pushed"); n != 2 {
+		t.Fatalf("the clean push was not logged:\n%s", logs.String())
+	}
+}
+
+// A new revision is never held back by an earlier refusal.
+func TestNewRevisionIsPushedDespiteAnEarlierRefusal(t *testing.T) {
+	log.SetOutput(io.Discard)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	st := &fakeStore{rev: 5, clients: []store.DownloadClient{{ID: "nzbget", Type: "nzbget", Auth: "none", Enabled: true}}}
+	gw := &fakeGateway{revision: 2, errors: []gateway.ApplyError{{ID: "nzbget", Message: "refused"}}}
+	r := New(st, gw, nil, 30*time.Second)
+	ctx := context.Background()
+	if _, err := r.Push(ctx); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Check(ctx)
+	st.rev = 6 // an admin renamed the client
+	_ = r.Check(ctx)
+	if n := gw.putCount(); n != 2 || gw.puts[1].Revision != 6 {
+		t.Fatalf("the new revision was held back: %+v", gw.puts)
 	}
 }

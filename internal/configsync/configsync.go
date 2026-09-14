@@ -11,6 +11,13 @@
 //   - every interval, when the gateway reports a revision other than acquire's
 //     (it restarted, or a push was lost).
 //
+// A push the gateway refuses in part (an id that collides with one of its
+// environment clients, say) leaves it reporting its previous revision, so the
+// interval check would send the same refused set every 30 seconds for as long
+// as nobody fixes it. That repeat backs off — one interval, doubling up to
+// maxRetryWait — until acquire's revision or what the gateway reports running
+// changes, and is logged once rather than on every attempt.
+//
 // The revision is acquire's: the highest client generation ever issued. It only
 // moves forward, so "different" is enough to know the gateway is behind — as
 // long as a revision is only ever sent with the clients it describes, which the
@@ -26,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -84,17 +92,38 @@ func (s Status) InSync() bool {
 	return s.Reachable && s.ConfigAPI && s.GatewayRevision == s.Revision && len(s.Errors) == 0
 }
 
+// maxRetryWait caps how long the interval check waits before sending a
+// configuration the gateway refused again.
+const maxRetryWait = 10 * time.Minute
+
 // Reconciler pushes stored clients to the gateway.
 type Reconciler struct {
 	st    Store
 	gw    Gateway
 	box   Opener
 	every time.Duration
+	now   func() time.Time
 
-	pushMu sync.Mutex // one push at a time, so revisions arrive in order
+	pushMu     sync.Mutex // one push at a time, so revisions arrive in order
+	lastFailed string     // the last push outcome logged with errors (guarded by pushMu)
 
-	mu     sync.RWMutex
-	status Status
+	mu      sync.RWMutex
+	status  Status
+	refused *refusal
+}
+
+// refusal is a push the gateway applied only in part. The interval check does
+// not send the same set again before retryAt, unless something moved.
+type refusal struct {
+	revision        int64 // acquire's revision, not taken
+	gatewayRevision int64 // the one the gateway kept reporting instead
+	// running is what the gateway reported running at the first check after
+	// the push (seen once it has); a change there — a restart, its environment
+	// edited — is worth a push straight away.
+	running []gateway.ConfigClientView
+	seen    bool
+	wait    time.Duration
+	retryAt time.Time
 }
 
 // New returns a reconciler. every <= 0 means 30 seconds.
@@ -102,7 +131,7 @@ func New(st Store, gw Gateway, box Opener, every time.Duration) *Reconciler {
 	if every <= 0 {
 		every = 30 * time.Second
 	}
-	return &Reconciler{st: st, gw: gw, box: box, every: every,
+	return &Reconciler{st: st, gw: gw, box: box, every: every, now: time.Now,
 		status: Status{Configured: gw != nil && gw.Enabled(), ConfigAPI: true}}
 }
 
@@ -174,13 +203,46 @@ func (r *Reconciler) Check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if state.Revision == rev {
+	if state.Revision == rev || r.holdRefused(rev, state) {
 		return nil
 	}
 	// Push logs the revision it sends when it succeeds; a failure comes back
 	// to Run, which logs it once.
 	_, err = r.Push(ctx)
 	return err
+}
+
+// holdRefused reports whether the gateway still stands where it did after
+// refusing rev, and the wait before offering it again has not run out.
+func (r *Reconciler) holdRefused(rev int64, state gateway.ConfigState) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.refused
+	if p == nil || p.revision != rev || p.gatewayRevision != state.Revision {
+		return false
+	}
+	if !p.seen {
+		p.running, p.seen = state.Clients, true
+	} else if !reflect.DeepEqual(p.running, state.Clients) {
+		return false
+	}
+	return r.now().Before(p.retryAt)
+}
+
+// noteOutcome remembers a push the gateway refused in part, doubling the wait
+// when it refuses the same revision again, and forgets it after a clean push.
+func (r *Reconciler) noteOutcome(rev int64, res gateway.ApplyResult) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(res.Errors) == 0 || res.Revision == rev {
+		r.refused = nil
+		return
+	}
+	wait := r.every
+	if p := r.refused; p != nil && p.revision == rev && p.gatewayRevision == res.Revision {
+		wait = min(2*p.wait, maxRetryWait)
+	}
+	r.refused = &refusal{revision: rev, gatewayRevision: res.Revision, wait: wait, retryAt: r.now().Add(wait)}
 }
 
 // Push replaces the gateway's api-sourced clients with every enabled stored
@@ -215,11 +277,21 @@ func (r *Reconciler) Push(ctx context.Context) (gateway.ApplyResult, error) {
 	if err != nil {
 		return gateway.ApplyResult{}, err
 	}
+	r.noteOutcome(rev, res)
 	failed := make([]string, 0, len(res.Errors))
 	for _, e := range res.Errors {
 		failed = append(failed, e.ID)
 	}
-	log.Printf("acquire: configsync pushed revision %d: applied %v, failed %v", rev, res.Applied, failed)
+	// A clean push is worth a line every time: it is a write, a boot or a
+	// repaired gateway. The same refusal again is not.
+	line := fmt.Sprintf("revision %d: applied %v, failed %v", rev, res.Applied, failed)
+	if len(failed) == 0 || line != r.lastFailed {
+		log.Printf("acquire: configsync pushed %s", line)
+	}
+	r.lastFailed = ""
+	if len(failed) > 0 {
+		r.lastFailed = line
+	}
 	return res, nil
 }
 
