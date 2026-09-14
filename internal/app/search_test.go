@@ -345,6 +345,61 @@ func TestStoredSourceTestCountsAndRecords(t *testing.T) {
 	}
 }
 
+// A stored key goes into every request's query string, so it is only ever sent
+// to the base address and API path it was saved for.
+func TestStoredSourceKeyStaysWithItsAddress(t *testing.T) {
+	svc := e2eService(t, &fakeGateway{}, testBox(t))
+	ctx := context.Background()
+	src := newFakeSource(t, "usenet", "SECRETKEY", "Example.Movie.2020.1080p.BluRay.x265-G")
+	res := addSource(t, svc, "example", src, nil)
+
+	var mu sync.Mutex
+	var heard []string
+	listener := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		heard = append(heard, r.URL.RawQuery)
+		mu.Unlock()
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(listener.Close)
+
+	var ve *ValidationError
+	onKey := func(err error) bool {
+		return errors.As(err, &ve) && len(ve.Fields) == 1 && ve.Fields[0].Field == "apiKey"
+	}
+	if _, err := svc.TestSource(ctx, SourceInput{ID: res.ID, Protocol: "usenet", BaseURL: listener.URL}); !onKey(err) {
+		t.Fatalf("test at another address with the stored key: %v", err)
+	}
+	if _, err := svc.TestSource(ctx, SourceInput{ID: res.ID, Protocol: "usenet", BaseURL: src.srv.URL, APIPath: "/elsewhere"}); !onKey(err) {
+		t.Fatalf("test at another API path with the stored key: %v", err)
+	}
+	if _, err := svc.UpdateSource(ctx, res.ID, SourceInput{Name: "example", BaseURL: listener.URL}, res.Revision, "admin"); !onKey(err) {
+		t.Fatalf("save at another address keeping the stored key: %v", err)
+	}
+	mu.Lock()
+	n := len(heard)
+	mu.Unlock()
+	if n != 0 {
+		t.Fatalf("the other address was asked %d times", n)
+	}
+	if kept, _ := svc.st.GetIndexer(ctx, res.ID); kept.BaseURL != src.srv.URL {
+		t.Fatalf("a refused save changed the source: %+v", kept)
+	}
+
+	// Clearing the key is a deliberate move without it: nothing secret is sent.
+	moved, err := svc.UpdateSource(ctx, res.ID, SourceInput{Name: "example", BaseURL: listener.URL, APIKey: SecretInput{Present: true, Clear: true}}, res.Revision, "admin")
+	if err != nil || moved.APIKey.Set {
+		t.Fatalf("move clearing the key: %+v %v", moved, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, q := range heard {
+		if strings.Contains(q, "SECRETKEY") {
+			t.Fatalf("the stored key reached the other address: %q", q)
+		}
+	}
+}
+
 // A grab from a search result: the reference resolves server-side, the NZB is
 // fetched with the source's key and handed over as content, the download is
 // counted against the source, and a spent allowance refuses without failing the

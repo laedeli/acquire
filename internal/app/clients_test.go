@@ -110,7 +110,7 @@ func TestValidateClient(t *testing.T) {
 	s := testService()
 	ctx := context.Background()
 	intp := func(n int) *int { return &n }
-	stored := store.DownloadClient{ID: "nzbget", Type: "nzbget", Auth: "basic", Username: "u",
+	stored := store.DownloadClient{ID: "nzbget", Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u",
 		SecretCT: []byte("sealed"), Protocols: []string{"usenet"}, Priority: 3, Enabled: false}
 
 	cases := []struct {
@@ -136,6 +136,11 @@ func TestValidateClient(t *testing.T) {
 		// An update may omit the secret: the stored one is kept.
 		{name: "update keeps stored secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u"}, current: &stored},
 		{name: "update clearing a required secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u", Secret: SecretInput{Present: true, Clear: true}}, current: &stored, fields: "secret"},
+		// The stored secret stays with the address it was saved for.
+		{name: "update moving the address without the secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://listener:6789", Auth: "basic", Username: "u"}, current: &stored, fields: "secret"},
+		{name: "update moving the port without the secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://worker:8080", Auth: "basic", Username: "u"}, current: &stored, fields: "secret"},
+		{name: "update moving the address with a new secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://listener:6789", Auth: "basic", Username: "u", Secret: SecretInput{Present: true, Value: "new"}}, current: &stored},
+		{name: "update writing the same address differently", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "HTTP://Worker:80/", Auth: "basic", Username: "u"}, current: &stored},
 	}
 	existing := []store.DownloadClient{{ID: "nzbget"}}
 	for _, c := range cases {
@@ -146,6 +151,29 @@ func TestValidateClient(t *testing.T) {
 		_, fe := s.validateClient(ctx, c.in, builtinClientTypes, ex, c.current)
 		if got := fieldsOf(fe); got != c.fields {
 			t.Errorf("%s: invalid fields = %q, want %q (%+v)", c.name, got, c.fields, fe)
+		}
+	}
+}
+
+func TestSameEndpoint(t *testing.T) {
+	cases := []struct {
+		a, b string
+		same bool
+	}{
+		{"http://worker:6789", "http://worker:6789/", true},
+		{"http://Worker.Media.svc:6789", "http://worker.media.svc.:6789", true},
+		{"http://worker", "http://worker:80", true},
+		{"https://worker", "https://worker:443/", true},
+		{"http://worker/nzb", "http://worker/nzb/", true},
+		{"http://worker", "https://worker", false},
+		{"http://worker:6789", "http://worker:6790", false},
+		{"http://worker", "http://worker.evil.test", false},
+		{"http://worker/nzb", "http://worker/other", false},
+		{"http://worker", "http://[bad", false},
+	}
+	for _, c := range cases {
+		if got := sameEndpoint(c.a, c.b); got != c.same {
+			t.Errorf("sameEndpoint(%q, %q) = %v, want %v", c.a, c.b, got, c.same)
 		}
 	}
 }

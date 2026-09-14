@@ -318,10 +318,15 @@ func (s *Service) validateSource(ctx context.Context, in SourceInput, existing [
 		add("apiPath", "a path starting with /, e.g. /api")
 	}
 
-	if in.APIKey.replaces() && (len(in.APIKey.Value) > 512 || strings.ContainsFunc(in.APIKey.Value, func(r rune) bool {
+	switch {
+	case in.APIKey.replaces() && (len(in.APIKey.Value) > 512 || strings.ContainsFunc(in.APIKey.Value, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsControl(r)
-	})) {
+	})):
 		add("apiKey", "at most 512 characters, no spaces")
+	case !in.APIKey.Present && current != nil && len(current.APIKeyCT) > 0 && !sameSourceEndpoint(baseURL, apiPath, *current):
+		// The key goes into every request's query string: kept across an address
+		// change it would go to the new address, whoever answers there.
+		add("apiKey", "enter the API key again, or clear it: the stored one is only sent to the address it was saved for")
 	}
 
 	cats := defaultCategories
@@ -373,6 +378,12 @@ func (s *Service) validateSource(ctx context.Context, in SourceInput, existing [
 		Categories: store.IndexerCategories{Movie: cats.Movie, TV: cats.TV},
 		Priority:   priority, Enabled: enabled, QueryLimitDay: queryLimit, GrabLimitDay: grabLimit,
 	}, fe
+}
+
+// sameSourceEndpoint reports whether a source is still asked where its stored
+// key was saved for: the same base address and the same API path.
+func sameSourceEndpoint(baseURL, apiPath string, stored store.Indexer) bool {
+	return sameEndpoint(baseURL, stored.BaseURL) && apiPath == stored.APIPath
 }
 
 // cleanCategories dedupes a category list; nil when it is invalid.
@@ -480,8 +491,9 @@ func (s *Service) probe(ctx context.Context, src indexer.Source) (res SourceTest
 }
 
 // TestSource asks a source that has not been saved. When the body names a
-// stored source and carries no key, the stored key is used, so an admin can
-// test an edit without retyping it. Nothing is recorded.
+// stored source at its stored address and carries no key, the stored key is
+// used, so an admin can test an edit without retyping it. At any other address
+// the key has to be typed. Nothing is recorded.
 func (s *Service) TestSource(ctx context.Context, in SourceInput) (SourceTestResult, error) {
 	var current *store.Indexer
 	if in.ID > 0 {
@@ -511,7 +523,7 @@ func (s *Service) TestSource(ctx context.Context, in SourceInput) (SourceTestRes
 	switch {
 	case in.APIKey.replaces():
 		src.APIKey = in.APIKey.Value
-	case !in.APIKey.Clear && current != nil && len(current.APIKeyCT) > 0:
+	case !in.APIKey.Clear && current != nil && len(current.APIKeyCT) > 0 && sameSourceEndpoint(ix.BaseURL, ix.APIPath, *current):
 		stored, err := s.openSource(*current)
 		if err != nil {
 			return SourceTestResult{}, fmt.Errorf("the stored API key cannot be opened: %w", err)

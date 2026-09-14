@@ -362,6 +362,49 @@ func TestSecretsNeedAKey(t *testing.T) {
 	}
 }
 
+// A stored secret is write-only: no test and no save may send it anywhere but
+// the address it was saved for, or editing the address would read it back.
+func TestStoredClientSecretStaysWithItsAddress(t *testing.T) {
+	gw := &fakeGateway{}
+	svc := e2eService(t, gw, testBox(t))
+	ctx := context.Background()
+	c, err := svc.CreateClient(ctx, ClientInput{Type: "nzbget", BaseURL: "http://worker:6789", Auth: "basic",
+		Username: "u", Secret: SecretInput{Present: true, Value: "pw"}}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushes := len(gw.puts)
+
+	var ve *ValidationError
+	onSecret := func(err error) bool {
+		return errors.As(err, &ve) && len(ve.Fields) == 1 && ve.Fields[0].Field == "secret"
+	}
+	moved := ClientInput{ID: c.ID, BaseURL: "http://listener:6789", Auth: "basic", Username: "u"}
+	if _, err := svc.TestClient(ctx, moved); !onSecret(err) {
+		t.Fatalf("test at another address with the stored secret: %v", err)
+	}
+	if _, err := svc.UpdateClient(ctx, c.ID, moved, c.Revision, "admin"); !onSecret(err) {
+		t.Fatalf("save at another address keeping the stored secret: %v", err)
+	}
+	if len(gw.puts) != pushes {
+		t.Fatalf("a refused write reached the gateway: %d pushes, want %d", len(gw.puts), pushes)
+	}
+	if kept, _ := svc.st.GetDownloadClient(ctx, c.ID); kept.BaseURL != "http://worker:6789" || kept.Generation != c.Revision {
+		t.Fatalf("a refused write changed the client: %+v", kept)
+	}
+
+	// Typing the secret again moves it; so does a save at the same address.
+	moved.Secret = SecretInput{Present: true, Value: "pw2"}
+	upd, err := svc.UpdateClient(ctx, c.ID, moved, c.Revision, "admin")
+	if err != nil || upd.BaseURL != "http://listener:6789" {
+		t.Fatalf("move with a new secret: %+v %v", upd, err)
+	}
+	p := 5
+	if _, err := svc.UpdateClient(ctx, c.ID, ClientInput{BaseURL: "http://listener:6789/", Auth: "basic", Username: "u", Priority: &p}, upd.Revision, "admin"); err != nil {
+		t.Fatalf("edit at the same address without the secret: %v", err)
+	}
+}
+
 func TestClientIdentityIsFixedAfterCreation(t *testing.T) {
 	svc := e2eService(t, &fakeGateway{}, testBox(t))
 	ctx := context.Background()

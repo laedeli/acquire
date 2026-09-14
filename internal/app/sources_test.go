@@ -54,6 +54,8 @@ func TestValidateSource(t *testing.T) {
 		QueryLimitDay: intp(100)}
 	existing := []store.Indexer{stored}
 	valid := SourceInput{Name: "another", Protocol: "torrent", BaseURL: "https://feed.test/torznab"}
+	keyed := stored
+	keyed.APIKeyCT = []byte("sealed")
 
 	cases := []struct {
 		name    string
@@ -75,6 +77,12 @@ func TestValidateSource(t *testing.T) {
 		{name: "bad category", in: SourceInput{Name: "n", Protocol: "usenet", BaseURL: "https://x.test", Categories: &indexer.Categories{Movie: []int{0}}}, fields: "categories"},
 		{name: "zero limit", in: SourceInput{Name: "n", Protocol: "usenet", BaseURL: "https://x.test", QueryLimitDay: OptionalInt{Set: true, Value: intp(0)}}, fields: "queryLimitDay"},
 		{name: "priority out of range", in: SourceInput{Name: "n", Protocol: "usenet", BaseURL: "https://x.test", Priority: intp(5000)}, fields: "priority"},
+		// A stored key stays with the address and API path it was saved for.
+		{name: "stored key at the same address", in: SourceInput{Name: "example", BaseURL: "https://SOURCE.test/"}, current: &keyed},
+		{name: "stored key at another address", in: SourceInput{Name: "example", BaseURL: "https://listener.test"}, current: &keyed, fields: "apiKey"},
+		{name: "stored key at another API path", in: SourceInput{Name: "example", BaseURL: "https://source.test", APIPath: "/other"}, current: &keyed, fields: "apiKey"},
+		{name: "new key at another address", in: SourceInput{Name: "example", BaseURL: "https://listener.test", APIKey: SecretInput{Present: true, Value: "k"}}, current: &keyed},
+		{name: "cleared key at another address", in: SourceInput{Name: "example", BaseURL: "https://listener.test", APIKey: SecretInput{Present: true, Clear: true}}, current: &keyed},
 	}
 	for _, c := range cases {
 		_, fe := s.validateSource(ctx, c.in, existing, c.current)

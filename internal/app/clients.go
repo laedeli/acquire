@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -65,6 +66,34 @@ func (s *SecretInput) UnmarshalJSON(b []byte) error {
 
 // replaces reports whether the write stores a new secret value.
 func (s SecretInput) replaces() bool { return s.Present && !s.Clear }
+
+// sameEndpoint reports whether two addresses reach the same place: scheme,
+// host, port and path, ignoring letter case in the scheme and host and a
+// trailing slash. A stored secret is only ever sent where it was stored for.
+// Keeping it while the address changes would make a write-only secret readable
+// to anyone who can edit the address: point a test or a save at a listener of
+// their own and read it off the wire.
+func sameEndpoint(a, b string) bool {
+	ua, errA := url.Parse(strings.TrimSpace(a))
+	ub, errB := url.Parse(strings.TrimSpace(b))
+	if errA != nil || errB != nil {
+		return false
+	}
+	host := func(u *url.URL) string { return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") }
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && host(ua) == host(ub) &&
+		effectivePort(ua) == effectivePort(ub) &&
+		strings.TrimRight(ua.EscapedPath(), "/") == strings.TrimRight(ub.EscapedPath(), "/")
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
 
 // ClientInput is a download client as the console writes it.
 type ClientInput struct {
@@ -417,8 +446,11 @@ func (s *Service) validateClient(ctx context.Context, in ClientInput, types []ga
 	}
 	if auth != "none" {
 		hasStored := current != nil && len(current.SecretCT) > 0
-		if in.Secret.Clear || (!in.Secret.replaces() && !hasStored) {
+		switch {
+		case in.Secret.Clear || (!in.Secret.replaces() && !hasStored):
 			add("secret", "required for "+auth+" authentication")
+		case !in.Secret.replaces() && !sameEndpoint(in.BaseURL, current.BaseURL):
+			add("secret", "enter the secret again: the stored one is only sent to the address it was saved for")
 		}
 	}
 
@@ -518,8 +550,9 @@ func absoluteAnywhere(p string) bool {
 // ── test ───────────────────────────────────────────────────────────────────
 
 // TestClient asks the gateway to reach a client without registering it. When
-// the body names an existing client and carries no secret, the stored one is
-// used, so an admin can re-test without retyping a password.
+// the body names an existing client at its stored address and carries no
+// secret, the stored one is used, so an admin can re-test without retyping a
+// password. At any other address the secret has to be typed.
 func (s *Service) TestClient(ctx context.Context, in ClientInput) (gateway.TestResult, error) {
 	types, _ := s.ClientTypes(ctx)
 	var current *store.DownloadClient
@@ -556,7 +589,7 @@ func (s *Service) TestClient(ctx context.Context, in ClientInput) (gateway.TestR
 	switch {
 	case in.Secret.replaces():
 		cc.Secret = in.Secret.Value
-	case c.Auth != "none" && current != nil && len(current.SecretCT) > 0:
+	case c.Auth != "none" && current != nil && len(current.SecretCT) > 0 && sameEndpoint(c.BaseURL, current.BaseURL):
 		table, rowID, field := store.ClientSecretAAD(current.ID)
 		pt, err := s.box.Open(table, rowID, field, current.SecretCT, current.SecretKID)
 		if err != nil {
