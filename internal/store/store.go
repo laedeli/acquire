@@ -225,17 +225,31 @@ type Grab struct {
 	Seeders      *int32    `json:"seeders"`
 	Reason       string    `json:"reason"`
 	CreatedAt    time.Time `json:"createdAt"`
+
+	// Provenance. Source above is always the REDACTED link; the full one,
+	// which carries the search source's credential, only ever exists sealed.
+	IndexerID   *int64 `json:"indexerId,omitempty"`
+	ReleaseGUID string `json:"releaseGuid,omitempty"`
+	SourceCT    []byte `json:"-"`
+	SourceKID   string `json:"-"`
+}
+
+// GrabAAD is the secretbox binding for a grab's sealed source link.
+func GrabAAD(wantedID, adapter, clientJobID string) (table, id, field string) {
+	return "grabs", wantedID + ":" + adapter + ":" + clientJobID, "source"
 }
 
 // RecordGrabRelease stores the grab together with the chosen release.
 func (s *Store) RecordGrabRelease(ctx context.Context, g Grab) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO grabs (wanted_id, adapter, client_job_id, source,
-		                    release_title, indexer, protocol, size_bytes, seeders, reason)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		                    release_title, indexer, protocol, size_bytes, seeders, reason,
+		                    indexer_id, release_guid, source_ct, source_kid)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		 ON CONFLICT DO NOTHING`,
 		g.WantedID, g.Adapter, g.ClientJobID, g.Source,
-		g.ReleaseTitle, g.Indexer, g.Protocol, g.SizeBytes, g.Seeders, g.Reason)
+		g.ReleaseTitle, g.Indexer, g.Protocol, g.SizeBytes, g.Seeders, g.Reason,
+		g.IndexerID, g.ReleaseGUID, g.SourceCT, g.SourceKID)
 	return err
 }
 

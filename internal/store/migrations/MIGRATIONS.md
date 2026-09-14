@@ -31,7 +31,7 @@ same commit that adds the file.**
 | `025`–`029` | P5 / WP5 — blocklist, retry, upgrades, retention | reserved |
 | `030`–`039` | P6 / WP6 — requests, discovery, notifications | reserved |
 | `040`–`059` | P7 / WP7 — TV: episodes, split import, continuous acquisition | reserved |
-| `060`–`079` | P8 / WP8 — indexer registry, health, definitions | reserved |
+| `060`–`079` | P8 pulled forward — source and client registry: `060` search sources, `061` download clients, `062` settings, settings audit, grab provenance; `063`–`079` free for this range | **in progress** |
 | `080`+ | P9 and beyond | unreserved |
 
 ## Rules
