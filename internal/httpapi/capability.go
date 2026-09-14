@@ -1,6 +1,13 @@
 package httpapi
 
-import "net/http"
+import (
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"github.com/laedeli/acquire/internal/config"
+)
 
 // The capability descriptor: how acquire extends the zae CLI without zae ever
 // compiling in its name. The platform's portal aggregates this document from
@@ -77,20 +84,97 @@ type capSlot struct {
 	Ord   int    `json:"ord"`
 }
 
+// capComponent is one workload of the addon. The platform matches it by
+// workload name to what is actually deployed in the addon's namespace and shows
+// the group's state; it never deploys anything itself.
+type capComponent struct {
+	Name     string   `json:"name"`
+	Workload string   `json:"workload"`
+	Role     string   `json:"role"` // primary | required | optional
+	Summary  string   `json:"summary"`
+	Topics   []string `json:"topics,omitempty"`
+}
+
+// capSetup points the platform at acquire's own checklist (a GET path; the
+// status contract is internal/app/setup.go) and names the console tab where
+// each item is edited. Configuration values never leave acquire.
+type capSetup struct {
+	Path     string            `json:"path"`
+	Sections []capSetupSection `json:"sections"`
+}
+
+type capSetupSection struct {
+	Key         string `json:"key"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+	Target      string `json:"target"`
+	Ord         int    `json:"ord"`
+}
+
 type capability struct {
-	Service  string       `json:"service"`
-	Kind     string       `json:"kind"`
-	Version  string       `json:"version,omitempty"`
-	Commands []capCommand `json:"commands"`
-	Checks   []capCheck   `json:"checks"`
-	Topics   []string     `json:"topics"`
-	UI       *capUI       `json:"ui,omitempty"`
+	Service    string         `json:"service"`
+	Kind       string         `json:"kind"`
+	Version    string         `json:"version,omitempty"`
+	Commands   []capCommand   `json:"commands"`
+	Checks     []capCheck     `json:"checks"`
+	Topics     []string       `json:"topics"`
+	Components []capComponent `json:"components,omitempty"`
+	Setup      *capSetup      `json:"setup,omitempty"`
+	UI         *capUI         `json:"ui,omitempty"`
 }
 
 // capVersion is stamped by the image build when it can; "": omitted.
 var capVersion = ""
 
-func capabilityDoc() capability {
+// dnsLabel is a DNS-1123 label: what a workload or component name must be.
+var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
+
+// gatewayWorkload is the gateway's Deployment and Service name: the first label
+// of the host acquire reaches it at (http://download-gateway:8080 gives
+// download-gateway). "" when no gateway is configured or the host is not a
+// service name (an IP address, say), since then there is nothing to match.
+func gatewayWorkload(gatewayURL string) string {
+	u, err := url.Parse(strings.TrimSpace(gatewayURL))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	label, _, _ := strings.Cut(strings.ToLower(u.Hostname()), ".")
+	if !dnsLabel.MatchString(label) || strings.Trim(label, "0123456789") == "" {
+		return ""
+	}
+	return label
+}
+
+// capabilityComponents declares acquire itself and the gateway it drives. The
+// download clients are external endpoints configured inside acquire, not
+// components of the addon.
+func capabilityComponents(cfg config.Config) []capComponent {
+	out := []capComponent{{
+		Name:     "acquire",
+		Workload: "acquire",
+		Role:     "primary",
+		Summary:  "requests, search, grab decisions and the console; serves this manifest",
+		Topics:   []string{"acquire.schedule.due", "acquire.schedule.saga.due"},
+	}}
+	if wl := gatewayWorkload(cfg.GatewayURL); wl != "" && wl != "acquire" {
+		out = append(out, capComponent{
+			Name:     "download-gateway",
+			Workload: wl,
+			Role:     "required",
+			Summary:  "the download plane: runs the configured download clients and reports their progress",
+			Topics: []string{
+				"download.client.started",
+				"download.client.progress",
+				"download.client.completed",
+				"download.client.failed",
+			},
+		})
+	}
+	return out
+}
+
+func capabilityDoc(cfg config.Config) capability {
 	return capability{
 		Service: "acquire",
 		Kind:    "addon",
@@ -109,17 +193,26 @@ func capabilityDoc() capability {
 			{Name: "series", Summary: "tracked series with acquisition progress", Method: "GET", Path: "/api/series"},
 			{Name: "calendar", Summary: "upcoming and recent episodes", Method: "GET", Path: "/api/calendar"},
 			{Name: "status", Summary: "counts and pipeline state", Method: "GET", Path: "/api/status"},
+			{Name: "setup", Summary: "is acquire configured: sources, clients, grab policy", Method: "GET", Path: "/api/setup", Role: "admin"},
+			{Name: "sources", Summary: "the search sources", Method: "GET", Path: "/api/indexers", Role: "admin"},
+			{Name: "clients", Summary: "the download clients and their live state", Method: "GET", Path: "/api/download-clients", Role: "admin"},
 		},
 		Checks: []capCheck{
 			// Deliberately the unauthenticated diagnostic: useful exactly when
 			// auth is what broke. See systemHealth.
 			{Name: "system", Path: "/api/health/system"},
 		},
-		Topics: []string{
-			"download.client.started",
-			"download.client.progress",
-			"download.client.completed",
-			"download.client.failed",
+		// What acquire itself emits. The download.client.* topics belong to the
+		// gateway component, which is where they come from.
+		Topics:     []string{"acquire.schedule.due", "acquire.schedule.saga.due"},
+		Components: capabilityComponents(cfg),
+		Setup: &capSetup{
+			Path: "/api/setup",
+			Sections: []capSetupSection{
+				{Key: "sources", Title: "search sources", Description: "where acquire searches for releases", Required: true, Target: "#/indexers", Ord: 10},
+				{Key: "clients", Title: "download clients", Description: "the download programs acquire hands releases to", Required: true, Target: "#/clients", Ord: 20},
+				{Key: "grab-policy", Title: "search and grab", Description: "protocol preference, free-space floor and concurrency", Required: false, Target: "#/settings", Ord: 30},
+			},
 		},
 		UI: &capUI{
 			App: capApp{
@@ -129,14 +222,15 @@ func capabilityDoc() capability {
 			},
 			Console: true,
 			// The layout an operator wants on day one, declared rather than
-			// hand-built per instance: acquire's own section with the five
-			// places worth starting from.
+			// hand-built per instance: acquire's own section with the places
+			// worth starting from.
 			Space: &capSpace{Key: "acquire", Title: "acquire", Ord: 30},
 			Tiles: []capTile{
 				{Key: "requests", Title: "requests", Description: "who asked for what", Icon: "download", Target: "#/requests", Ord: 10},
 				{Key: "downloads", Title: "downloads", Description: "the queue, live", Icon: "gauge", Target: "#/downloads", Ord: 20},
 				{Key: "search", Title: "search", Description: "across all indexers", Icon: "radar", Target: "#/search", Ord: 30},
-				{Key: "indexers", Title: "indexers", Description: "configured sources", Icon: "globe", Target: "#/indexers", Ord: 40},
+				{Key: "indexers", Title: "search sources", Description: "where releases are searched", Icon: "globe", Target: "#/indexers", Ord: 40},
+				{Key: "clients", Title: "clients", Description: "where downloads run", Icon: "server", Target: "#/clients", Ord: 45},
 				{Key: "settings", Title: "quality profiles", Description: "what counts as good", Icon: "settings", Target: "#/settings", Ord: 50},
 			},
 			// The one row the addon contributes: "Request this" on an empty
@@ -160,5 +254,5 @@ func capabilityDoc() capability {
 // for the same reason: it is metadata about a surface, and the aggregator
 // fetches it without credentials.
 func (s *Server) capabilityHandler(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, capabilityDoc())
+	writeJSON(w, http.StatusOK, capabilityDoc(s.cfg))
 }
