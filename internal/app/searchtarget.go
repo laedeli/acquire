@@ -48,6 +48,7 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 	}
 
 	profile, _ := s.ScoringProfile(ctx, title.ProfileID)
+	routes := s.clientRoutes(ctx)
 	out := make([]Candidate, 0, len(results))
 	for _, r := range results {
 		v, in := release.Score(release.Candidate{
@@ -59,7 +60,7 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 			Size: r.Size, Seeders: r.Seeders,
 			Score: v.Score, Rejected: v.Rejected, Reason: v.Summary(),
 			Resolution: in.Resolution, Codec: in.Codec, SourceType: in.Source,
-			Source: r.Link, Adapter: adapterFor(r.Protocol),
+			Source: r.Link, Adapter: routes[r.Protocol],
 			// How it was found and what identified it, so the console can show
 			// an id match as certain rather than merely plausible.
 			Stage: r.Stage, MatchedVia: r.Match.Via,
@@ -85,11 +86,4 @@ func TargetSearchable(t store.Title) bool {
 		return t.TVDBID > 0
 	}
 	return t.IMDBID != "" || t.TMDBID > 0
-}
-
-func adapterFor(protocol string) string {
-	if protocol == "usenet" {
-		return "nzbget"
-	}
-	return "qbittorrent"
 }

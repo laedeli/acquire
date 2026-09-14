@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/laedeli/acquire/internal/storage"
+	"github.com/laedeli/acquire/internal/store"
 )
 
 // AdmitGrab is the last gate before anything is downloaded.
@@ -20,10 +21,16 @@ import (
 //     before the first finished.
 //
 // Both fail CLOSED. A grab that cannot be shown to be safe does not happen.
-func (s *Service) AdmitGrab(ctx context.Context, sizeBytes int64) error {
+//
+// The space that matters is where THIS client writes, seen from acquire: the
+// client's local folder, or ACQUIRE_DOWNLOADS_ROOT for a client that declares
+// none. The floor and the concurrency cap are the admin's search and grab
+// settings.
+func (s *Service) AdmitGrab(ctx context.Context, c store.DownloadClient, sizeBytes int64) error {
+	pol := s.grabPolicy(ctx)
 	g := storage.Guard{
-		Path:          s.cfg.DownloadsRoot,
-		FloorBytes:    s.cfg.StorageFloorBytes(),
+		Path:          s.downloadsPath(c),
+		FloorBytes:    pol.StorageFloorGB << 30,
 		HeadroomBytes: 50 << 30, // never let a grab be the thing that fills it
 	}
 	if err := g.Admit(sizeBytes); err != nil {
@@ -34,10 +41,18 @@ func (s *Service) AdmitGrab(ctx context.Context, sizeBytes int64) error {
 		// Cannot count in-flight work: refuse rather than guess.
 		return fmt.Errorf("refusing grab: cannot count active downloads: %w", err)
 	}
-	if max := s.cfg.MaxConcurrentGrabs(); active >= max {
+	if max := pol.MaxConcurrentGrabs; active >= max {
 		return fmt.Errorf("refusing grab: %d download(s) already in flight (cap %d)", active, max)
 	}
 	return nil
+}
+
+// downloadsPath is where a client's downloads are visible to acquire.
+func (s *Service) downloadsPath(c store.DownloadClient) string {
+	if c.LocalPath != "" {
+		return c.LocalPath
+	}
+	return s.cfg.DownloadsRoot
 }
 
 // FreeBytes powers the metric, so disk pressure is visible before it bites.
@@ -47,4 +62,9 @@ func (s *Service) FreeBytes() int64 {
 		return -1
 	}
 	return n
+}
+
+// StorageFloorBytes is the admin's configured floor.
+func (s *Service) StorageFloorBytes(ctx context.Context) int64 {
+	return s.grabPolicy(ctx).StorageFloorGB << 30
 }

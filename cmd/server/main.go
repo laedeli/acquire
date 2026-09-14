@@ -21,6 +21,7 @@ import (
 	"github.com/laedeli/acquire/internal/katalog"
 	"github.com/laedeli/acquire/internal/prowlarr"
 	"github.com/laedeli/acquire/internal/relay"
+	"github.com/laedeli/acquire/internal/secretbox"
 	"github.com/laedeli/acquire/internal/sse"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
@@ -45,7 +46,26 @@ func main() {
 	pr := prowlarr.New(cfg.IndexerURL, cfg.IndexerAPIKey)
 	br := sse.New()
 
-	svc := app.New(cfg, st, gw, kc, tm, pr, br)
+	// Credentials acquire stores (download client secrets) are sealed with
+	// ACQUIRE_CONFIG_KEY. Without a usable key acquire still serves; it refuses
+	// to store secrets and setup says why. The error never contains the key.
+	box, err := secretbox.FromEnv()
+	if err != nil {
+		log.Printf("acquire: %v — credentials cannot be stored until this is fixed", err)
+	} else if !box.Enabled() {
+		log.Printf("acquire: ACQUIRE_CONFIG_KEY is not set — credentials cannot be stored")
+	}
+
+	svc := app.New(cfg, st, gw, kc, tm, pr, br, box)
+
+	// The search and grab policy used to be environment only; the environment
+	// now seeds the stored row once, and the console edits it from there.
+	if err := svc.SeedSettings(ctx); err != nil {
+		log.Printf("acquire: could not seed search settings (environment defaults apply): %v", err)
+	}
+	// The gateway holds download clients in memory only: push acquire's stored
+	// set now, after every change, and whenever the gateway falls behind.
+	go svc.RunConfigSync(ctx)
 
 	// The consumer starts at the latest offset, so downloads that began while
 	// acquire was down would be invisible. Ask the gateway what is in flight.

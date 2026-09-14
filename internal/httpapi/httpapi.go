@@ -158,12 +158,14 @@ func (s *Server) Handler() http.Handler {
 	// platform's portal. See capability.go.
 	r.Get("/.well-known/zaentrum-capability.json", s.capabilityHandler)
 	// Unauthenticated discovery doc so the SPA can bootstrap OIDC (PKCE).
-	r.Get("/api/config", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/api/config", func(w http.ResponseWriter, rq *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"oidcIssuer":   s.cfg.OIDCIssuer,
 			"oidcClientId": s.cfg.OIDCClientID,
 			"adminRole":    s.cfg.AdminRole,
-			"autoGrab":     s.svc.AutoGrabEnabled(), // SPA shows "Find & grab" when true
+			// SPA shows "Find & grab" when true: a source AND a client for its
+			// protocol exist, so a grab has somewhere to come from and go to.
+			"autoGrab": s.svc.AutoGrabEnabled(rq.Context()),
 		})
 	})
 	r.Get("/readyz", func(w http.ResponseWriter, rq *http.Request) {
@@ -211,6 +213,18 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/counts", s.counts)
 		r.Get("/api/history", s.history)
 		r.Get("/api/targets/{id}/search", s.searchTarget) // admin — TYPED search
+
+		// Configuration, admin-only (configapi.go). The platform links its setup
+		// checklist into the console tabs that edit these.
+		r.Get("/api/setup", s.setup)
+		r.Get("/api/download-clients", s.listDownloadClients)
+		r.Post("/api/download-clients", s.createDownloadClient)
+		r.Get("/api/download-clients/types", s.downloadClientTypes)
+		r.Post("/api/download-clients/test", s.testDownloadClient)
+		r.Put("/api/download-clients/{id}", s.updateDownloadClient)
+		r.Delete("/api/download-clients/{id}", s.deleteDownloadClient)
+		r.Get("/api/settings/search", s.getSearchSettings)
+		r.Put("/api/settings/search", s.putSearchSettings)
 	})
 
 	// Embedded SPA at /  (assets + index fallback).
@@ -377,8 +391,11 @@ func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// listIndexers reports the configured search backends.
+// listIndexers reports the configured search backends (admin).
 func (s *Server) listIndexers(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	writeJSON(w, 200, s.svc.Indexers(r.Context()))
 }
 
@@ -472,14 +489,21 @@ func (s *Server) grabWanted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Source  string `json:"source"`
+		Source string `json:"source"`
+		// Client names a download client id; adapter is its older spelling.
+		// Neither: route by what the source turns out to be.
+		Client  string `json:"client"`
 		Adapter string `json:"adapter"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Source) == "" {
 		http.Error(w, "source is required", http.StatusBadRequest)
 		return
 	}
-	if err := s.svc.Grab(r.Context(), chi.URLParam(r, "id"), body.Source, body.Adapter); err != nil {
+	client := body.Client
+	if client == "" {
+		client = body.Adapter
+	}
+	if err := s.svc.Grab(r.Context(), chi.URLParam(r, "id"), body.Source, client); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}

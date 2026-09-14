@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -27,14 +28,31 @@ func TestEveryHandlerIsRouted(t *testing.T) {
 	}
 	body := string(src)
 
-	// Handlers look like: func (s *Server) name(w http.ResponseWriter, r *http.Request)
-	defRE := regexp.MustCompile(`func \(s \*Server\) (\w+)\(w http\.ResponseWriter`)
+	// Handlers live in every file of the package; routes are all registered
+	// in httpapi.go.
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Handlers look like: func (s *Server) name(w http.ResponseWriter, r *http.Request) {
+	// — no result, which is what separates them from helpers such as
+	// requireAdmin that take the same parameters.
+	defRE := regexp.MustCompile(`func \(s \*Server\) (\w+)\(w http\.ResponseWriter, \w+ \*http\.Request\) \{`)
 	var unrouted []string
-	for _, m := range defRE.FindAllStringSubmatch(body, -1) {
-		name := m[1]
-		// A handler is routed if it appears as `s.<name>)` in a route call.
-		if !strings.Contains(body, "s."+name+")") {
-			unrouted = append(unrouted, name)
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		def, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range defRE.FindAllStringSubmatch(string(def), -1) {
+			name := m[1]
+			// A handler is routed if it appears as `s.<name>)` in a route call.
+			if !strings.Contains(body, "s."+name+")") {
+				unrouted = append(unrouted, f+": "+name)
+			}
 		}
 	}
 	if len(unrouted) > 0 {

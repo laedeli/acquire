@@ -47,10 +47,16 @@ type Config struct {
 	KafkaTopicPrefix string // KAFKA_TOPIC_PREFIX (default zaentrum-beta.)
 	KafkaGroupID     string // KAFKA_GROUP_ID (default acquire)
 
-	// Staging / packaging paths (on the shared media mount).
+	// Staging / packaging paths (on the shared media mount). Where a download
+	// lands is now per client (its remote and local folder); DownloadsRoot is
+	// the fallback for a client that declares no local folder.
 	InboxRoot     string // ACQUIRE_INBOX_ROOT (default /var/lib/katalog/packages/_inbox)
 	DownloadsRoot string // ACQUIRE_DOWNLOADS_ROOT (default /var/lib/katalog/packages/_downloads)
-	SavePath      string // save path handed to the gateway (default = DownloadsRoot)
+
+	// Endpoint policy for URLs an admin enters (internal/endpoint).
+	EndpointDeny          []string // ACQUIRE_ENDPOINT_DENY: comma list of hostnames or domain suffixes
+	EndpointAllowInternal bool     // ACQUIRE_ENDPOINT_ALLOW_INTERNAL: allow services in other namespaces
+	PodNamespace          string   // POD_NAMESPACE, else the service account's namespace file
 }
 
 func env(keys ...string) string {
@@ -102,8 +108,36 @@ func Load() Config {
 
 		InboxRoot:     def("/var/lib/katalog/packages/_inbox", "ACQUIRE_INBOX_ROOT"),
 		DownloadsRoot: downloads,
-		SavePath:      def(downloads, "ACQUIRE_SAVE_PATH"),
+
+		EndpointDeny:          splitList(env("ACQUIRE_ENDPOINT_DENY")),
+		EndpointAllowInternal: env("ACQUIRE_ENDPOINT_ALLOW_INTERNAL") == "true",
+		PodNamespace:          podNamespace(),
 	}
+}
+
+// serviceAccountNamespace is where Kubernetes mounts the pod's namespace.
+const serviceAccountNamespace = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+
+// podNamespace is acquire's own namespace: POD_NAMESPACE when the deployment
+// sets it (downward API), else the mounted service account file, else "".
+func podNamespace() string {
+	if v := env("POD_NAMESPACE"); v != "" {
+		return v
+	}
+	if b, err := os.ReadFile(serviceAccountNamespace); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // firstEnv returns the first of names that is set, so a renamed variable can be

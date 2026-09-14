@@ -9,18 +9,22 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/laedeli/acquire/internal/config"
+	"github.com/laedeli/acquire/internal/configsync"
+	"github.com/laedeli/acquire/internal/endpoint"
 	"github.com/laedeli/acquire/internal/events"
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/indexer"
 	"github.com/laedeli/acquire/internal/katalog"
 	"github.com/laedeli/acquire/internal/prowlarr"
 	"github.com/laedeli/acquire/internal/release"
+	"github.com/laedeli/acquire/internal/secretbox"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
 )
@@ -41,9 +45,19 @@ type Service struct {
 	pr  *prowlarr.Client
 	ix  *indexer.Engine
 	bus Bus
+
+	// Download client configuration: credentials sealed by box, pushed to the
+	// gateway by sync, admin-entered addresses checked by policy, release files
+	// fetched through fetch (which applies the same policy at dial time).
+	box     *secretbox.Box
+	sync    *configsync.Reconciler
+	policy  endpoint.Policy
+	fetch   *http.Client
+	types   typeCache
+	sources sourceCache
 }
 
-func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, bus Bus) *Service {
+func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, bus Bus, box *secretbox.Box) *Service {
 	// The typed engine talks to the SAME aggregator, but through the
 	// per-indexer newznab proxy rather than /api/v1/search — the latter accepts
 	// season/ep/tvdbid, returns 200 and discards them.
@@ -52,7 +66,25 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		MaxConcurrent: 4,
 		PerIndexer:    45 * time.Second,
 	}
-	return &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, ix: ix, bus: bus}
+	policy := endpoint.Policy{
+		Deny:          cfg.EndpointDeny,
+		AllowInternal: cfg.EndpointAllowInternal,
+		Namespace:     cfg.PodNamespace,
+	}
+	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, ix: ix, bus: bus,
+		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second)}
+	if st != nil {
+		svc.sync = configsync.New(st, gw, box, 30*time.Second)
+	}
+	return svc
+}
+
+// RunConfigSync keeps the gateway running the stored download clients until
+// ctx ends.
+func (s *Service) RunConfigSync(ctx context.Context) {
+	if s.sync != nil {
+		s.sync.Run(ctx)
+	}
 }
 
 func (s *Service) notify() {
@@ -67,8 +99,9 @@ func (s *Service) publish(name string, data any) {
 	}
 }
 
-// AutoGrabEnabled reports whether Prowlarr search is configured.
-func (s *Service) AutoGrabEnabled() bool { return s.pr.Enabled() }
+// AutoGrabEnabled reports whether a grab can happen at all: some protocol has
+// both an enabled search source and an enabled client to hand it to.
+func (s *Service) AutoGrabEnabled(ctx context.Context) bool { return s.Coverage(ctx).CanGrab() }
 
 // setStatus updates + pings subscribers.
 func (s *Service) setStatus(ctx context.Context, id, status, detail string) {
@@ -111,41 +144,29 @@ func (s *Service) Request(ctx context.Context, w store.Wanted, sub string) (stor
 	return out, err
 }
 
-// Grab hands a concrete source (magnet/URL) for a request to a download client
-// via the gateway, tagging the wanted id so the completed event maps back.
-func (s *Service) Grab(ctx context.Context, wantedID, source, adapter string) error {
+// Grab hands a concrete source (magnet, release-file URL or hoster link) for a
+// request to a download client via the gateway, tagging the wanted id so the
+// completed event maps back. client names a client id; "" routes by what the
+// link turns out to be.
+func (s *Service) Grab(ctx context.Context, wantedID, source, client string) error {
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
 		return err
 	}
-	if adapter == "" {
-		adapter = "qbittorrent"
-	}
-	// Last gate before anything is written to disk. Fails closed: the media
-	// export is at 92% and beta shares it with production.
-	if err := s.AdmitGrab(ctx, 0); err != nil {
-		return err
-	}
-	res, err := s.gw.Add(ctx, gateway.AddRequest{
-		Adapter:      adapter,
-		Source:       source,
-		Title:        w.Title,
-		SavePath:     s.cfg.SavePath,
-		WantedItemID: wantedID,
+	out, err := s.handOff(ctx, handoff{
+		WantedID: wantedID, Title: w.Title, Link: source, ClientID: client, Reason: "manual source",
 	})
 	if err != nil {
-		s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())
+		s.failGrab(ctx, wantedID, err)
 		return err
 	}
-	_ = s.st.RecordGrab(ctx, wantedID, adapter, res.ClientJobID, source)
-	s.setStatus(ctx, wantedID, "downloading", "grabbed via "+adapter)
+	s.setStatus(ctx, wantedID, "downloading", "grabbed via "+out.Client.ID)
 	return nil
 }
 
-// AutoGrab searches Prowlarr for the request's title, ranks the releases
-// NZB-first, and grabs the top one through the matching gateway adapter
-// (usenet→nzbget, torrent→qbittorrent). This is the *arr-style automation on top
-// of the manual Grab.
+// AutoGrab searches for the request's title, ranks the releases by the active
+// profile, and grabs the top one through the download client that handles its
+// protocol.
 func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
@@ -174,41 +195,39 @@ func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 		return errNoReleases
 	}
 	best := ranked[0]
-	adapter := best.Adapter
-	// Last gate before anything is written to disk. Fails closed: the media
-	// export is at 92% and beta shares it with production.
-	if err := s.AdmitGrab(ctx, 0); err != nil {
-		return err
-	}
-	res, err := s.gw.Add(ctx, gateway.AddRequest{
-		Adapter:      adapter,
-		Source:       best.Source,
-		Title:        w.Title,
-		SavePath:     s.cfg.SavePath,
-		WantedItemID: wantedID,
-	})
+	out, err := s.handOff(ctx, candidateHandoff(w, best, best.Reason))
 	if err != nil {
-		s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())
+		s.failGrab(ctx, wantedID, err)
 		return err
 	}
-	proto := "torrent"
-	if best.Protocol == "usenet" {
-		proto = "NZB"
-	}
+	s.setStatus(ctx, wantedID, "downloading",
+		"grabbed "+protoLabel(out.Protocol)+" from "+best.Indexer+" via "+out.Client.ID)
+	return nil
+}
+
+// candidateHandoff turns a ranked release into a hand-off. The candidate's
+// client hint is ignored: routing is decided at grab time from the protocol,
+// against the clients configured NOW.
+func candidateHandoff(w store.Wanted, c Candidate, reason string) handoff {
 	var seeders *int32
-	if best.Protocol == "torrent" {
-		n := int32(best.Seeders)
+	if c.Protocol == "torrent" {
+		n := int32(c.Seeders)
 		seeders = &n
 	}
-	_ = s.st.RecordGrabRelease(ctx, store.Grab{
-		WantedID: wantedID, Adapter: adapter, ClientJobID: res.ClientJobID,
-		Source: best.Source, ReleaseTitle: best.Title, Indexer: best.Indexer,
-		Protocol: best.Protocol, SizeBytes: best.Size, Seeders: seeders,
-		Reason: best.Reason,
-	})
-	s.setStatus(ctx, wantedID, "downloading",
-		"grabbed "+proto+" from "+best.Indexer+" via "+adapter)
-	return nil
+	return handoff{
+		WantedID: w.ID, Title: w.Title, Link: c.Source, Protocol: c.Protocol,
+		ReleaseTitle: c.Title, Indexer: c.Indexer, Size: c.Size, Seeders: seeders, Reason: reason,
+	}
+}
+
+func protoLabel(protocol string) string {
+	switch protocol {
+	case "usenet":
+		return "NZB"
+	case "torrent":
+		return "torrent"
+	}
+	return "link"
 }
 
 // Candidate is one release offered by a search, already scored by the active
@@ -240,6 +259,7 @@ type Candidate struct {
 // biggest", which kept choosing bloated multi-language remuxes.
 func (s *Service) rankByProfile(ctx context.Context, releases []prowlarr.Release) []Candidate {
 	profile := s.st.DefaultProfile(ctx)
+	routes := s.clientRoutes(ctx)
 	out := make([]Candidate, 0, len(releases))
 	for _, r := range releases {
 		v, info := release.Score(release.Candidate{
@@ -250,7 +270,7 @@ func (s *Service) rankByProfile(ctx context.Context, releases []prowlarr.Release
 		}, profile)
 		out = append(out, Candidate{
 			Title: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Size: r.Size,
-			Seeders: r.Seeders, Adapter: r.Adapter(), Source: r.Source(),
+			Seeders: r.Seeders, Adapter: routes[r.Protocol], Source: r.Source(),
 			Reason: v.Summary(), Score: v.Score, Rejected: v.Rejected,
 			Resolution: info.Resolution, Codec: info.Codec, SourceType: info.Source,
 		})
@@ -267,24 +287,27 @@ func (s *Service) rankByProfile(ctx context.Context, releases []prowlarr.Release
 	return out
 }
 
-// searchIndexers runs the two-stage NZB-first fan-out: the (few) usenet
-// indexers first, and the wide torrent search only when they come back empty.
+// searchIndexers runs the two-stage fan-out in the preferred protocol's order:
+// by default the (few) usenet indexers first, and the wide torrent search only
+// when they come back empty.
 // Scoping to explicit indexer ids skips the staging entirely.
 func (s *Service) searchIndexers(ctx context.Context, query string, only []int) ([]prowlarr.Release, error) {
 	if len(only) > 0 {
 		return s.pr.SearchIn(ctx, query, only)
 	}
 	idx, _ := s.pr.Indexers(ctx)
+	first, second := "usenet", "torrent"
+	if s.grabPolicy(ctx).PreferProtocol == "torrent" {
+		first, second = second, first
+	}
 	var releases []prowlarr.Release
-	if s.cfg.PreferUsenet {
-		if ids := prowlarr.EnabledIDs(idx, "usenet"); len(ids) > 0 {
-			releases, _ = s.pr.SearchIn(ctx, query, ids)
-		}
+	if ids := prowlarr.EnabledIDs(idx, first); len(ids) > 0 {
+		releases, _ = s.pr.SearchIn(ctx, query, ids)
 	}
 	if len(releases) > 0 {
 		return releases, nil
 	}
-	return s.pr.SearchIn(ctx, query, prowlarr.EnabledIDs(idx, "torrent"))
+	return s.pr.SearchIn(ctx, query, prowlarr.EnabledIDs(idx, second))
 }
 
 // Search is the console's manual search: a free-text query across the indexers
@@ -315,48 +338,23 @@ func (s *Service) Releases(ctx context.Context, wantedID string) ([]Candidate, e
 }
 
 // GrabCandidate hands a specific release (chosen in a picker or the manual
-// search) to its client, recording which one it was.
+// search) to the client for its protocol, recording which one it was.
 func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidate) error {
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
 		return err
 	}
-	adapter := c.Adapter
-	if adapter == "" {
-		adapter = "qbittorrent"
-	}
-	// Last gate before anything is written to disk. Fails closed: the media
-	// export is at 92% and beta shares it with production.
-	if err := s.AdmitGrab(ctx, 0); err != nil {
-		return err
-	}
-	res, err := s.gw.Add(ctx, gateway.AddRequest{
-		Adapter: adapter, Source: c.Source, Title: w.Title,
-		SavePath: s.cfg.SavePath, WantedItemID: wantedID,
-	})
-	if err != nil {
-		s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())
-		return err
-	}
-	var seeders *int32
-	if c.Protocol == "torrent" {
-		n := int32(c.Seeders)
-		seeders = &n
-	}
 	reason := c.Reason
 	if reason == "" {
 		reason = "picked manually"
 	}
-	_ = s.st.RecordGrabRelease(ctx, store.Grab{
-		WantedID: wantedID, Adapter: adapter, ClientJobID: res.ClientJobID,
-		Source: c.Source, ReleaseTitle: c.Title, Indexer: c.Indexer,
-		Protocol: c.Protocol, SizeBytes: c.Size, Seeders: seeders, Reason: reason,
-	})
-	proto := "torrent"
-	if c.Protocol == "usenet" {
-		proto = "NZB"
+	out, err := s.handOff(ctx, candidateHandoff(w, c, reason))
+	if err != nil {
+		s.failGrab(ctx, wantedID, err)
+		return err
 	}
-	s.setStatus(ctx, wantedID, "downloading", "grabbed "+proto+" from "+c.Indexer+" via "+adapter)
+	s.setStatus(ctx, wantedID, "downloading",
+		"grabbed "+protoLabel(out.Protocol)+" from "+c.Indexer+" via "+out.Client.ID)
 	return nil
 }
 
@@ -504,7 +502,13 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 	if w.Status == "packaging" || w.Status == "fulfilled" {
 		return nil
 	}
-	video := katalog.ResolveVideo(ev.Files)
+	// The client reports paths as IT sees them; acquire reads the same folder
+	// under its own mount.
+	files := ev.Files
+	if c, err := s.st.GetDownloadClient(ctx, ev.Adapter); err == nil {
+		files = mapClientPaths(files, c.RemotePath, c.LocalPath)
+	}
+	video := katalog.ResolveVideo(files)
 	if video == "" {
 		s.setStatus(ctx, w.ID, "failed", "no video file in the completed download")
 		return nil

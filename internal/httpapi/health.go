@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -65,12 +66,35 @@ func (s *Server) systemHealth(w http.ResponseWriter, r *http.Request) {
 		add("storage", fmt.Errorf("cannot read free space at the downloads root"), "")
 	} else {
 		var derr error
-		if free < s.cfg.StorageFloorBytes() {
+		if floor := s.svc.StorageFloorBytes(ctx); free < floor {
 			derr = fmt.Errorf("%d GB free is below the %d GB floor; grabs are refused",
-				free>>30, s.cfg.StorageFloorBytes()>>30)
+				free>>30, floor>>30)
 		}
 		add("storage", derr, fmt.Sprintf("%d GB free", free>>30))
 	}
+
+	// Nothing to search from, or nowhere to hand a release to, leaves a system
+	// that looks healthy and can never grab anything. Counts only — this
+	// endpoint is unauthenticated.
+	cov := s.svc.Coverage(ctx)
+	var srcErr error
+	switch {
+	case cov.SourcesErr != nil:
+		srcErr = fmt.Errorf("nothing can search: the search sources could not be read")
+	case len(nonZeroProtocols(cov.Sources)) == 0:
+		srcErr = fmt.Errorf("nothing can search: no search source is enabled")
+	}
+	add("sources", srcErr, fmt.Sprintf("enabled: %s", protocolCounts(cov.Sources)))
+	var cliErr error
+	switch {
+	case cov.ClientsErr != nil:
+		cliErr = fmt.Errorf("nothing can grab: the download clients could not be read")
+	case cov.EnabledClients == 0:
+		cliErr = fmt.Errorf("nothing can grab: no download client is enabled")
+	case len(nonZeroProtocols(cov.Sources)) > 0 && !cov.CanGrab():
+		cliErr = fmt.Errorf("nothing can grab: no enabled client handles %s", strings.Join(nonZeroProtocols(cov.Sources), " or "))
+	}
+	add("clients", cliErr, fmt.Sprintf("enabled: %s", protocolCounts(cov.Clients)))
 
 	// A clock that has silently stopped looks identical to a quiet system.
 	overdue, oErr := s.st.OverdueSchedules(ctx, 3)
@@ -91,6 +115,29 @@ func (s *Server) systemHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": status, "checks": checks, "counts": counts,
 	})
+}
+
+func nonZeroProtocols(m map[string]int) []string {
+	var out []string
+	for p, n := range m {
+		if n > 0 {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// protocolCounts renders {"usenet":2} as "2 usenet", or "none".
+func protocolCounts(m map[string]int) string {
+	var parts []string
+	for _, p := range nonZeroProtocols(m) {
+		parts = append(parts, fmt.Sprintf("%d %s", m[p], p))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // metrics exposes Prometheus text format by hand.
