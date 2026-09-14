@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/laedeli/acquire/internal/configsync"
 	"github.com/laedeli/acquire/internal/gateway"
@@ -24,6 +25,16 @@ import (
 
 // clientIDRule is the gateway's id rule; the table enforces it too.
 var clientIDRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+// The gateway's limits on a client spec. A write it would refuse is refused
+// here, where the admin gets a field error, instead of being stored and then
+// failing to apply on every push.
+const (
+	maxClientBaseURL  = 2048
+	maxClientUsername = 256
+	maxClientSecret   = 4096
+	maxClientSavePath = 1024
+)
 
 // builtinClientTypes is what acquire assumes when the gateway cannot be asked.
 // It only keeps the console usable while the gateway is down; validation
@@ -420,8 +431,15 @@ func (s *Service) validateClient(ctx context.Context, in ClientInput, types []ga
 		}
 	}
 
-	if err := s.policy.CheckResolved(ctx, in.BaseURL); err != nil {
-		add("baseUrl", err.Error())
+	switch base := strings.TrimSpace(in.BaseURL); {
+	case len(base) > maxClientBaseURL:
+		add("baseUrl", fmt.Sprintf("at most %d characters", maxClientBaseURL))
+	case strings.ContainsAny(base, "?#"):
+		add("baseUrl", "the client's own address, without a query or fragment")
+	default:
+		if err := s.policy.CheckResolved(ctx, in.BaseURL); err != nil {
+			add("baseUrl", err.Error())
+		}
 	}
 
 	auth := in.Auth
@@ -438,8 +456,11 @@ func (s *Service) validateClient(ctx context.Context, in ClientInput, types []ga
 		add("auth", fmt.Sprintf("%s supports: %s", in.Type, strings.Join(typ.Auth, ", ")))
 	}
 	username := strings.TrimSpace(in.Username)
-	if auth == "basic" && username == "" {
+	switch {
+	case auth == "basic" && username == "":
 		add("username", "required for basic authentication")
+	case auth == "basic" && (len(username) > maxClientUsername || strings.ContainsFunc(username, unicode.IsControl)):
+		add("username", fmt.Sprintf("at most %d characters, no control characters", maxClientUsername))
 	}
 	if auth != "basic" {
 		username = ""
@@ -451,6 +472,8 @@ func (s *Service) validateClient(ctx context.Context, in ClientInput, types []ga
 			add("secret", "required for "+auth+" authentication")
 		case !in.Secret.replaces() && !sameEndpoint(in.BaseURL, current.BaseURL):
 			add("secret", "enter the secret again: the stored one is only sent to the address it was saved for")
+		case in.Secret.replaces() && (len(in.Secret.Value) > maxClientSecret || strings.ContainsFunc(in.Secret.Value, unicode.IsControl)):
+			add("secret", fmt.Sprintf("at most %d characters, no control characters", maxClientSecret))
 		}
 	}
 
@@ -476,13 +499,17 @@ func (s *Service) validateClient(ctx context.Context, in ClientInput, types []ga
 	if category == "" {
 		category = "acquire"
 	}
-	if len(category) > 64 || strings.ContainsAny(category, "/\\\x00\n\r\t") {
+	if len(category) > 64 || strings.ContainsAny(category, `/\`) || strings.ContainsFunc(category, unicode.IsControl) {
 		add("category", "at most 64 characters, no slashes or control characters")
 	}
 
 	remote := strings.TrimSpace(in.RemotePath)
 	local := strings.TrimSpace(in.LocalPath)
-	if remote != "" && !absoluteAnywhere(remote) {
+	switch {
+	case remote == "":
+	case len(remote) > maxClientSavePath || strings.ContainsFunc(remote, unicode.IsControl):
+		add("remotePath", fmt.Sprintf("at most %d characters, no control characters", maxClientSavePath))
+	case !absoluteAnywhere(remote):
 		add("remotePath", "must be an absolute path as the client sees it, e.g. /downloads")
 	}
 	if local != "" {

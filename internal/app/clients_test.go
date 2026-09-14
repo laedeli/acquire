@@ -133,6 +133,17 @@ func TestValidateClient(t *testing.T) {
 		{name: "local without remote", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "none", LocalPath: "/media/downloads"}, fields: "remotePath"},
 		{name: "priority out of range", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "none", Priority: intp(5000)}, fields: "priority"},
 		{name: "category with a slash", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "none", Category: "a/b"}, fields: "category"},
+		// What the gateway refuses in a pushed spec is refused when it is saved.
+		{name: "query in the address", in: ClientInput{Type: "nzbget", BaseURL: "http://worker:6789/?x=1", Auth: "none"}, fields: "baseUrl"},
+		{name: "fragment in the address", in: ClientInput{Type: "nzbget", BaseURL: "http://worker:6789/#top", Auth: "none"}, fields: "baseUrl"},
+		{name: "address too long", in: ClientInput{Type: "nzbget", BaseURL: "http://worker/" + strings.Repeat("a", 2048), Auth: "none"}, fields: "baseUrl"},
+		{name: "username too long", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: strings.Repeat("u", 257), Secret: SecretInput{Present: true, Value: "p"}}, fields: "username"},
+		{name: "control character in the username", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u\x01", Secret: SecretInput{Present: true, Value: "p"}}, fields: "username"},
+		{name: "secret too long", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u", Secret: SecretInput{Present: true, Value: strings.Repeat("p", 4097)}}, fields: "secret"},
+		{name: "control character in the secret", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u", Secret: SecretInput{Present: true, Value: "p\tw"}}, fields: "secret"},
+		{name: "remote path too long", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "none", RemotePath: "/" + strings.Repeat("d", 1024)}, fields: "remotePath"},
+		{name: "control character in the remote path", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "none", RemotePath: "/down\x01loads"}, fields: "remotePath"},
+		{name: "control character in the category", in: ClientInput{Type: "nzbget", BaseURL: "http://worker", Auth: "none", Category: "a\x01"}, fields: "category"},
 		// An update may omit the secret: the stored one is kept.
 		{name: "update keeps stored secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u"}, current: &stored},
 		{name: "update clearing a required secret", in: ClientInput{ID: "nzbget", Type: "nzbget", BaseURL: "http://worker", Auth: "basic", Username: "u", Secret: SecretInput{Present: true, Clear: true}}, current: &stored, fields: "secret"},
