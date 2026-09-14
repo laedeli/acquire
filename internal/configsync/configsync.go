@@ -106,9 +106,25 @@ func (r *Reconciler) Run(ctx context.Context) {
 	if r.gw == nil || !r.gw.Enabled() {
 		return
 	}
-	if _, err := r.Push(ctx); err != nil && ctx.Err() == nil {
-		log.Printf("acquire: configsync boot push: %v", err)
+	// A gateway that is down or too old fails every 30 s; say so when the
+	// failure starts or changes, not twice a minute forever.
+	var last string
+	report := func(what string, err error) {
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		if msg != last && ctx.Err() == nil {
+			if err != nil {
+				log.Printf("acquire: configsync %s: %v", what, err)
+			} else if last != "" {
+				log.Printf("acquire: configsync %s: recovered", what)
+			}
+		}
+		last = msg
 	}
+	_, err := r.Push(ctx)
+	report("boot push", err)
 	t := time.NewTicker(r.every)
 	defer t.Stop()
 	for {
@@ -116,9 +132,7 @@ func (r *Reconciler) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := r.Check(ctx); err != nil && ctx.Err() == nil {
-				log.Printf("acquire: configsync check: %v", err)
-			}
+			report("check", r.Check(ctx))
 		}
 	}
 }
@@ -158,7 +172,8 @@ func (r *Reconciler) Check(ctx context.Context) error {
 	if state.Revision == rev {
 		return nil
 	}
-	log.Printf("acquire: configsync gateway runs revision %d, acquire holds %d; pushing", state.Revision, rev)
+	// Push logs the revision it sends when it succeeds; a failure comes back
+	// to Run, which logs it once.
 	_, err = r.Push(ctx)
 	return err
 }
