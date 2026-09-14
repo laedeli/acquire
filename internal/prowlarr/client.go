@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -55,14 +54,6 @@ func (r Release) Source() string {
 		return r.MagnetURL
 	}
 	return r.DownloadURL
-}
-
-// Adapter maps the release protocol to the gateway adapter name.
-func (r Release) Adapter() string {
-	if r.IsUsenet() {
-		return "nzbget"
-	}
-	return "qbittorrent"
 }
 
 // IndexerInfo is the subset of an indexer definition we need to scope searches.
@@ -177,49 +168,4 @@ func (c *Client) rewriteHost(raw string) string {
 		}
 	}
 	return raw
-}
-
-// Rank orders releases best-first: when preferUsenet, all NZB releases come
-// before torrents; within a protocol, torrents sort by seeders desc then size,
-// usenet by size desc (bigger ≈ higher quality for a single title). Zero-seeder
-// torrents are dropped when at least one usenet or seeded torrent exists.
-func Rank(rs []Release, preferUsenet bool) []Release {
-	usenet, torrent := splitByProtocol(rs)
-	sort.SliceStable(usenet, func(i, j int) bool { return usenet[i].Size > usenet[j].Size })
-	sort.SliceStable(torrent, func(i, j int) bool {
-		if torrent[i].Seeders != torrent[j].Seeders {
-			return torrent[i].Seeders > torrent[j].Seeders
-		}
-		return torrent[i].Size > torrent[j].Size
-	})
-	// Drop dead (0-seed) torrents if we have any live alternative.
-	haveAlt := len(usenet) > 0 || (len(torrent) > 0 && torrent[0].Seeders > 0)
-	if haveAlt {
-		torrent = filterSeeded(torrent)
-	}
-	if preferUsenet {
-		return append(usenet, torrent...)
-	}
-	return append(torrent, usenet...)
-}
-
-func splitByProtocol(rs []Release) (usenet, torrent []Release) {
-	for _, r := range rs {
-		if r.IsUsenet() {
-			usenet = append(usenet, r)
-		} else if r.Protocol == "torrent" {
-			torrent = append(torrent, r)
-		}
-	}
-	return
-}
-
-func filterSeeded(rs []Release) []Release {
-	var out []Release
-	for _, r := range rs {
-		if r.Seeders > 0 {
-			out = append(out, r)
-		}
-	}
-	return out
 }

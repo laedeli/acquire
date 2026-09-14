@@ -1,6 +1,9 @@
-package prowlarr
+package release
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestRankNZBFirst: with preferUsenet, every NZB ranks above torrents; dead
 // (0-seed) torrents drop when a live alternative exists.
@@ -56,14 +59,23 @@ func TestRankOnlyDeadTorrents(t *testing.T) {
 	}
 }
 
-// TestAdapterAndSource maps protocol → adapter + source.
-func TestAdapterAndSource(t *testing.T) {
-	nzb := Release{Protocol: "usenet", DownloadURL: "http://p/dl?apikey=x"}
-	if nzb.Adapter() != "nzbget" || nzb.Source() != "http://p/dl?apikey=x" {
-		t.Errorf("usenet mapping wrong: %s %s", nzb.Adapter(), nzb.Source())
+// TestSource: a magnet wins for a torrent, an info hash becomes one, and an NZB
+// starts from its link.
+func TestSource(t *testing.T) {
+	nzb := Release{Protocol: "usenet", Link: "http://p/dl?apikey=x"}
+	if nzb.Source() != "http://p/dl?apikey=x" {
+		t.Errorf("usenet source: %s", nzb.Source())
 	}
-	tor := Release{Protocol: "torrent", MagnetURL: "magnet:?x", DownloadURL: "http://p/t"}
-	if tor.Adapter() != "qbittorrent" || tor.Source() != "magnet:?x" {
-		t.Errorf("torrent mapping wrong: %s %s", tor.Adapter(), tor.Source())
+	tor := Release{Protocol: "torrent", Magnet: "magnet:?x", Link: "http://p/t"}
+	if tor.Source() != "magnet:?x" {
+		t.Errorf("torrent source: %s", tor.Source())
+	}
+	hashOnly := Release{Protocol: "torrent", Title: "Example 2020", InfoHash: "ABCDEF"}
+	if src := hashOnly.Source(); !strings.HasPrefix(src, "magnet:?") || !strings.Contains(src, "urn%3Abtih%3Aabcdef") {
+		t.Errorf("info hash magnet: %s", src)
+	}
+	linked := Release{Protocol: "torrent", InfoHash: "abc", Link: "http://p/t.torrent"}
+	if linked.Source() != "http://p/t.torrent" {
+		t.Errorf("a torrent with a link and no magnet starts from the link: %s", linked.Source())
 	}
 }
