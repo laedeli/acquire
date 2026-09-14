@@ -1,16 +1,111 @@
-// Settings: the quality profile that decides which release wins.
+// Settings: how acquire searches and grabs, and the quality profile that
+// decides which release wins.
 //
-// Everything here feeds the scorer, and the scores it produces are what the
-// search and picker views show — so a change is visible immediately in the
-// "why" line next to each release.
+// Everything in the profile feeds the scorer, and the scores it produces are
+// what the search and picker views show — so a change is visible immediately
+// in the "why" line next to each release.
 import { useEffect, useState } from 'react'
-import { Badge, Button, Checkbox, Field, Input, Select, Text } from '@nalet/design-system'
+import { Badge, Button, Checkbox, Divider, Field, Input, Select, Text } from '@nalet/design-system'
 import { Save } from 'lucide-react'
-import type { Api, QualityProfile } from '../lib/api'
+import { ApiError, type Api, type QualityProfile, type SearchSettings } from '../lib/api'
 
 const RESOLUTIONS = ['2160p', '1080p', '720p', '480p']
 
 export function Settings({ api, admin }: { api: Api; admin: boolean }) {
+  return (
+    <div className="acq__settings-stack">
+      {admin && <SearchAndGrab api={api} />}
+      <QualityProfileSettings api={api} admin={admin} />
+    </div>
+  )
+}
+
+/**
+ * The search and grab policy. It used to be deployment environment only; the
+ * environment now just seeds it.
+ */
+function SearchAndGrab({ api }: { api: Api }) {
+  const [draft, setDraft] = useState<SearchSettings | null>(null)
+  const [fields, setFields] = useState<Record<string, string>>({})
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    api
+      .searchSettings()
+      .then(setDraft)
+      .catch((e) => setError(String(e.message || e)))
+  }, [api])
+
+  if (error && !draft) return <Text variant="muted">{error}</Text>
+  if (!draft) return null
+
+  async function save() {
+    if (!draft) return
+    setSaving(true)
+    setError('')
+    setFields({})
+    try {
+      setDraft(await api.saveSearchSettings(draft))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 422) setFields(e.fields)
+      setError(String((e as Error).message || e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="acq__settings">
+      <div className="acq__settings-head">
+        <div>
+          <span className="acq__mono">search and grab</span>
+          <Text variant="muted" as="div">
+            which protocol is searched first, and when acquire refuses to start a download.
+          </Text>
+        </div>
+        <Button variant="primary" loading={saving} leading={<Save size={14} />} onClick={() => void save()}>
+          {saved ? 'saved' : 'save'}
+        </Button>
+      </div>
+      {error && <Text variant="muted">{error}</Text>}
+      <div className="acq__settings-row">
+        <Field label="search first" error={fields.preferProtocol} hint="the other protocol is searched only when this finds nothing">
+          <Select
+            value={draft.preferProtocol}
+            onChange={(e) =>
+              setDraft({ ...draft, preferProtocol: e.currentTarget.value as SearchSettings['preferProtocol'] })
+            }
+            options={[
+              { label: 'usenet (NZB first)', value: 'usenet' },
+              { label: 'torrent first', value: 'torrent' },
+            ]}
+          />
+        </Field>
+        <Field label="free space floor (GB)" error={fields.storageFloorGb} hint="grabs are refused below this">
+          <Input
+            type="number"
+            value={String(draft.storageFloorGb)}
+            onChange={(e) => setDraft({ ...draft, storageFloorGb: Number(e.currentTarget.value) || 0 })}
+          />
+        </Field>
+        <Field label="downloads at once" error={fields.maxConcurrentGrabs} hint="in flight across all clients">
+          <Input
+            type="number"
+            value={String(draft.maxConcurrentGrabs)}
+            onChange={(e) => setDraft({ ...draft, maxConcurrentGrabs: Number(e.currentTarget.value) || 0 })}
+          />
+        </Field>
+      </div>
+      <Divider />
+    </div>
+  )
+}
+
+function QualityProfileSettings({ api, admin }: { api: Api; admin: boolean }) {
   const [profiles, setProfiles] = useState<QualityProfile[]>([])
   const [draft, setDraft] = useState<QualityProfile | null>(null)
   const [saving, setSaving] = useState(false)

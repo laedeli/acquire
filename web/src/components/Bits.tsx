@@ -66,8 +66,8 @@ export function ClientChips({ clients }: { clients: ClientStatus[] }) {
         if (c.paused) bits.push('paused')
         if (!c.reachable && c.error) bits.push(c.error)
         return (
-          <Badge key={c.name} tone={c.reachable ? 'green' : 'amber'} dot>
-            {c.name}
+          <Badge key={c.id || c.name} tone={c.reachable ? 'green' : 'amber'} dot>
+            {c.id || c.name}
             {bits.length ? ` · ${bits.join(' · ')}` : ''}
           </Badge>
         )

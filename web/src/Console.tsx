@@ -14,6 +14,8 @@ import { Requests } from './views/Requests'
 import { Downloads } from './views/Downloads'
 import { Discover } from './views/Discover'
 import { Indexers } from './views/Indexers'
+import { Clients } from './views/Clients'
+import { SetupBanner } from './components/SetupBanner'
 import { Missing } from './views/Missing'
 import { Series } from './views/Series'
 import { Search } from './views/Search'
@@ -24,7 +26,7 @@ const FALLBACK_POLL_MS = 30_000
 // Each surface is its own launchpad tile, so it needs its own address. Hash
 // routing keeps that working behind the ingress that strips the /acquire prefix,
 // without the server having to know where it is mounted.
-const TABS = ['requests', 'series', 'missing', 'downloads', 'search', 'discover', 'indexers', 'settings'] as const
+const TABS = ['requests', 'series', 'missing', 'downloads', 'search', 'discover', 'indexers', 'clients', 'settings'] as const
 type Tab = (typeof TABS)[number]
 
 function tabFromHash(): Tab {
@@ -67,6 +69,9 @@ export function Console({
   const [downloads, setDownloads] = useState<Download[]>([])
   const [clients, setClients] = useState<ClientStatus[]>([])
   const [indexers, setIndexers] = useState<Indexer[]>([])
+  // The stored search preference, not a guess: the indexers view explains the
+  // search order from it.
+  const [preferProtocol, setPreferProtocol] = useState<'usenet' | 'torrent'>('usenet')
 
   const api = useMemo(
     () => makeApi(apiBase, token, () => onUnauthorized?.()),
@@ -99,10 +104,15 @@ export function Console({
   }, [api])
 
   const loadSide = useCallback(async () => {
-    const [c, i] = await Promise.allSettled([api.clients(), api.indexers()])
+    const [c, i, p] = await Promise.allSettled([
+      api.clients(),
+      api.indexers(),
+      admin ? api.searchSettings() : Promise.reject(new Error('not admin')),
+    ])
     if (c.status === 'fulfilled') setClients(c.value)
     if (i.status === 'fulfilled') setIndexers(i.value)
-  }, [api])
+    if (p.status === 'fulfilled') setPreferProtocol(p.value.preferProtocol)
+  }, [api, admin])
 
   useEffect(() => {
     if (!token) return
@@ -154,12 +164,17 @@ export function Console({
           { value: 'downloads', label: `downloads${active ? ` (${active})` : ''}` },
           { value: 'search', label: 'search' },
           { value: 'discover', label: 'discover' },
-          { value: 'indexers', label: 'indexers' },
+          { value: 'indexers', label: 'search sources' },
+          { value: 'clients', label: 'clients' },
           { value: 'settings', label: 'settings' },
         ]}
       />
 
       <main className="acq__main">
+        {/* Requests and search are where a missing setup step bites. */}
+        {(tab === 'requests' || tab === 'search') && (
+          <SetupBanner api={api} admin={admin} onNavigate={setTab} />
+        )}
         {tab === 'requests' && (
           <Requests
             api={api}
@@ -197,7 +212,8 @@ export function Console({
             refresh={() => void loadLists()}
           />
         )}
-        {tab === 'indexers' && <Indexers rows={indexers} preferUsenet />}
+        {tab === 'indexers' && <Indexers rows={indexers} preferUsenet={preferProtocol === 'usenet'} />}
+        {tab === 'clients' && <Clients api={api} admin={admin} />}
         {tab === 'settings' && <Settings api={api} admin={admin} />}
       </main>
     </div>

@@ -45,6 +45,8 @@ export interface Download {
 }
 
 export interface ClientStatus {
+  id?: string
+  type?: string
   name: string
   reachable: boolean
   error?: string
@@ -106,6 +108,118 @@ export interface QualityProfile {
   }
 }
 
+// ── configuration ───────────────────────────────────────────────────────────
+
+/** A secret is write-only: the API only says whether one is stored. */
+export interface SecretState {
+  set: boolean
+  updatedAt: string | null
+}
+
+export interface DownloadClient {
+  id: string
+  type: string
+  baseUrl: string
+  auth: 'basic' | 'token' | 'none'
+  username: string
+  secret: SecretState
+  protocols: string[]
+  category: string
+  remotePath: string
+  localPath: string
+  priority: number
+  enabled: boolean
+  revision: number
+  createdAt: string
+  updatedAt: string
+  status?: ClientStatus
+  applyError?: string
+}
+
+export interface SyncState {
+  configured: boolean
+  checked: boolean
+  reachable: boolean
+  configApi: boolean
+  revision: number
+  gatewayRevision: number
+  applied: string[] | null
+  errors: { id: string; message: string }[] | null
+  lastError?: string
+}
+
+export interface ClientList {
+  revision: number
+  keyConfigured: boolean
+  sync: SyncState
+  clients: DownloadClient[]
+}
+
+export interface ClientType {
+  type: string
+  protocols: string[]
+  auth: string[]
+  acceptsPayload: boolean
+  supportsSavePath: boolean
+  canPause: boolean
+}
+
+/**
+ * What the console writes. secret: omit to keep the stored one, a string to
+ * replace it, {clear:true} to remove it.
+ */
+export interface ClientInput {
+  id?: string
+  type?: string
+  baseUrl: string
+  auth: string
+  username: string
+  secret?: string | { clear: true }
+  protocols: string[]
+  category: string
+  remotePath: string
+  localPath: string
+  priority: number
+  enabled: boolean
+}
+
+export interface ClientWriteResult extends DownloadClient {
+  sync: { applied: boolean; error?: string }
+}
+
+export interface ClientTestResult {
+  reachable: boolean
+  version: string
+  error: string
+  status?: ClientStatus
+}
+
+export interface SearchSettings {
+  preferProtocol: 'usenet' | 'torrent'
+  storageFloorGb: number
+  maxConcurrentGrabs: number
+  revision: number
+  updatedAt?: string
+}
+
+export interface SetupSection {
+  key: string
+  state: 'ready' | 'needs-setup' | 'degraded'
+  summary: string
+}
+
+export interface SetupStatus {
+  state: 'ready' | 'needs-setup' | 'degraded'
+  sections: SetupSection[]
+}
+
+export interface FieldError {
+  entity: string
+  id: string
+  field: string
+  message: string
+}
+
 // Where the API lives depends on how the console is running: standalone it sits
 // next to the SPA, embedded it is reached through the portal's proxy. The host
 // tells us, so nothing here assumes a mount point.
@@ -117,6 +231,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Per-field problems from a 422, keyed by field name. */
+    public fields: Record<string, string> = {},
   ) {
     super(message)
   }
@@ -136,10 +252,20 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
       onUnauthorized()
       throw new ApiError(401, 'session expired')
     }
+    if (res.status === 422) {
+      // Validation: map the field list onto the form rather than showing JSON.
+      const body = (await res.json().catch(() => ({}))) as { fieldErrors?: FieldError[] }
+      const fields: Record<string, string> = {}
+      for (const f of body.fieldErrors ?? []) fields[f.field] = fields[f.field] || f.message
+      const first = body.fieldErrors?.[0]
+      throw new ApiError(422, first ? `${first.field}: ${first.message}` : 'invalid', fields)
+    }
     if (!res.ok) throw new ApiError(res.status, (await res.text()) || res.statusText)
     if (res.status === 204) return undefined as T
     return (await res.json()) as T
   }
+
+  const ifMatch = (revision: number) => ({ 'If-Match': String(revision) })
 
   return {
     wanted: () => call<Wanted[]>('wanted'),
@@ -157,10 +283,11 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
     remove: (id: string) => call<void>('wanted/' + encodeURIComponent(id), { method: 'DELETE' }),
     autograb: (id: string) =>
       call<unknown>('wanted/' + encodeURIComponent(id) + '/autograb', { method: 'POST' }),
+    // No client named: the server routes by what the source turns out to be.
     grabMagnet: (id: string, source: string) =>
       call<unknown>('wanted/' + encodeURIComponent(id) + '/grab', {
         method: 'POST',
-        body: JSON.stringify({ source, adapter: 'qbittorrent' }),
+        body: JSON.stringify({ source }),
       }),
     releases: (id: string) => call<Candidate[]>('wanted/' + encodeURIComponent(id) + '/releases'),
     pick: (id: string, c: Candidate) =>
@@ -197,6 +324,36 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
         { method: 'POST' },
       ),
     config: () => call<Config>('config'),
+    // Configuration (admin). Writes send the revision they were based on.
+    setup: () => call<SetupStatus>('setup'),
+    downloadClients: () => call<ClientList>('download-clients'),
+    clientTypes: () => call<ClientType[]>('download-clients/types'),
+    createClient: (c: ClientInput) =>
+      call<ClientWriteResult>('download-clients', { method: 'POST', body: JSON.stringify(c) }),
+    updateClient: (id: string, c: ClientInput, revision: number) =>
+      call<ClientWriteResult>('download-clients/' + encodeURIComponent(id), {
+        method: 'PUT',
+        headers: ifMatch(revision),
+        body: JSON.stringify(c),
+      }),
+    deleteClient: (id: string, revision: number) =>
+      call<{ sync: { applied: boolean; error?: string } }>('download-clients/' + encodeURIComponent(id), {
+        method: 'DELETE',
+        headers: ifMatch(revision),
+      }),
+    testClient: (c: ClientInput) =>
+      call<ClientTestResult>('download-clients/test', { method: 'POST', body: JSON.stringify(c) }),
+    searchSettings: () => call<SearchSettings>('settings/search'),
+    saveSearchSettings: (s: SearchSettings) =>
+      call<SearchSettings>('settings/search', {
+        method: 'PUT',
+        headers: ifMatch(s.revision),
+        body: JSON.stringify({
+          preferProtocol: s.preferProtocol,
+          storageFloorGb: s.storageFloorGb,
+          maxConcurrentGrabs: s.maxConcurrentGrabs,
+        }),
+      }),
     // The WANT model's read side. `missing` is the backlog: monitored, aired,
     // still wanted — including rows in search backoff, flagged rather than
     // hidden, because a backlog view that omits everything failing is the least

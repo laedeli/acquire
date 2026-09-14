@@ -1,4 +1,4 @@
-// Indexers: what acquire searches, and in which order it prefers them.
+// Search sources: what acquire searches, and in which order it prefers them.
 //
 // Read-only for now — the indexer definitions still live in the external search
 // backend. When the engine moves in-process this view gains add/edit/test.

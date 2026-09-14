@@ -160,6 +160,12 @@ body {
   opacity: 0.55;
 }
 
+/* Settings: the search and grab block above the quality profile. */
+.acq__settings-stack {
+  display: grid;
+  gap: var(--s-5);
+}
+
 /* Settings form. */
 .acq__settings {
   display: grid;
@@ -189,4 +195,40 @@ body {
   display: flex;
   align-items: center;
   gap: var(--s-2);
+}
+
+/* Setup banner: what still stands between this install and a working grab. */
+.acq__banner {
+  display: grid;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.acq__banner-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.acq__banner-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) 1fr auto;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+@media (max-width: 720px) {
+  .acq__banner-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dialog forms (download clients). */
+.acq__form {
+  display: grid;
+  gap: var(--s-3);
 }
