@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -99,13 +101,31 @@ func New(baseURL string, tokens *TokenSource) *Client {
 func (c *Client) Enabled() bool { return c != nil && c.BaseURL != "" }
 
 // AddRequest mirrors the gateway's POST /api/v1/downloads body.
+//
+// Adapter and Client both name the client id: a gateway with runtime client
+// configuration reads either, an older one only adapter, so both are sent.
+// With PayloadB64 the gateway uploads the NZB or .torrent content itself and
+// Source stays empty — the link that carried a search source's credential never
+// leaves acquire.
 type AddRequest struct {
 	Adapter      string `json:"adapter"`
-	Source       string `json:"source"`
+	Client       string `json:"client,omitempty"`
+	Source       string `json:"source,omitempty"`
 	Title        string `json:"title"`
-	SavePath     string `json:"save_path"`
+	SavePath     string `json:"save_path,omitempty"`
 	WantedItemID string `json:"wanted_item_id"`
+	PayloadB64   string `json:"payload_b64,omitempty"`
+	PayloadName  string `json:"payload_name,omitempty"`
+	Category     string `json:"category,omitempty"`
 }
+
+// ErrUnknownClient means the gateway does not know the client an add named —
+// typically because it restarted and has not been sent the configuration yet.
+var ErrUnknownClient = errors.New("the download gateway does not know this client")
+
+// ErrNoConfigAPI means the gateway predates runtime client configuration, or
+// runs without the settings that enable it.
+var ErrNoConfigAPI = errors.New("the download gateway does not offer the configuration API")
 
 // AddResult is the gateway's 202 response.
 type AddResult struct {
@@ -134,6 +154,10 @@ func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		return AddResult{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return AddResult{}, fmt.Errorf("%w: %s", ErrUnknownClient, strings.TrimSpace(string(b)))
+	}
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return AddResult{}, fmt.Errorf("gateway add %d: %s", resp.StatusCode, string(b))
@@ -168,6 +192,8 @@ type Job struct {
 
 // ClientStatus is one download client's health + aggregate throughput.
 type ClientStatus struct {
+	ID        string            `json:"id,omitempty"`
+	Type      string            `json:"type,omitempty"`
 	Name      string            `json:"name"`
 	Reachable bool              `json:"reachable"`
 	Error     string            `json:"error,omitempty"`
@@ -261,4 +287,169 @@ func (c *Client) do(ctx context.Context, method, path string) error {
 	}
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("gateway %s %d: %s", path, resp.StatusCode, string(b))
+}
+
+// ── runtime client configuration (/api/v1/config/*) ─────────────────────────
+
+// ClientType is one adapter type the gateway has compiled in.
+type ClientType struct {
+	Type             string   `json:"type"`
+	Protocols        []string `json:"protocols"`
+	Auth             []string `json:"auth"`
+	AcceptsPayload   bool     `json:"acceptsPayload"`
+	SupportsSavePath bool     `json:"supportsSavePath"`
+	CanPause         bool     `json:"canPause"`
+}
+
+// ConfigClient is one client as acquire sends it: the only place a decrypted
+// secret exists outside a single request. It redacts itself in every textual
+// form, so a stray log line cannot print the credential.
+type ConfigClient struct {
+	ID        string   `json:"id"`
+	Type      string   `json:"type"`
+	BaseURL   string   `json:"baseUrl"`
+	Auth      string   `json:"auth"`
+	Username  string   `json:"username"`
+	Secret    string   `json:"secret"`
+	Category  string   `json:"category"`
+	SavePath  string   `json:"savePath"`
+	Protocols []string `json:"protocols"`
+}
+
+func (c ConfigClient) String() string {
+	return fmt.Sprintf("{id:%s type:%s baseUrl:%s auth:%s secret:%s}", c.ID, c.Type, c.BaseURL, c.Auth, redacted(c.Secret))
+}
+
+// GoString keeps %#v from printing the secret field.
+func (c ConfigClient) GoString() string { return "gateway.ConfigClient" + c.String() }
+
+// LogValue keeps slog from printing the secret field.
+func (c ConfigClient) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("id", c.ID), slog.String("type", c.Type), slog.String("secret", redacted(c.Secret)))
+}
+
+func redacted(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "[redacted]"
+}
+
+// ConfigClientView is a client as the gateway reports it: never a secret.
+type ConfigClientView struct {
+	ID        string   `json:"id"`
+	Type      string   `json:"type"`
+	BaseURL   string   `json:"baseUrl"`
+	Auth      string   `json:"auth"`
+	Username  string   `json:"username"`
+	Category  string   `json:"category"`
+	SavePath  string   `json:"savePath"`
+	Protocols []string `json:"protocols"`
+	Source    string   `json:"source"` // api | env
+	SecretSet bool     `json:"secretSet"`
+}
+
+// ConfigState is GET /api/v1/config/clients.
+type ConfigState struct {
+	Revision int64              `json:"revision"`
+	Clients  []ConfigClientView `json:"clients"`
+}
+
+// ConfigPut is the PUT /api/v1/config/clients body: the complete set of
+// api-sourced clients.
+type ConfigPut struct {
+	Revision int64          `json:"revision"`
+	Clients  []ConfigClient `json:"clients"`
+}
+
+// ApplyError is one client the gateway could not apply.
+type ApplyError struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+}
+
+// ApplyResult is the PUT response.
+type ApplyResult struct {
+	Revision int64        `json:"revision"`
+	Applied  []string     `json:"applied"`
+	Errors   []ApplyError `json:"errors"`
+}
+
+// TestResult is POST /api/v1/config/clients/test.
+type TestResult struct {
+	Reachable bool          `json:"reachable"`
+	Version   string        `json:"version"`
+	Error     string        `json:"error"`
+	Status    *ClientStatus `json:"status,omitempty"`
+}
+
+// ConfigTypes lists the client types the gateway can run.
+func (c *Client) ConfigTypes(ctx context.Context) ([]ClientType, error) {
+	var out []ClientType
+	if err := c.configJSON(ctx, http.MethodGet, "/api/v1/config/types", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ConfigClients reports the revision and clients the gateway is running.
+func (c *Client) ConfigClients(ctx context.Context) (ConfigState, error) {
+	var out ConfigState
+	err := c.configJSON(ctx, http.MethodGet, "/api/v1/config/clients", nil, &out)
+	return out, err
+}
+
+// PutConfigClients replaces every api-sourced client on the gateway.
+func (c *Client) PutConfigClients(ctx context.Context, body ConfigPut) (ApplyResult, error) {
+	if body.Clients == nil {
+		body.Clients = []ConfigClient{}
+	}
+	var out ApplyResult
+	err := c.configJSON(ctx, http.MethodPut, "/api/v1/config/clients", body, &out)
+	return out, err
+}
+
+// TestClient asks the gateway to reach a client without registering it.
+func (c *Client) TestClient(ctx context.Context, cc ConfigClient) (TestResult, error) {
+	var out TestResult
+	err := c.configJSON(ctx, http.MethodPost, "/api/v1/config/clients/test", cc, &out)
+	return out, err
+}
+
+// configJSON is one call to the configuration API. A 404 there means the API
+// itself is absent — an older gateway, or one without ALLOWED_CLIENTS — and is
+// reported as ErrNoConfigAPI so callers can say so instead of "not found".
+func (c *Client) configJSON(ctx context.Context, method, path string, in, out any) error {
+	if !c.Enabled() {
+		return fmt.Errorf("download gateway not configured")
+	}
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, body)
+	if err != nil {
+		return err
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	c.authorize(ctx, req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return ErrNoConfigAPI
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("gateway %s %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 }

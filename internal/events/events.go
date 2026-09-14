@@ -62,12 +62,16 @@ type ItemEvent struct {
 // read. One shape covers started/progress/completed/failed: the fields a given
 // kind doesn't carry simply stay zero.
 type DownloadEvent struct {
-	ClientID string   `json:"client_id"`
-	Adapter  string   `json:"adapter"`
-	WantedID string   `json:"wanted_item_id"`
-	Title    string   `json:"title"`
-	Files    []string `json:"files"`
-	Error    string   `json:"error"`
+	ClientID string `json:"client_id"`
+	// Adapter is the download client's configured id; ClientType is its
+	// adapter type (nzbget, qbittorrent, …). Before runtime configuration the
+	// two were the same word, which is why the id field kept its old name.
+	Adapter    string   `json:"adapter"`
+	ClientType string   `json:"client_type"`
+	WantedID   string   `json:"wanted_item_id"`
+	Title      string   `json:"title"`
+	Files      []string `json:"files"`
+	Error      string   `json:"error"`
 
 	// Progress telemetry. SpeedBps is a plain number because 0 means idle;
 	// size/eta stay pointers because those can genuinely be unknown.

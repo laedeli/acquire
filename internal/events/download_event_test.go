@@ -61,3 +61,16 @@ func TestTopicsIncludeProgressAndStarted(t *testing.T) {
 		t.Errorf("started topic = %q", tp.Started)
 	}
 }
+
+// With runtime client configuration "adapter" carries the client's id, which
+// need not be a type name; the type travels alongside.
+func TestDecodeClientIDAndType(t *testing.T) {
+	var ev DownloadEvent
+	raw := `{"client_id":"42","adapter":"usenet-backup","client_type":"nzbget","files":["/downloads/x/x.mkv"]}`
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ev.Adapter != "usenet-backup" || ev.ClientType != "nzbget" {
+		t.Fatalf("client id/type lost: %+v", ev)
+	}
+}
