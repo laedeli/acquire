@@ -64,6 +64,7 @@ export interface Candidate {
   size: number
   seeders: number
   adapter: string
+  /** The release link with its credentials removed — for display only. */
   source: string
   reason: string
   best: boolean
@@ -72,6 +73,16 @@ export interface Candidate {
   resolution: string
   codec: string
   sourceType: string
+  indexerId?: number
+  guid?: string
+  /** Opaque reference a grab sends back; the server resolves the real link. */
+  release?: string
+}
+
+/** A search's answer: what arrived, and which sources did not answer. */
+export interface SearchResult {
+  candidates: Candidate[]
+  incomplete: string[]
 }
 
 export interface DiscoverHit {
@@ -84,12 +95,6 @@ export interface DiscoverHit {
   inLibrary: boolean
 }
 
-export interface Indexer {
-  id: number
-  name: string
-  protocol: string
-  enabled: boolean
-}
 
 export interface QualityProfile {
   id: string
@@ -194,6 +199,96 @@ export interface ClientTestResult {
   status?: ClientStatus
 }
 
+// ── search sources ──────────────────────────────────────────────────────────
+
+export interface Categories {
+  movie: number[]
+  tv: number[]
+}
+
+export interface CapsCategory {
+  id: number
+  name: string
+  subcats?: CapsCategory[]
+}
+
+export interface SearchMode {
+  available: boolean
+  params: string[]
+}
+
+export interface Caps {
+  server: { title?: string; version?: string }
+  limits: { max?: number; default?: number }
+  search: SearchMode
+  tvSearch: SearchMode
+  movieSearch: SearchMode
+  categories: CapsCategory[]
+}
+
+export interface Source {
+  id: number
+  name: string
+  protocol: 'usenet' | 'torrent'
+  baseUrl: string
+  apiPath: string
+  apiKey: SecretState
+  categories: Categories
+  priority: number
+  enabled: boolean
+  queryLimitDay: number | null
+  grabLimitDay: number | null
+  /** Spent today (UTC). */
+  usage: { queries: number; grabs: number }
+  caps: Caps | null
+  capsAt: string | null
+  health: {
+    state: 'ok' | 'backoff' | 'limit' | 'failing' | 'disabled' | 'key'
+    detail?: string
+    failures: number
+    backoffUntil: string | null
+    lastError: string
+  }
+  revision: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SourceList {
+  keyConfigured: boolean
+  sources: Source[]
+}
+
+/**
+ * What the console writes. apiKey: omit to keep the stored one, a string to
+ * replace it, {clear:true} to remove it. A limit of null means no limit.
+ */
+export interface SourceInput {
+  id?: number
+  name: string
+  protocol: string
+  baseUrl: string
+  apiPath: string
+  apiKey?: string | { clear: true }
+  categories: Categories
+  priority: number
+  enabled: boolean
+  queryLimitDay: number | null
+  grabLimitDay: number | null
+}
+
+export interface SourceWriteResult extends Source {
+  capsError?: string
+}
+
+export interface SourceTestResult {
+  ok: boolean
+  error?: string
+  items: number
+  caps?: Caps
+  capsError?: string
+}
+
 export interface SearchSettings {
   preferProtocol: 'usenet' | 'torrent'
   storageFloorGb: number
@@ -289,7 +384,7 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
         method: 'POST',
         body: JSON.stringify({ source }),
       }),
-    releases: (id: string) => call<Candidate[]>('wanted/' + encodeURIComponent(id) + '/releases'),
+    releases: (id: string) => call<SearchResult>('wanted/' + encodeURIComponent(id) + '/releases'),
     pick: (id: string, c: Candidate) =>
       call<unknown>('wanted/' + encodeURIComponent(id) + '/pick', {
         method: 'POST',
@@ -298,9 +393,8 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
     discover: (q: string) => call<DiscoverHit[]>('discover?q=' + encodeURIComponent(q)),
     downloads: () => call<Download[]>('downloads'),
     clients: () => call<ClientStatus[]>('clients'),
-    indexers: () => call<Indexer[]>('indexers'),
     search: (q: string, indexerIds: number[] = []) =>
-      call<Candidate[]>(
+      call<SearchResult>(
         'search?q=' +
           encodeURIComponent(q) +
           (indexerIds.length ? '&indexers=' + indexerIds.join(',') : ''),
@@ -343,6 +437,22 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
       }),
     testClient: (c: ClientInput) =>
       call<ClientTestResult>('download-clients/test', { method: 'POST', body: JSON.stringify(c) }),
+    sources: () => call<SourceList>('indexers'),
+    createSource: (src: SourceInput) =>
+      call<SourceWriteResult>('indexers', { method: 'POST', body: JSON.stringify(src) }),
+    updateSource: (id: number, src: SourceInput, revision: number) =>
+      call<SourceWriteResult>('indexers/' + id, {
+        method: 'PUT',
+        headers: ifMatch(revision),
+        body: JSON.stringify(src),
+      }),
+    deleteSource: (id: number, revision: number) =>
+      call<void>('indexers/' + id, { method: 'DELETE', headers: ifMatch(revision) }),
+    /** Test an unsaved source (or an edit; with id and no key the stored key is used). */
+    testSource: (src: SourceInput) =>
+      call<SourceTestResult>('indexers/test', { method: 'POST', body: JSON.stringify(src) }),
+    /** Test a saved source as stored; the outcome becomes its health. */
+    testStoredSource: (id: number) => call<SourceTestResult>('indexers/' + id + '/test', { method: 'POST' }),
     searchSettings: () => call<SearchSettings>('settings/search'),
     saveSearchSettings: (s: SearchSettings) =>
       call<SearchSettings>('settings/search', {

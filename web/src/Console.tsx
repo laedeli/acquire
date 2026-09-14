@@ -5,7 +5,7 @@ import {
   type ClientStatus,
   type Config,
   type Download,
-  type Indexer,
+  type Source,
   type Wanted,
 } from './lib/api'
 import { debounce, useEventStream } from './lib/stream'
@@ -68,9 +68,9 @@ export function Console({
   const [wanted, setWanted] = useState<Wanted[]>([])
   const [downloads, setDownloads] = useState<Download[]>([])
   const [clients, setClients] = useState<ClientStatus[]>([])
-  const [indexers, setIndexers] = useState<Indexer[]>([])
-  // The stored search preference, not a guess: the indexers view explains the
-  // search order from it.
+  const [sources, setSources] = useState<Source[]>([])
+  // The stored search preference, not a guess: the search sources view explains
+  // the search order from it.
   const [preferProtocol, setPreferProtocol] = useState<'usenet' | 'torrent'>('usenet')
 
   const api = useMemo(
@@ -106,11 +106,11 @@ export function Console({
   const loadSide = useCallback(async () => {
     const [c, i, p] = await Promise.allSettled([
       api.clients(),
-      api.indexers(),
+      admin ? api.sources() : Promise.reject(new Error('not admin')),
       admin ? api.searchSettings() : Promise.reject(new Error('not admin')),
     ])
     if (c.status === 'fulfilled') setClients(c.value)
-    if (i.status === 'fulfilled') setIndexers(i.value)
+    if (i.status === 'fulfilled') setSources(i.value.sources)
     if (p.status === 'fulfilled') setPreferProtocol(p.value.preferProtocol)
   }, [api, admin])
 
@@ -206,13 +206,15 @@ export function Console({
         {tab === 'search' && (
           <Search
             api={api}
-            indexers={indexers}
+            sources={sources}
             wanted={wanted}
             admin={admin}
             refresh={() => void loadLists()}
           />
         )}
-        {tab === 'indexers' && <Indexers rows={indexers} preferUsenet={preferProtocol === 'usenet'} />}
+        {tab === 'indexers' && (
+          <Indexers api={api} admin={admin} preferProtocol={preferProtocol} onChanged={() => void loadSide()} />
+        )}
         {tab === 'clients' && <Clients api={api} admin={admin} />}
         {tab === 'settings' && <Settings api={api} admin={admin} />}
       </main>

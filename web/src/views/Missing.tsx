@@ -71,7 +71,7 @@ export function Missing({ api }: { api: Api }) {
         if (!r.searchable)
           return (
             <Badge tone="amber">
-              no indexer id — text search only
+              no id a source accepts — text search only
             </Badge>
           )
         if (r.backoffUntil && new Date(r.backoffUntil) > new Date())

@@ -1,7 +1,8 @@
-// Manual search: query the indexers directly, scoped to whichever ones you
+// Manual search: query the search sources directly, scoped to whichever ones you
 // choose, and grab a release without waiting for a request to exist. Results are
 // scored by the active quality profile, so what would win automatically is
-// marked — and what the profile refuses is shown, greyed, with the reason.
+// marked — and what the profile refuses is shown, greyed, with the reason. A
+// search answers within its deadline; sources that did not answer are named.
 import { useState } from 'react'
 import {
   Badge,
@@ -13,18 +14,23 @@ import {
   type TableColumn,
 } from '@nalet/design-system'
 import { Search as SearchIcon } from 'lucide-react'
-import type { Api, Candidate, Indexer, Wanted } from '../lib/api'
+import type { Api, Candidate, Source, Wanted } from '../lib/api'
 import { bytes } from '../lib/format'
+
+/** A candidate's identity: its sealed release reference, or the link itself. */
+export function candidateKey(c: Candidate): string {
+  return c.release || c.source
+}
 
 export function Search({
   api,
-  indexers,
+  sources,
   wanted,
   admin,
   refresh,
 }: {
   api: Api
-  indexers: Indexer[]
+  sources: Source[]
   wanted: Wanted[]
   admin: boolean
   refresh: () => void
@@ -32,12 +38,13 @@ export function Search({
   const [q, setQ] = useState('')
   const [scope, setScope] = useState<Set<number>>(new Set())
   const [rows, setRows] = useState<Candidate[] | null>(null)
+  const [incomplete, setIncomplete] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
 
-  const enabled = indexers.filter((i) => i.enabled)
+  const enabled = sources.filter((i) => i.enabled)
 
   async function run() {
     if (!q.trim()) return
@@ -45,7 +52,9 @@ export function Search({
     setError('')
     setNote('')
     try {
-      setRows(await api.search(q.trim(), [...scope]))
+      const res = await api.search(q.trim(), [...scope])
+      setRows(res.candidates)
+      setIncomplete(res.incomplete)
     } catch (e) {
       setError(String((e as Error).message || e))
     } finally {
@@ -61,7 +70,7 @@ export function Search({
         (w.status === 'pending' || w.status === 'failed') &&
         c.title.toLowerCase().includes(w.title.toLowerCase().slice(0, 12)),
     )
-    setBusy(c.source)
+    setBusy(candidateKey(c))
     setError('')
     try {
       await api.grabFound(c, { wantedId: match?.id, title: q.trim() })
@@ -107,7 +116,7 @@ export function Search({
         </Badge>
       ),
     },
-    { key: 'indexer', header: 'indexer' },
+    { key: 'indexer', header: 'source' },
     { key: 'size', header: 'size', align: 'right', render: (c) => bytes(c.size) },
     {
       key: 'seeders',
@@ -131,7 +140,7 @@ export function Search({
           <Button
             size="sm"
             variant={c.best ? 'primary' : 'default'}
-            loading={busy === c.source}
+            loading={busy === candidateKey(c)}
             onClick={() => void grab(c)}
           >
             grab
@@ -145,7 +154,7 @@ export function Search({
       <div className="acq__searchbar">
         <Input
           value={q}
-          placeholder="search all indexers — a title, a release name, anything…"
+          placeholder="search all sources — a title, a release name, anything…"
           onChange={(e) => setQ(e.currentTarget.value)}
           onKeyDown={(e) => e.key === 'Enter' && void run()}
         />
@@ -156,7 +165,7 @@ export function Search({
 
       <div className="acq__scope">
         <Text variant="muted" as="span">
-          {scope.size ? `${scope.size} indexer(s) selected` : 'all enabled indexers'} —
+          {scope.size ? `${scope.size} source(s) selected` : 'all enabled sources'} —
           tick to narrow the search:
         </Text>
         <div className="acq__scope-list">
@@ -173,11 +182,16 @@ export function Search({
 
       {error && <Text variant="muted">{error}</Text>}
       {note && <Text variant="muted">{note}</Text>}
+      {rows && incomplete.length > 0 && (
+        <Text variant="muted">
+          incomplete — no answer from {incomplete.join(', ')}. they may be slow, backing off or out of allowance.
+        </Text>
+      )}
       {rows && (
         <Table
           columns={columns}
           rows={rows}
-          rowKey={(c) => c.source}
+          rowKey={candidateKey}
           dense
           empty={<Text variant="muted">nothing found.</Text>}
         />

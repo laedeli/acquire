@@ -138,7 +138,7 @@ body {
   }
 }
 
-/* Manual search: indexer scoping + rejected rows. */
+/* Manual search: source scoping + rejected rows. */
 .acq__scope {
   margin-bottom: var(--s-3);
 }
