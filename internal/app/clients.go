@@ -26,11 +26,13 @@ var clientIDRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 
 // builtinClientTypes is what acquire assumes when the gateway cannot be asked.
 // It only keeps the console usable while the gateway is down; validation
-// prefers the gateway's own answer whenever there is one.
+// prefers the gateway's own answer whenever there is one. It must say exactly
+// what the gateway's catalog says, or a write accepted while the gateway is up
+// is refused while it is down (and the other way round).
 var builtinClientTypes = []gateway.ClientType{
-	{Type: "nzbget", Protocols: []string{"usenet"}, Auth: []string{"basic", "none"}, AcceptsPayload: true, SupportsSavePath: true, CanPause: true},
+	{Type: "nzbget", Protocols: []string{"usenet"}, Auth: []string{"basic", "none"}, AcceptsPayload: true, SupportsSavePath: false, CanPause: true},
 	{Type: "qbittorrent", Protocols: []string{"torrent"}, Auth: []string{"basic", "none"}, AcceptsPayload: true, SupportsSavePath: true, CanPause: true},
-	{Type: "odownloader", Protocols: []string{"http"}, Auth: []string{"token"}, AcceptsPayload: false, SupportsSavePath: false, CanPause: false},
+	{Type: "odownloader", Protocols: []string{"http"}, Auth: []string{"token", "none"}, AcceptsPayload: false, SupportsSavePath: false, CanPause: false},
 }
 
 // SecretInput is a secret field in a write. Omitted keeps the stored value, a

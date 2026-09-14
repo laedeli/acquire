@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/laedeli/acquire/internal/endpoint"
+	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/store"
 )
 
@@ -244,13 +246,31 @@ func TestSearchSettingsValidation(t *testing.T) {
 	}
 }
 
-// The builtin types must stay in step with the contract's protocol mapping.
-func TestBuiltinTypesMatchTheContract(t *testing.T) {
-	want := map[string]string{"nzbget": "usenet", "qbittorrent": "torrent", "odownloader": "http"}
-	for typ, proto := range want {
-		ct, ok := findType(builtinClientTypes, typ)
-		if !ok || len(ct.Protocols) != 1 || ct.Protocols[0] != proto {
-			t.Errorf("%s: %+v", typ, ct)
+// The builtin types must say what the gateway's catalog says
+// (GET /api/v1/config/types, documented in the gateway's README), field for
+// field: validation runs against them whenever the gateway cannot be asked.
+func TestBuiltinTypesMatchTheGatewayCatalog(t *testing.T) {
+	want := []gateway.ClientType{
+		{Type: "nzbget", Protocols: []string{"usenet"}, Auth: []string{"basic", "none"}, AcceptsPayload: true, SupportsSavePath: false, CanPause: true},
+		{Type: "odownloader", Protocols: []string{"http"}, Auth: []string{"token", "none"}, AcceptsPayload: false, SupportsSavePath: false, CanPause: false},
+		{Type: "qbittorrent", Protocols: []string{"torrent"}, Auth: []string{"basic", "none"}, AcceptsPayload: true, SupportsSavePath: true, CanPause: true},
+	}
+	if len(builtinClientTypes) != len(want) {
+		t.Fatalf("builtin types = %d, the gateway has %d", len(builtinClientTypes), len(want))
+	}
+	for _, w := range want {
+		got, ok := findType(builtinClientTypes, w.Type)
+		if !ok || !reflect.DeepEqual(got, w) {
+			t.Errorf("%s: builtin %+v, gateway %+v", w.Type, got, w)
 		}
+	}
+
+	// A body the gateway accepts must not be refused just because it is down.
+	s := testService()
+	_, fe := s.validateClient(context.Background(),
+		ClientInput{Type: "odownloader", BaseURL: "http://worker:9666", Auth: "none"},
+		builtinClientTypes, nil, nil)
+	if len(fe) > 0 {
+		t.Errorf("odownloader without authentication refused by the fallback: %+v", fe)
 	}
 }
