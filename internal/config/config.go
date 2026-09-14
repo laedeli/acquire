@@ -34,12 +34,9 @@ type Config struct {
 	TMDBAPIKey   string // TMDB_API_KEY
 	TMDBLanguage string // TMDB_LANGUAGE (default en-US)
 
-	// Indexer search backend (an aggregator you run). Blank -> auto-grab off.
-	// INDEXER_URL / INDEXER_API_KEY are the current names; the PROWLARR_*
-	// spellings are still read so an existing deployment keeps working.
-	IndexerURL    string // INDEXER_URL (PROWLARR_URL), e.g. http://prowlarr:9696
-	IndexerAPIKey string // INDEXER_API_KEY (PROWLARR_API_KEY)
-	PreferUsenet  bool   // ACQUIRE_PREFER (default "usenet" -> NZB-first)
+	// Search sources are configured in the console, not here. The protocol
+	// preference only seeds the stored search settings on first boot.
+	PreferUsenet bool // ACQUIRE_PREFER (default "usenet" -> NZB-first)
 
 	// Kafka (shared cluster, mTLS). Prefix is the tenant namespace.
 	KafkaBrokers     string // KAFKA_BROKERS
@@ -97,9 +94,7 @@ func Load() Config {
 		TMDBAPIKey:   env("TMDB_API_KEY"),
 		TMDBLanguage: def("en-US", "TMDB_LANGUAGE"),
 
-		IndexerURL:    firstEnv("INDEXER_URL", "PROWLARR_URL"),
-		IndexerAPIKey: firstEnv("INDEXER_API_KEY", "PROWLARR_API_KEY"),
-		PreferUsenet:  def("usenet", "ACQUIRE_PREFER") == "usenet",
+		PreferUsenet: def("usenet", "ACQUIRE_PREFER") == "usenet",
 
 		KafkaBrokers:     env("KAFKA_BROKERS"),
 		KafkaCertDir:     def("/etc/kafka-cert", "KAFKA_CERT_DIR"),
@@ -140,15 +135,20 @@ func splitList(v string) []string {
 	return out
 }
 
-// firstEnv returns the first of names that is set, so a renamed variable can be
-// introduced without breaking a deployment still setting the old one.
-func firstEnv(names ...string) string {
-	for _, n := range names {
-		if v := env(n); v != "" {
-			return v
+// retiredSearchEnv are the variables that pointed acquire at an external search
+// aggregator. Search sources now live in acquire's own configuration.
+var retiredSearchEnv = []string{"INDEXER_URL", "INDEXER_API_KEY", "PROWLARR_URL", "PROWLARR_API_KEY"}
+
+// RetiredSearchEnv names the retired search variables that are still set, so
+// the service can say once that they no longer do anything.
+func RetiredSearchEnv() []string {
+	var set []string
+	for _, n := range retiredSearchEnv {
+		if env(n) != "" {
+			set = append(set, n)
 		}
 	}
-	return ""
+	return set
 }
 
 // StorageFloorBytes is the free space below which acquire refuses to grab.

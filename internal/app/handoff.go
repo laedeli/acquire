@@ -44,7 +44,7 @@ type handoff struct {
 	// Provenance recorded with the grab.
 	ReleaseTitle string
 	Indexer      string
-	IndexerID    *int64
+	IndexerID    int64 // the search source that offered it; 0 for a link an admin supplied
 	ReleaseGUID  string
 	Size         int64
 	Seeders      *int32
@@ -72,30 +72,58 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 		protocol = inferProtocol(link)
 	}
 
+	// When the protocol is known up front, route and admit before anything is
+	// spent at the source: a release file fetched for a grab that is then
+	// refused still counts against the source's daily downloads.
+	var client store.DownloadClient
+	routed := false
+	route := func() error {
+		c, err := s.resolveClient(ctx, h.ClientID, protocol)
+		if err != nil {
+			return refused{err}
+		}
+		// Last gate before anything is written to disk. Fails closed.
+		if err := s.AdmitGrab(ctx, c, h.Size); err != nil {
+			return refused{err}
+		}
+		client, routed = c, true
+		return nil
+	}
+	if protocol != "" {
+		if err := route(); err != nil {
+			return handedOff{}, err
+		}
+	}
+
 	var payload []byte
 	var payloadName string
 	if isHTTP(link) && protocol != "http" {
+		if h.IndexerID > 0 {
+			if err := s.spendGrab(ctx, h.IndexerID); err != nil {
+				return handedOff{}, err
+			}
+		}
 		f, err := s.fetchRelease(ctx, link, protocol, h.Title)
 		if err != nil {
 			return handedOff{}, err
 		}
+		kind := protocol
 		switch {
 		case f.Magnet != "":
-			link, protocol = f.Magnet, "torrent"
+			link, kind = f.Magnet, "torrent"
 		case f.Kind == "":
-			protocol = "http" // not a release file: a hoster link, handed over as is
+			kind = "http" // not a release file: a hoster link, handed over as is
 		default:
-			payload, payloadName, protocol = f.Body, f.Name, f.Kind
+			payload, payloadName, kind = f.Body, f.Name, f.Kind
+		}
+		if kind != protocol {
+			protocol, routed = kind, false
 		}
 	}
-
-	client, err := s.resolveClient(ctx, h.ClientID, protocol)
-	if err != nil {
-		return handedOff{}, refused{err}
-	}
-	// Last gate before anything is written to disk. Fails closed.
-	if err := s.AdmitGrab(ctx, client, h.Size); err != nil {
-		return handedOff{}, refused{err}
+	if !routed {
+		if err := route(); err != nil {
+			return handedOff{}, err
+		}
 	}
 
 	req := gateway.AddRequest{
@@ -125,7 +153,11 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 		WantedID: h.WantedID, Adapter: client.ID, ClientJobID: res.ClientJobID,
 		Source: endpoint.Redact(h.Link), ReleaseTitle: h.ReleaseTitle, Indexer: h.Indexer,
 		Protocol: protocol, SizeBytes: h.Size, Seeders: h.Seeders, Reason: h.Reason,
-		IndexerID: h.IndexerID, ReleaseGUID: h.ReleaseGUID,
+		ReleaseGUID: h.ReleaseGUID,
+	}
+	if h.IndexerID > 0 {
+		id := h.IndexerID
+		g.IndexerID = &id
 	}
 	if s.box.Enabled() && h.Link != "" {
 		table, id, field := store.GrabAAD(g.WantedID, g.Adapter, g.ClientJobID)

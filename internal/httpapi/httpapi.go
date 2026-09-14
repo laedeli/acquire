@@ -194,9 +194,8 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/downloads/{adapter}/{id}/{action}", s.controlDownload) // admin
 		r.Get("/api/wanted/{id}/releases", s.listReleases)                  // admin
 		r.Post("/api/wanted/{id}/pick", s.pickRelease)                      // admin
-		r.Get("/api/indexers", s.listIndexers)
-		r.Get("/api/search", s.search)          // admin — manual, across indexers
-		r.Post("/api/search/grab", s.grabFound) // admin
+		r.Get("/api/search", s.search)                                      // admin — manual, across sources
+		r.Post("/api/search/grab", s.grabFound)                             // admin
 		r.Get("/api/profiles", s.listProfiles)
 		r.Put("/api/profiles/{id}", s.saveProfile)      // admin
 		r.Delete("/api/profiles/{id}", s.deleteProfile) // admin
@@ -217,6 +216,12 @@ func (s *Server) Handler() http.Handler {
 		// Configuration, admin-only (configapi.go). The platform links its setup
 		// checklist into the console tabs that edit these.
 		r.Get("/api/setup", s.setup)
+		r.Get("/api/indexers", s.listIndexers)
+		r.Post("/api/indexers", s.createIndexer)
+		r.Post("/api/indexers/test", s.testIndexer)
+		r.Put("/api/indexers/{id}", s.updateIndexer)
+		r.Delete("/api/indexers/{id}", s.deleteIndexer)
+		r.Post("/api/indexers/{id}/test", s.testStoredIndexer)
 		r.Get("/api/download-clients", s.listDownloadClients)
 		r.Post("/api/download-clients", s.createDownloadClient)
 		r.Get("/api/download-clients/types", s.downloadClientTypes)
@@ -260,7 +265,7 @@ func (s *Server) Handler() http.Handler {
 
 // listReleases runs an interactive search for a request and returns the ranked
 // candidates, so an admin can see what is on offer instead of trusting the
-// automatic pick.
+// automatic pick. Like the manual search it answers {candidates, incomplete}.
 func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
@@ -281,8 +286,8 @@ func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var c app.Candidate
-	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || c.Source == "" {
-		http.Error(w, "source is required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || (c.Source == "" && c.Release == "") {
+		http.Error(w, "release or source is required", http.StatusBadRequest)
 		return
 	}
 	if err := s.svc.GrabCandidate(r.Context(), chi.URLParam(r, "id"), c); err != nil {
@@ -292,8 +297,10 @@ func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "grabbed"})
 }
 
-// search runs a free-text query across the indexers, optionally scoped to some
-// of them (?indexers=3,7), ranked by the active quality profile.
+// search runs a free-text query across the search sources, optionally scoped
+// to some of them (?indexers=3,7), ranked by the active quality profile. It
+// answers within the search deadline with {candidates, incomplete}, naming the
+// sources that did not answer.
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
@@ -301,12 +308,12 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
-		writeJSON(w, 200, []any{})
+		writeJSON(w, 200, app.SearchResult{Candidates: []app.Candidate{}, Incomplete: []string{}})
 		return
 	}
-	var only []int
+	var only []int64
 	for _, part := range strings.Split(r.URL.Query().Get("indexers"), ",") {
-		if n, err := strconv.Atoi(strings.TrimSpace(part)); err == nil {
+		if n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && n > 0 {
 			only = append(only, n)
 		}
 	}
@@ -331,8 +338,8 @@ func (s *Server) grabFound(w http.ResponseWriter, r *http.Request) {
 		WantedID string `json:"wantedId"`
 		Title    string `json:"title2"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Source == "" {
-		http.Error(w, "source is required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (body.Source == "" && body.Release == "") {
+		http.Error(w, "release or source is required", http.StatusBadRequest)
 		return
 	}
 	var err error
@@ -389,14 +396,6 @@ func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// listIndexers reports the configured search backends (admin).
-func (s *Server) listIndexers(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
-		return
-	}
-	writeJSON(w, 200, s.svc.Indexers(r.Context()))
 }
 
 // listDownloads returns live + recently finished downloads.
@@ -510,7 +509,7 @@ func (s *Server) grabWanted(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "grabbed"})
 }
 
-// autograbWanted searches the indexers and grabs the best release (NZB-first).
+// autograbWanted searches the search sources and grabs the best release.
 func (s *Server) autograbWanted(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)

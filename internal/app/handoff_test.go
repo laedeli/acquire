@@ -224,7 +224,7 @@ func e2eService(t *testing.T, gw *fakeGateway, box *secretbox.Box) *Service {
 	st := testStore(t)
 	srv := gw.server(t)
 	cfg := config.Config{GatewayURL: srv.URL, DownloadsRoot: t.TempDir(), PreferUsenet: true}
-	svc := New(cfg, st, gateway.New(srv.URL, nil), nil, nil, nil, nil, box)
+	svc := New(cfg, st, gateway.New(srv.URL, nil), nil, nil, nil, box)
 	// Hostnames in these tests do not resolve; the policy must not care.
 	svc.policy.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("offline") }
 	ctx := context.Background()

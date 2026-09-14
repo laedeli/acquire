@@ -186,7 +186,7 @@ func capabilityDoc(cfg config.Config) capability {
 			{Name: "wanted", Summary: "list requests and their state", Method: "GET", Path: "/api/wanted"},
 			{Name: "request", Summary: "request a title (tmdb id)", Method: "POST", Path: "/api/wanted", Role: "user"},
 			{Name: "grab", Summary: "grab a specific release for a request", Method: "POST", Path: "/api/wanted/{id}/grab", Role: "admin"},
-			{Name: "autograb", Summary: "search indexers and grab the best release", Method: "POST", Path: "/api/wanted/{id}/autograb", Role: "admin"},
+			{Name: "autograb", Summary: "search the search sources and grab the best release", Method: "POST", Path: "/api/wanted/{id}/autograb", Role: "admin"},
 			{Name: "discover", Summary: "search for titles to request", Method: "GET", Path: "/api/discover"},
 			{Name: "downloads", Summary: "list in-flight downloads", Method: "GET", Path: "/api/downloads"},
 			{Name: "missing", Summary: "the backlog: monitored, aired, still wanted", Method: "GET", Path: "/api/missing"},
@@ -228,7 +228,7 @@ func capabilityDoc(cfg config.Config) capability {
 			Tiles: []capTile{
 				{Key: "requests", Title: "requests", Description: "who asked for what", Icon: "download", Target: "#/requests", Ord: 10},
 				{Key: "downloads", Title: "downloads", Description: "the queue, live", Icon: "gauge", Target: "#/downloads", Ord: 20},
-				{Key: "search", Title: "search", Description: "across all indexers", Icon: "radar", Target: "#/search", Ord: 30},
+				{Key: "search", Title: "search", Description: "across all search sources", Icon: "radar", Target: "#/search", Ord: 30},
 				{Key: "indexers", Title: "search sources", Description: "where releases are searched", Icon: "globe", Target: "#/indexers", Ord: 40},
 				{Key: "clients", Title: "clients", Description: "where downloads run", Icon: "server", Target: "#/clients", Ord: 45},
 				{Key: "settings", Title: "quality profiles", Description: "what counts as good", Icon: "settings", Target: "#/settings", Ord: 50},

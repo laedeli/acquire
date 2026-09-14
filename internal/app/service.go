@@ -6,11 +6,12 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,6 @@ import (
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/indexer"
 	"github.com/laedeli/acquire/internal/katalog"
-	"github.com/laedeli/acquire/internal/prowlarr"
 	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/secretbox"
 	"github.com/laedeli/acquire/internal/store"
@@ -42,41 +42,56 @@ type Service struct {
 	gw  *gateway.Client
 	kc  *katalog.Client
 	tm  *tmdb.Client
-	pr  *prowlarr.Client
-	ix  *indexer.Engine
 	bus Bus
 
 	// Download client configuration: credentials sealed by box, pushed to the
 	// gateway by sync, admin-entered addresses checked by policy, release files
 	// fetched through fetch (which applies the same policy at dial time).
-	box     *secretbox.Box
-	sync    *configsync.Reconciler
-	policy  endpoint.Policy
-	fetch   *http.Client
-	types   typeCache
-	sources sourceCache
+	box    *secretbox.Box
+	sync   *configsync.Reconciler
+	policy endpoint.Policy
+	fetch  *http.Client
+	types  typeCache
+
+	// Search sources: asked through ixc (the same policy at dial time), at most
+	// len(slots) requests at once across every search in the process. Results
+	// handed to the console carry a reference sealed by refs, a key that exists
+	// only for the life of this process, instead of the source's link.
+	ixc    *indexer.Client
+	slots  chan struct{}
+	refs   *secretbox.Box
+	timing searchTiming
 }
 
-func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, pr *prowlarr.Client, bus Bus, box *secretbox.Box) *Service {
-	// The typed engine talks to the SAME aggregator, but through the
-	// per-indexer newznab proxy rather than /api/v1/search — the latter accepts
-	// season/ep/tvdbid, returns 200 and discards them.
-	ix := &indexer.Engine{
-		Client:        indexer.New(cfg.IndexerURL, cfg.IndexerAPIKey),
-		MaxConcurrent: 4,
-		PerIndexer:    45 * time.Second,
-	}
+func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, bus Bus, box *secretbox.Box) *Service {
 	policy := endpoint.Policy{
 		Deny:          cfg.EndpointDeny,
 		AllowInternal: cfg.EndpointAllowInternal,
 		Namespace:     cfg.PodNamespace,
 	}
-	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, pr: pr, ix: ix, bus: bus,
-		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second)}
+	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, bus: bus,
+		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second),
+		ixc:   &indexer.Client{HTTP: policy.HTTPClient(2 * typedPerSource)},
+		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming}
 	if st != nil {
 		svc.sync = configsync.New(st, gw, box, 30*time.Second)
 	}
 	return svc
+}
+
+// processKey is a random key for sealing release references. Nothing sealed
+// with it outlives the process, which is the point: a reference is only good
+// until the next restart.
+func processKey() *secretbox.Box {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return &secretbox.Box{}
+	}
+	b, err := secretbox.New(base64.StdEncoding.EncodeToString(raw), "")
+	if err != nil {
+		return &secretbox.Box{}
+	}
+	return b
 }
 
 // RunConfigSync keeps the gateway running the stored download clients until
@@ -114,10 +129,7 @@ func (s *Service) setStatus(ctx context.Context, id, status, detail string) {
 
 // ── request-side (commands, called by httpapi) ──────────────────────────────
 
-var (
-	errAutoGrabDisabled = errors.New("indexer search not configured")
-	errNoReleases       = errors.New("no releases found")
-)
+var errNoReleases = errors.New("no releases found")
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
@@ -164,62 +176,6 @@ func (s *Service) Grab(ctx context.Context, wantedID, source, client string) err
 	return nil
 }
 
-// AutoGrab searches for the request's title, ranks the releases by the active
-// profile, and grabs the top one through the download client that handles its
-// protocol.
-func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
-	w, err := s.st.GetWanted(ctx, wantedID)
-	if err != nil {
-		return err
-	}
-	if !s.pr.Enabled() {
-		return errAutoGrabDisabled
-	}
-	query := w.Title
-	if w.Year != 0 {
-		query = w.Title + " " + itoa(w.Year)
-	}
-	// The active quality profile decides what "best" means; the two-stage
-	// fan-out only decides where to look.
-	releases, err := s.searchIndexers(ctx, query, nil)
-	if err != nil {
-		s.setStatus(ctx, wantedID, "failed", "indexer search failed: "+err.Error())
-		return err
-	}
-	ranked := s.rankByProfile(ctx, releases)
-	for len(ranked) > 0 && ranked[len(ranked)-1].Rejected {
-		ranked = ranked[:len(ranked)-1] // never auto-grab something the profile rejected
-	}
-	if len(ranked) == 0 {
-		s.setStatus(ctx, wantedID, "failed", "no releases matched the quality profile")
-		return errNoReleases
-	}
-	best := ranked[0]
-	out, err := s.handOff(ctx, candidateHandoff(w, best, best.Reason))
-	if err != nil {
-		s.failGrab(ctx, wantedID, err)
-		return err
-	}
-	s.setStatus(ctx, wantedID, "downloading",
-		"grabbed "+protoLabel(out.Protocol)+" from "+best.Indexer+" via "+out.Client.ID)
-	return nil
-}
-
-// candidateHandoff turns a ranked release into a hand-off. The candidate's
-// client hint is ignored: routing is decided at grab time from the protocol,
-// against the clients configured NOW.
-func candidateHandoff(w store.Wanted, c Candidate, reason string) handoff {
-	var seeders *int32
-	if c.Protocol == "torrent" {
-		n := int32(c.Seeders)
-		seeders = &n
-	}
-	return handoff{
-		WantedID: w.ID, Title: w.Title, Link: c.Source, Protocol: c.Protocol,
-		ReleaseTitle: c.Title, Indexer: c.Indexer, Size: c.Size, Seeders: seeders, Reason: reason,
-	}
-}
-
 func protoLabel(protocol string) string {
 	switch protocol {
 	case "usenet":
@@ -228,169 +184,6 @@ func protoLabel(protocol string) string {
 		return "torrent"
 	}
 	return "link"
-}
-
-// Candidate is one release offered by a search, already scored by the active
-// quality profile so the console can show what won and why.
-type Candidate struct {
-	Title      string `json:"title"`
-	Indexer    string `json:"indexer"`
-	Protocol   string `json:"protocol"`
-	Size       int64  `json:"size"`
-	Seeders    int    `json:"seeders"`
-	Adapter    string `json:"adapter"`
-	Source     string `json:"source"`
-	Reason     string `json:"reason"`
-	Best       bool   `json:"best"`
-	Score      int    `json:"score"`
-	Rejected   bool   `json:"rejected"`
-	Resolution string `json:"resolution"`
-	Codec      string `json:"codec"`
-	SourceType string `json:"sourceType"`
-	// Provenance: which search stage produced this and what identified it.
-	// A console that shows "id" vs "text" tells an operator whether the match
-	// is certain or merely plausible.
-	Stage      string `json:"stage,omitempty"`
-	MatchedVia string `json:"matchedVia,omitempty"`
-}
-
-// rankByProfile scores every release against the active quality profile and
-// returns them best first, rejected last. This replaces "NZB first, then
-// biggest", which kept choosing bloated multi-language remuxes.
-func (s *Service) rankByProfile(ctx context.Context, releases []prowlarr.Release) []Candidate {
-	profile := s.st.DefaultProfile(ctx)
-	routes := s.clientRoutes(ctx)
-	out := make([]Candidate, 0, len(releases))
-	for _, r := range releases {
-		v, info := release.Score(release.Candidate{
-			Title:    r.Title,
-			Protocol: r.Protocol,
-			SizeMb:   r.Size / (1024 * 1024),
-			Seeders:  r.Seeders,
-		}, profile)
-		out = append(out, Candidate{
-			Title: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Size: r.Size,
-			Seeders: r.Seeders, Adapter: routes[r.Protocol], Source: r.Source(),
-			Reason: v.Summary(), Score: v.Score, Rejected: v.Rejected,
-			Resolution: info.Resolution, Codec: info.Codec, SourceType: info.Source,
-		})
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Rejected != out[j].Rejected {
-			return !out[i].Rejected
-		}
-		return out[i].Score > out[j].Score
-	})
-	for i := range out {
-		out[i].Best = i == 0 && !out[i].Rejected
-	}
-	return out
-}
-
-// searchIndexers runs the two-stage fan-out in the preferred protocol's order:
-// by default the (few) usenet indexers first, and the wide torrent search only
-// when they come back empty.
-// Scoping to explicit indexer ids skips the staging entirely.
-func (s *Service) searchIndexers(ctx context.Context, query string, only []int) ([]prowlarr.Release, error) {
-	if len(only) > 0 {
-		return s.pr.SearchIn(ctx, query, only)
-	}
-	idx, _ := s.pr.Indexers(ctx)
-	first, second := "usenet", "torrent"
-	if s.grabPolicy(ctx).PreferProtocol == "torrent" {
-		first, second = second, first
-	}
-	var releases []prowlarr.Release
-	if ids := prowlarr.EnabledIDs(idx, first); len(ids) > 0 {
-		releases, _ = s.pr.SearchIn(ctx, query, ids)
-	}
-	if len(releases) > 0 {
-		return releases, nil
-	}
-	return s.pr.SearchIn(ctx, query, prowlarr.EnabledIDs(idx, second))
-}
-
-// Search is the console's manual search: a free-text query across the indexers
-// (optionally scoped to some of them), ranked by the active profile.
-func (s *Service) Search(ctx context.Context, query string, only []int) ([]Candidate, error) {
-	if !s.pr.Enabled() {
-		return nil, errAutoGrabDisabled
-	}
-	releases, err := s.searchIndexers(ctx, query, only)
-	if err != nil {
-		return nil, err
-	}
-	return s.rankByProfile(ctx, releases), nil
-}
-
-// Releases runs the interactive search for one request — same ranking as
-// auto-grab, but shown rather than acted on.
-func (s *Service) Releases(ctx context.Context, wantedID string) ([]Candidate, error) {
-	w, err := s.st.GetWanted(ctx, wantedID)
-	if err != nil {
-		return nil, err
-	}
-	query := w.Title
-	if w.Year != 0 {
-		query = w.Title + " " + itoa(w.Year)
-	}
-	return s.Search(ctx, query, nil)
-}
-
-// GrabCandidate hands a specific release (chosen in a picker or the manual
-// search) to the client for its protocol, recording which one it was.
-func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidate) error {
-	w, err := s.st.GetWanted(ctx, wantedID)
-	if err != nil {
-		return err
-	}
-	reason := c.Reason
-	if reason == "" {
-		reason = "picked manually"
-	}
-	out, err := s.handOff(ctx, candidateHandoff(w, c, reason))
-	if err != nil {
-		s.failGrab(ctx, wantedID, err)
-		return err
-	}
-	s.setStatus(ctx, wantedID, "downloading",
-		"grabbed "+protoLabel(out.Protocol)+" from "+c.Indexer+" via "+out.Client.ID)
-	return nil
-}
-
-// GrabAdHoc grabs a release found in the manual search that no request covers
-// yet: it records the wanted item first, so the download still lands in the
-// catalog and the console can follow it like any other request.
-func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub string) error {
-	if title == "" {
-		title = release.Parse(c.Title).Title
-	}
-	if title == "" {
-		title = c.Title
-	}
-	w, err := s.Request(ctx, store.Wanted{Title: title, MediaType: "movie"}, sub)
-	if err != nil {
-		return err
-	}
-	return s.GrabCandidate(ctx, w.ID, c)
-}
-
-// IndexerInfo is one configured indexer as shown in the console.
-type IndexerInfo struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Protocol string `json:"protocol"`
-	Enabled  bool   `json:"enabled"`
-}
-
-// Indexers lists the search backends currently configured.
-func (s *Service) Indexers(ctx context.Context) []IndexerInfo {
-	idx, _ := s.pr.Indexers(ctx)
-	out := make([]IndexerInfo, 0, len(idx))
-	for _, i := range idx {
-		out = append(out, IndexerInfo{ID: i.ID, Name: i.Name, Protocol: i.Protocol, Enabled: i.Enable})
-	}
-	return out
 }
 
 // Profiles / SaveProfile / DeleteProfile expose the quality profiles the

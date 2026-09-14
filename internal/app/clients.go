@@ -645,8 +645,10 @@ func (s *Service) clientRoutes(ctx context.Context) map[string]string {
 // Coverage is what acquire can search and grab, by protocol.
 type Coverage struct {
 	Sources        map[string]int // enabled sources per protocol
+	SourcesUsable  map[string]int // of those, the ones that can be asked now
 	SourcesErr     error
-	SourcesKnown   bool           // a source backend is configured at all
+	SourcesKnown   bool           // at least one source exists
+	SourceSummary  SourceSummary  // the detail behind the counts
 	Clients        map[string]int // enabled clients per protocol
 	EnabledClients int
 	ClientsErr     error
@@ -678,7 +680,8 @@ func (c Coverage) Gaps() []string {
 func (s *Service) Coverage(ctx context.Context) Coverage {
 	cov := Coverage{Clients: map[string]int{}}
 	src := s.sourceSummary(ctx)
-	cov.Sources, cov.SourcesErr, cov.SourcesKnown = src.Enabled, src.Err, src.Configured
+	cov.Sources, cov.SourcesUsable, cov.SourcesErr, cov.SourcesKnown = src.Enabled, src.Usable, src.Err, src.Configured
+	cov.SourceSummary = src
 	if s.st == nil {
 		cov.ClientsErr = errors.New("no store configured")
 		return cov

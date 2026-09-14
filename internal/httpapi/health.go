@@ -83,8 +83,11 @@ func (s *Server) systemHealth(w http.ResponseWriter, r *http.Request) {
 		srcErr = fmt.Errorf("nothing can search: the search sources could not be read")
 	case len(nonZeroProtocols(cov.Sources)) == 0:
 		srcErr = fmt.Errorf("nothing can search: no search source is enabled")
+	case len(nonZeroProtocols(cov.SourcesUsable)) == 0:
+		srcErr = fmt.Errorf("nothing can search: every enabled source is backing off, out of allowance or has an unreadable key")
 	}
-	add("sources", srcErr, fmt.Sprintf("enabled: %s", protocolCounts(cov.Sources)))
+	add("sources", srcErr, fmt.Sprintf("enabled: %s; can be asked now: %s",
+		protocolCounts(cov.Sources), protocolCounts(cov.SourcesUsable)))
 	var cliErr error
 	switch {
 	case cov.ClientsErr != nil:

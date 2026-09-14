@@ -76,15 +76,36 @@ func (s *Service) Setup(ctx context.Context) SetupStatus {
 
 func (s *Service) sourcesSection(cov Coverage) SetupSection {
 	sec := SetupSection{Key: "sources"}
+	sum := cov.SourceSummary
 	switch {
-	case !cov.SourcesKnown:
-		sec.State, sec.Summary = SetupNeedsSetup, "no search source is configured — add one"
 	case cov.SourcesErr != nil:
 		sec.State, sec.Summary = SetupDegraded, "the search sources could not be read"
-	case len(nonZero(cov.Sources)) == 0:
+	case !cov.SourcesKnown:
+		sec.State, sec.Summary = SetupNeedsSetup, "no search source is configured — add one"
+	case sum.Total() == 0:
 		sec.State, sec.Summary = SetupNeedsSetup, "no search source is enabled — enable or add one"
+		if len(sum.Disabled) > 0 {
+			sec.Summary += "; disabled: " + strings.Join(sum.Disabled, "; ")
+		}
+	case len(sum.Locked) > 0:
+		sec.State = SetupDegraded
+		sec.Summary = "the API key of " + strings.Join(sum.Locked, ", ") + " cannot be opened"
+		if !s.box.Enabled() {
+			sec.Summary += " — ACQUIRE_CONFIG_KEY is not set"
+		} else {
+			sec.Summary += " — was ACQUIRE_CONFIG_KEY changed without ACQUIRE_CONFIG_KEY_PREVIOUS?"
+		}
+	case sum.TotalUsable() == 0:
+		sec.State = SetupDegraded
+		sec.Summary = "no enabled source can be asked now: " + strings.Join(sum.Waiting, ", ")
 	default:
 		sec.State, sec.Summary = SetupReady, countsByProtocol(cov.Sources, "source")
+		if len(sum.Waiting) > 0 {
+			sec.Summary += "; waiting: " + strings.Join(sum.Waiting, ", ")
+		}
+		if len(sum.Disabled) > 0 {
+			sec.Summary += "; disabled: " + strings.Join(sum.Disabled, "; ")
+		}
 	}
 	return sec
 }
