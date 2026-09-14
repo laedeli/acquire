@@ -100,6 +100,20 @@ func New(baseURL string, tokens *TokenSource) *Client {
 
 func (c *Client) Enabled() bool { return c != nil && c.BaseURL != "" }
 
+// addHTTP is the client for one add. A payload add carries a whole NZB or torrent
+// file that the gateway forwards to the download client before it answers, so the
+// usual short timeout would give up on a large file the client is still accepting —
+// and a retry would then add it twice. Allow one extra second per MiB, at least
+// two minutes, on top of the configured timeout.
+func (c *Client) addHTTP(bodyBytes int) *http.Client {
+	if bodyBytes < 1<<20 || c.HTTP.Timeout == 0 {
+		return c.HTTP
+	}
+	longer := *c.HTTP
+	longer.Timeout = c.HTTP.Timeout + max(2*time.Minute, time.Duration(bodyBytes>>20)*time.Second)
+	return &longer
+}
+
 // AddRequest mirrors the gateway's POST /api/v1/downloads body.
 //
 // Adapter and Client both name the client id: a gateway with runtime client
@@ -122,6 +136,10 @@ type AddRequest struct {
 // ErrUnknownClient means the gateway does not know the client an add named —
 // typically because it restarted and has not been sent the configuration yet.
 var ErrUnknownClient = errors.New("the download gateway does not know this client")
+
+// ErrGatewayBusy means the gateway refused a large add because too many large
+// adds are in flight; nothing was added, so the grab can be tried again later.
+var ErrGatewayBusy = errors.New("the download gateway is busy with other large adds")
 
 // ErrNoConfigAPI means the gateway predates runtime client configuration, or
 // runs without the settings that enable it.
@@ -149,7 +167,7 @@ func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 			hreq.Header.Set("Authorization", "Bearer "+tok)
 		}
 	}
-	resp, err := c.HTTP.Do(hreq)
+	resp, err := c.addHTTP(len(body)).Do(hreq)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -157,6 +175,9 @@ func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return AddResult{}, fmt.Errorf("%w: %s", ErrUnknownClient, strings.TrimSpace(string(b)))
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return AddResult{}, fmt.Errorf("%w (retry after %ss)", ErrGatewayBusy, resp.Header.Get("Retry-After"))
 	}
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A payload add carries the content and the client, and no source link at all.
@@ -102,5 +103,30 @@ func TestConfigClientNeverPrintsItsSecret(t *testing.T) {
 		if strings.Contains(s, "hunter2") {
 			t.Errorf("secret leaked: %s", s)
 		}
+	}
+}
+
+func TestAddAllowsLargePayloadsMoreTime(t *testing.T) {
+	c := New("http://gw", nil)
+	if got := c.addHTTP(1024); got != c.HTTP {
+		t.Fatalf("small add should use the normal client")
+	}
+	if got := c.addHTTP(67 << 20); got.Timeout < 2*time.Minute+c.HTTP.Timeout {
+		t.Fatalf("large add timeout = %v, want at least %v", got.Timeout, 2*time.Minute+c.HTTP.Timeout)
+	}
+	if c.HTTP.Timeout != 15*time.Second {
+		t.Fatalf("addHTTP must not change the shared client, got %v", c.HTTP.Timeout)
+	}
+}
+
+func TestAddReportsBusyGateway(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "5")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	_, err := New(srv.URL, nil).Add(context.Background(), AddRequest{Adapter: "nzbget", Title: "t"})
+	if !errors.Is(err, ErrGatewayBusy) {
+		t.Fatalf("err = %v, want ErrGatewayBusy", err)
 	}
 }
