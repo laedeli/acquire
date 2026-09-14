@@ -40,6 +40,11 @@ type DownloadClient struct {
 	UpdatedAt       time.Time
 }
 
+// ClientSecretAAD is the secretbox binding for a client's secret.
+func ClientSecretAAD(id string) (table, rowID, field string) {
+	return "download_clients", id, "secret"
+}
+
 // SecretOp is what a write does to a stored secret.
 type SecretOp int
 
