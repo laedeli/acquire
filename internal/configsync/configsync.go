@@ -12,7 +12,10 @@
 //     (it restarted, or a push was lost).
 //
 // The revision is acquire's: the highest client generation ever issued. It only
-// moves forward, so "different" is enough to know the gateway is behind.
+// moves forward, so "different" is enough to know the gateway is behind — as
+// long as a revision is only ever sent with the clients it describes, which the
+// store guarantees (ClientsConfig waits out a write in progress). "Equal" then
+// means the gateway runs exactly what is stored.
 //
 // Credentials are decrypted only to build the request and never logged: log
 // lines name client ids and revisions, nothing else.
@@ -31,10 +34,12 @@ import (
 	"github.com/laedeli/acquire/internal/store"
 )
 
-// Store is what the reconciler reads.
+// Store is what the reconciler reads. ClientsConfig must return a revision
+// and the clients it describes as one consistent pair: the gateway reporting a
+// revision is taken to mean it runs exactly those clients.
 type Store interface {
-	ListDownloadClients(ctx context.Context) ([]store.DownloadClient, error)
 	ClientsRevision(ctx context.Context) (int64, error)
+	ClientsConfig(ctx context.Context) (int64, []store.DownloadClient, error)
 }
 
 // Gateway is the configuration half of the gateway client.
@@ -188,11 +193,7 @@ func (r *Reconciler) Push(ctx context.Context) (gateway.ApplyResult, error) {
 	if r.gw == nil || !r.gw.Enabled() {
 		return gateway.ApplyResult{}, errors.New("download gateway not configured")
 	}
-	rev, err := r.st.ClientsRevision(ctx)
-	if err != nil {
-		return gateway.ApplyResult{}, err
-	}
-	clients, err := r.st.ListDownloadClients(ctx)
+	rev, clients, err := r.st.ClientsConfig(ctx)
 	if err != nil {
 		return gateway.ApplyResult{}, err
 	}

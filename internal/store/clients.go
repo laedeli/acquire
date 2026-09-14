@@ -75,10 +75,36 @@ func scanClient(r interface{ Scan(...any) error }) (DownloadClient, error) {
 	return c, err
 }
 
+// clientsLock names the advisory lock that pairs the configuration revision
+// with the rows it describes.
+//
+// The revision is the generation sequence's position, and a sequence is not
+// transactional: the value a write draws is visible to everyone before the
+// write commits, or even when it rolls back. A push that read the revision in
+// that window would send it with the rows as they were before the write, and
+// the gateway, reporting that revision back, would look up to date while
+// running the old configuration. So every client write takes this lock
+// exclusively before it draws a generation and holds it until it commits, and
+// the read a push makes takes it shared: the revision it reads can only come
+// from writes whose rows it sees. Transaction-scoped, for the reasons given at
+// WithLeaderLock.
+const clientsLock = "acquire.download_clients"
+
+func lockClientsForWrite(ctx context.Context, tx pgx.Tx) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, clientsLock)
+	return err
+}
+
 // ListDownloadClients returns every client in routing order: lowest priority
 // first, then id, so "the first client that handles usenet" is well defined.
 func (s *Store) ListDownloadClients(ctx context.Context) ([]DownloadClient, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+clientCols+` FROM download_clients ORDER BY priority, id`)
+	return listClients(ctx, s.pool)
+}
+
+func listClients(ctx context.Context, q interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}) ([]DownloadClient, error) {
+	rows, err := q.Query(ctx, `SELECT `+clientCols+` FROM download_clients ORDER BY priority, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +118,31 @@ func (s *Store) ListDownloadClients(ctx context.Context) ([]DownloadClient, erro
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// ClientsConfig returns the configuration revision and every client as one
+// consistent pair — what a push sends. It waits for a client write in progress
+// to commit (see clientsLock).
+func (s *Store) ClientsConfig(ctx context.Context) (int64, []DownloadClient, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtext($1))`, clientsLock); err != nil {
+		return 0, nil, err
+	}
+	// Under the lock, and read before the rows: each statement sees what was
+	// committed when it started, and no write can draw a generation meanwhile.
+	var rev int64
+	if err := tx.QueryRow(ctx, clientsRevisionSQL).Scan(&rev); err != nil {
+		return 0, nil, err
+	}
+	clients, err := listClients(ctx, tx)
+	if err != nil {
+		return 0, nil, err
+	}
+	return rev, clients, tx.Commit(ctx)
 }
 
 // GetDownloadClient returns one client or ErrNotFound.
@@ -110,6 +161,9 @@ func (s *Store) CreateDownloadClient(ctx context.Context, c DownloadClient, secr
 		return DownloadClient{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockClientsForWrite(ctx, tx); err != nil {
+		return DownloadClient{}, err
+	}
 
 	var ct []byte
 	var kid string
@@ -148,6 +202,9 @@ func (s *Store) UpdateDownloadClient(ctx context.Context, c DownloadClient, secr
 		return DownloadClient{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockClientsForWrite(ctx, tx); err != nil {
+		return DownloadClient{}, err
+	}
 
 	var current int64
 	err = tx.QueryRow(ctx, `SELECT generation FROM download_clients WHERE id=$1 FOR UPDATE`, c.ID).Scan(&current)
@@ -192,6 +249,9 @@ func (s *Store) DeleteDownloadClient(ctx context.Context, id string, ifGeneratio
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockClientsForWrite(ctx, tx); err != nil {
+		return err
+	}
 
 	var current int64
 	err = tx.QueryRow(ctx, `SELECT generation FROM download_clients WHERE id=$1 FOR UPDATE`, id).Scan(&current)
@@ -227,12 +287,15 @@ func (s *Store) DeleteDownloadClient(ctx context.Context, id string, ifGeneratio
 	return tx.Commit(ctx)
 }
 
+const clientsRevisionSQL = `SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM download_clients_generation_seq`
+
 // ClientsRevision is the configuration revision: the highest generation ever
-// issued, deleted rows included. 0 means no client was ever written.
+// issued, deleted rows included. 0 means no client was ever written. It can
+// run ahead of the rows a moment before a write commits; compare with it, but
+// send what ClientsConfig returns.
 func (s *Store) ClientsRevision(ctx context.Context) (int64, error) {
 	var rev int64
-	err := s.pool.QueryRow(ctx,
-		`SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM download_clients_generation_seq`).Scan(&rev)
+	err := s.pool.QueryRow(ctx, clientsRevisionSQL).Scan(&rev)
 	return rev, err
 }
 

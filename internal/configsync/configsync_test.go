@@ -18,8 +18,8 @@ type fakeStore struct {
 	clients []store.DownloadClient
 }
 
-func (f *fakeStore) ListDownloadClients(context.Context) ([]store.DownloadClient, error) {
-	return f.clients, nil
+func (f *fakeStore) ClientsConfig(context.Context) (int64, []store.DownloadClient, error) {
+	return f.rev, f.clients, nil
 }
 func (f *fakeStore) ClientsRevision(context.Context) (int64, error) { return f.rev, nil }
 

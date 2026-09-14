@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func sampleClient(id string) DownloadClient {
@@ -48,6 +49,68 @@ func TestClientRevisionMovesForwardOnEveryWrite(t *testing.T) {
 	rev2, _ := s.ClientsRevision(ctx)
 	if rev2 <= rev1 {
 		t.Fatalf("delete left the revision at %d (was %d)", rev2, rev1)
+	}
+}
+
+// The sequence shows a write's generation before the write commits. The read a
+// push makes must not pair that revision with the rows from before the write,
+// or the gateway would report the new revision while running the old client.
+func TestClientsConfigPairsTheRevisionWithItsRows(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	a, err := s.CreateDownloadClient(ctx, sampleClient("nzbget"), SecretWrite{}, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A write in progress, taking the lock the way every client write does.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockClientsForWrite(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE download_clients SET base_url = 'http://moved:6789',
+		generation = nextval('download_clients_generation_seq') WHERE id = 'nzbget'`); err != nil {
+		t.Fatal(err)
+	}
+	ahead, _ := s.ClientsRevision(ctx)
+	if ahead <= a.Generation {
+		t.Fatalf("revision %d did not move ahead of %d", ahead, a.Generation)
+	}
+
+	type config struct {
+		rev     int64
+		clients []DownloadClient
+		err     error
+	}
+	got := make(chan config, 1)
+	go func() {
+		rev, clients, err := s.ClientsConfig(ctx)
+		got <- config{rev, clients, err}
+	}()
+	select {
+	case c := <-got:
+		t.Fatalf("read revision %d with %+v while the write was uncommitted", c.rev, c.clients)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c := <-got
+	if c.err != nil || c.rev != ahead || len(c.clients) != 1 || c.clients[0].BaseURL != "http://moved:6789" {
+		t.Fatalf("after commit: revision %d, clients %+v, err %v; want revision %d with the moved client", c.rev, c.clients, c.err, ahead)
+	}
+
+	// Writes still go through while nothing reads, and the pair stays exact.
+	if err := s.DeleteDownloadClient(ctx, "nzbget", 0, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	rev, clients, err := s.ClientsConfig(ctx)
+	if err != nil || rev <= ahead || len(clients) != 0 {
+		t.Fatalf("after delete: revision %d, clients %+v, err %v", rev, clients, err)
 	}
 }
 
