@@ -68,6 +68,7 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		Deny:          cfg.EndpointDeny,
 		AllowInternal: cfg.EndpointAllowInternal,
 		Namespace:     cfg.PodNamespace,
+		ClusterDomain: cfg.ClusterDomain,
 	}
 	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, bus: bus,
 		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second),

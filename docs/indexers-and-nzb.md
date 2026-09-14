@@ -49,7 +49,8 @@ source without a key can still be added.
 The address is checked when it is saved and again whenever acquire connects:
 only `http` and `https`, no credentials or query in the address, never a
 link-local or cloud metadata address, nothing `ACQUIRE_ENDPOINT_DENY` names,
-and no cluster service in another namespace unless
+and no cluster service in another namespace — written out or as a short name
+the cluster's DNS search list completes — unless
 `ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true`.
 
 ## Caps

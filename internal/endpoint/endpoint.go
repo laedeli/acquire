@@ -13,8 +13,11 @@
 //     them;
 //   - ACQUIRE_ENDPOINT_DENY names hosts or domain suffixes that are refused;
 //   - cluster service names in another namespace are refused unless
-//     ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true — acquire's own namespace, and
-//     ordinary private (RFC 1918) addresses, stay allowed;
+//     ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true, whether written out (name.ns.svc)
+//     or left for the pod's DNS search list to complete (name.ns) — acquire's
+//     own namespace, and ordinary private (RFC 1918) addresses, stay allowed.
+//     This is a rule about names: a service's cluster IP typed as a number is a
+//     private address like any other, and only a NetworkPolicy fences that;
 //   - responses are read with a size cap, and a redirect may not change scheme.
 package endpoint
 
@@ -40,6 +43,12 @@ type Policy struct {
 	AllowInternal bool
 	// Namespace is acquire's own namespace; "" when not running in a cluster.
 	Namespace string
+	// ClusterDomain is the cluster's DNS domain when acquire's resolver search
+	// list carries the cluster's service domains, "" otherwise (outside a
+	// cluster). Service names are recognised under it as well as under
+	// cluster.local, and only with it set is a dotted short name looked up for
+	// the service the search list would turn it into.
+	ClusterDomain string
 	// Resolve looks a host up for CheckResolved; nil uses the default resolver.
 	Resolve func(ctx context.Context, host string) ([]netip.Addr, error)
 }
@@ -108,21 +117,74 @@ func (p Policy) Check(raw string) (*url.URL, error) {
 			return nil, fmt.Errorf("%s is refused by ACQUIRE_ENDPOINT_DENY", host)
 		}
 	}
-	if ns, ok := serviceNamespace(host); ok && !p.AllowInternal && ns != p.Namespace {
+	if ns, ok := p.serviceNamespace(host); ok && !p.AllowInternal && ns != p.Namespace {
 		return nil, fmt.Errorf("%s is a service in namespace %q, outside acquire's own; set ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true to allow it", host, ns)
 	}
 	return u, nil
 }
 
 // serviceNamespace extracts the namespace from a cluster service name:
-// name.ns.svc or name.ns.svc.cluster.local.
-func serviceNamespace(host string) (string, bool) {
-	h := strings.TrimSuffix(host, ".cluster.local")
+// name.ns.svc or name.ns.svc.<cluster domain>.
+func (p Policy) serviceNamespace(host string) (string, bool) {
+	h := host
+	for _, d := range []string{p.ClusterDomain, "cluster.local"} {
+		if d != "" && strings.HasSuffix(h, ".svc."+d) {
+			h = strings.TrimSuffix(h, "."+d)
+			break
+		}
+	}
 	if !strings.HasSuffix(h, ".svc") {
 		return "", false
 	}
 	labels := strings.Split(strings.TrimSuffix(h, ".svc"), ".")
 	return labels[len(labels)-1], true
+}
+
+// searchedNamespace reports the namespace a dotted short name reaches through
+// the pod's DNS search list. In a pod "gateway.other" is tried as
+// gateway.other.svc.<cluster domain> before it is tried as itself, so it names
+// the service in namespace "other" whenever that service exists — which only
+// DNS can tell. Asked only inside a cluster (ClusterDomain set), and only for
+// names the string check cannot place: not an address, not absolute (a
+// trailing dot skips the search list), not already a service name. A failed
+// lookup places nothing; the connection it guards would fail the same way.
+func (p Policy) searchedNamespace(ctx context.Context, host string) (string, bool) {
+	h := strings.ToLower(host)
+	if p.ClusterDomain == "" || strings.HasSuffix(h, ".") || !strings.Contains(h, ".") {
+		return "", false
+	}
+	if _, err := netip.ParseAddr(h); err == nil {
+		return "", false
+	}
+	if _, ok := p.serviceNamespace(h); ok {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	addrs, err := p.resolve(ctx, h+".svc."+p.ClusterDomain+".")
+	if err != nil || len(addrs) == 0 {
+		return "", false
+	}
+	return h[strings.LastIndex(h, ".")+1:], true
+}
+
+// checkSearched refuses a short name the search list completes into a service
+// in another namespace.
+func (p Policy) checkSearched(ctx context.Context, host string) error {
+	if p.AllowInternal {
+		return nil
+	}
+	if ns, ok := p.searchedNamespace(ctx, host); ok && ns != p.Namespace {
+		return fmt.Errorf("%s reaches a service in namespace %q through the cluster's DNS search list, outside acquire's own; set ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true to allow it", host, ns)
+	}
+	return nil
+}
+
+func (p Policy) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
+	if p.Resolve != nil {
+		return p.Resolve(ctx, host)
+	}
+	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 }
 
 // CheckResolved runs Check and then, best effort, resolves the host: a name
@@ -138,15 +200,12 @@ func (p Policy) CheckResolved(ctx context.Context, raw string) error {
 	if _, err := netip.ParseAddr(host); err == nil {
 		return nil
 	}
-	resolve := p.Resolve
-	if resolve == nil {
-		resolve = func(ctx context.Context, host string) ([]netip.Addr, error) {
-			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-		}
+	if err := p.checkSearched(ctx, host); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	addrs, err := resolve(ctx, host)
+	addrs, err := p.resolve(ctx, host)
 	if err != nil {
 		return nil
 	}
@@ -183,9 +242,20 @@ func (e *ErrMagnetRedirect) Error() string { return "the link redirects to a mag
 // the dial-time check would see the proxy's address, not the target's.
 func (p Policy) HTTPClient(timeout time.Duration) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: dialControl}
+	// The address check runs on the resolved address (dialControl); the short
+	// name check needs the name, so it runs before the dial. It covers links a
+	// source hands back as well as the addresses checked on save.
+	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		if host, _, err := net.SplitHostPort(address); err == nil {
+			if err := p.checkSearched(ctx, host); err != nil {
+				return nil, err
+			}
+		}
+		return dialer.DialContext(ctx, network, address)
+	}
 	tr := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           dialer.DialContext,
+		DialContext:           dial,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          20,
 		IdleConnTimeout:       90 * time.Second,

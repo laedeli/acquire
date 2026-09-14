@@ -54,6 +54,7 @@ type Config struct {
 	EndpointDeny          []string // ACQUIRE_ENDPOINT_DENY: comma list of hostnames or domain suffixes
 	EndpointAllowInternal bool     // ACQUIRE_ENDPOINT_ALLOW_INTERNAL: allow services in other namespaces
 	PodNamespace          string   // POD_NAMESPACE, else the service account's namespace file
+	ClusterDomain         string   // the cluster DNS domain from /etc/resolv.conf; "" outside a cluster
 }
 
 func env(keys ...string) string {
@@ -107,6 +108,7 @@ func Load() Config {
 		EndpointDeny:          splitList(env("ACQUIRE_ENDPOINT_DENY")),
 		EndpointAllowInternal: env("ACQUIRE_ENDPOINT_ALLOW_INTERNAL") == "true",
 		PodNamespace:          podNamespace(),
+		ClusterDomain:         clusterDomain(),
 	}
 }
 
@@ -121,6 +123,33 @@ func podNamespace() string {
 	}
 	if b, err := os.ReadFile(serviceAccountNamespace); err == nil {
 		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
+
+// clusterDomain is the cluster's DNS domain, read from the search list
+// Kubernetes writes into a pod's resolv.conf (<ns>.svc.<domain>, svc.<domain>,
+// <domain>); "" when the file has no such entry, i.e. outside a cluster.
+func clusterDomain() string {
+	b, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		return ""
+	}
+	return clusterDomainFrom(string(b))
+}
+
+func clusterDomainFrom(resolvConf string) string {
+	for _, line := range strings.Split(resolvConf, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "search" {
+			continue
+		}
+		for _, d := range f[1:] {
+			d = strings.Trim(strings.ToLower(d), ".")
+			if rest, ok := strings.CutPrefix(d, "svc."); ok && rest != "" {
+				return rest
+			}
+		}
 	}
 	return ""
 }

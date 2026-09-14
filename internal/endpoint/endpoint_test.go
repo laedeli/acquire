@@ -65,6 +65,78 @@ func TestOtherNamespaceIsAllowedWhenInternalIsAllowed(t *testing.T) {
 	}
 }
 
+// In a pod, "gateway.other" is completed by the DNS search list into
+// gateway.other.svc.cluster.local, so a short name reaches another namespace's
+// service as surely as the written-out one does.
+func TestShortNamesCompletedByTheSearchListAreServiceNames(t *testing.T) {
+	var asked []string
+	services := map[string]bool{
+		"gateway.other.svc.cluster.local.": true,
+		"worker.media.svc.cluster.local.":  true,
+		"nzb.sub.other.svc.cluster.local.": true, // a pod behind a headless service
+	}
+	resolve := func(_ context.Context, host string) ([]netip.Addr, error) {
+		asked = append(asked, host)
+		if services[host] {
+			return []netip.Addr{netip.MustParseAddr("172.30.0.10")}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	p := Policy{Namespace: "media", ClusterDomain: "cluster.local", Resolve: resolve}
+	ctx := context.Background()
+	cases := []struct {
+		url string
+		ok  bool
+	}{
+		{"http://gateway.other:8080/", false},
+		{"http://GATEWAY.Other:8080/", false},
+		{"http://nzb.sub.other/", false},
+		{"http://worker.media:6789/", true},   // acquire's own namespace
+		{"http://worker:6789/", true},         // a bare name stays in acquire's namespace
+		{"http://nzb.example.org/", true},     // no such service: an ordinary name
+		{"http://gateway.other.:8080/", true}, // absolute: the search list is skipped
+		{"http://172.30.0.10:8080/", true},    // a cluster IP is a private address
+		{"http://gateway.other.svc/", false},  // written out, refused without a lookup
+	}
+	for _, c := range cases {
+		err := p.CheckResolved(ctx, c.url)
+		if (err == nil) != c.ok {
+			t.Errorf("CheckResolved(%q) err = %v, want ok=%v", c.url, err, c.ok)
+		}
+	}
+
+	if err := (Policy{Namespace: "media", ClusterDomain: "cluster.local", AllowInternal: true, Resolve: resolve}).
+		CheckResolved(ctx, "http://gateway.other:8080/"); err != nil {
+		t.Errorf("ACQUIRE_ENDPOINT_ALLOW_INTERNAL must allow it: %v", err)
+	}
+
+	// Outside a cluster there is no search list to complete a name, and nothing
+	// is looked up under a cluster domain.
+	asked = nil
+	if err := (Policy{Resolve: resolve}).CheckResolved(ctx, "http://gateway.other:8080/"); err != nil {
+		t.Errorf("outside a cluster: %v", err)
+	}
+	for _, h := range asked {
+		if strings.Contains(h, ".svc.") {
+			t.Errorf("looked up %q outside a cluster", h)
+		}
+	}
+
+	// A cluster with its own domain: written-out names under it are service
+	// names too.
+	custom := Policy{Namespace: "media", ClusterDomain: "cluster.example", Resolve: resolve}
+	if _, err := custom.Check("http://gateway.other.svc.cluster.example/"); err == nil {
+		t.Error("a service name under the cluster's own domain was accepted")
+	}
+
+	// The same rule holds at connect time, for links a source hands back.
+	c := p.HTTPClient(5 * time.Second)
+	_, err := c.Get("http://gateway.other:1/x.nzb")
+	if err == nil || !strings.Contains(err.Error(), "search list") {
+		t.Errorf("dial to a short service name: err = %v", err)
+	}
+}
+
 func TestCheckResolvedRefusesNamesPointingAtMetadata(t *testing.T) {
 	p := Policy{Resolve: func(_ context.Context, host string) ([]netip.Addr, error) {
 		switch host {

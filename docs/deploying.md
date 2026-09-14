@@ -169,8 +169,13 @@ every link acquire fetches for them — goes through one policy:
   domain suffixes (`.other-namespace.svc,files.example.org`). Use it to keep a
   test instance from ever reaching production endpoints;
 - no `*.svc` / `*.svc.cluster.local` service in another namespace unless
-  `ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true`. acquire's own namespace and private
-  (RFC 1918) addresses stay allowed;
+  `ACQUIRE_ENDPOINT_ALLOW_INTERNAL=true`. That includes the short form the
+  pod's DNS search list completes (`gateway.other-namespace`), which acquire
+  looks up on save and again before it connects. acquire's own namespace and
+  private (RFC 1918) addresses stay allowed — so this is a rule about names,
+  not a network boundary: a service's cluster IP typed as a number is reachable
+  like any private address. Fence acquire's egress with a NetworkPolicy when
+  that matters;
 - responses are size-capped, and a redirect may not switch scheme.
 
 ## Storage paths
