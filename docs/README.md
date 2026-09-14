@@ -10,9 +10,10 @@ adds three things to a running platform:
    packages it — and it becomes playable in the web / mobile / TV clients.
 
 acquire is built for a library **you own and are entitled to stream**. It ships
-**no indexers and no content** — you bring your own indexer aggregator, download
-clients and (for usenet) news providers. acquire is only the wiring that turns a
-request into a catalog item.
+**no search sources and no content** — you bring your own newznab/torznab
+sources, download clients and (for usenet) news providers, and tell acquire
+where they are in its console. acquire is only the wiring that turns a request
+into a catalog item.
 
 ## The one idea: a neutral core, lit up by an addon
 
@@ -31,13 +32,14 @@ flowchart LR
         P["pipeline<br/>enrich → analyze → transcode → package"]
     end
     subgraph addon["acquire addon (laedeli)"]
-        A["acquire<br/>requests + brain + SPA"]
+        A["acquire<br/>requests + brain + console"]
         G["download-gateway<br/>neutral client facade"]
-        C["your download clients<br/>+ indexers + providers"]
     end
+    X["your search sources<br/>download clients + providers<br/>(external, configured in acquire)"]
     S -. "search.empty slot" .-> A
-    A --> G --> C
-    C -- "completed" --> A
+    A --> X
+    A --> G --> X
+    G -- "completed" --> A
     A -- "POST /api/ingest" --> K --> P
     P -- "packaged" --> A
 ```
@@ -49,14 +51,14 @@ flowchart LR
 | **Understand how it fits together** (seams, events, the whole loop) | [Architecture](./architecture.md) |
 | **Understand the request → play lifecycle** and the acquire service | [The acquire service](./acquire.md) |
 | **Understand the download plane** (the gateway + its clients) | [Download gateway & clients](./download-gateway.md) |
-| **Set up indexer search and NZB-first auto-grab** | [Indexer search & NZB-first](./indexers-and-nzb.md) |
+| **Add search sources and set up NZB-first auto-grab** | [Search sources & NZB-first](./indexers-and-nzb.md) |
 | **Install the addon on a platform** | [Deploying the addon](./deploying.md) |
 
 ## Where the code lives
 
 | Repo | What it is |
 |---|---|
-| [`laedeli/acquire`](https://github.com/laedeli/acquire) | The addon service — requests, the request→grab→ingest brain, indexer search, and the embedded SPA. Image `ghcr.io/laedeli/acquire`. |
+| [`laedeli/acquire`](https://github.com/laedeli/acquire) | The addon service — requests, native newznab/torznab search, the request→grab→ingest brain, the configuration of sources and clients, and the embedded console. Image `ghcr.io/laedeli/acquire`. |
 | [`laedeli/download-gateway`](https://github.com/laedeli/download-gateway) | A neutral facade that wraps any download client behind one HTTP API + a Kafka event stream. Image `ghcr.io/laedeli/download-gateway`. |
 
 The **`laedeli`** org is the platform's addon shop — a “little shop” (_Lädeli_,

@@ -1,105 +1,154 @@
 # Download gateway & clients
 
-[`laedeli/download-gateway`](https://github.com/laedeli/download-gateway) is a
-small Go service that puts **one neutral API and one event stream** in front of
-whatever download clients you run. acquire talks only to the gateway; the gateway
-talks to the clients. Swap a client and nothing upstream changes.
+[`laedeli/download-gateway`](https://github.com/laedeli/download-gateway)
+(module `github.com/laedeli/download-gateway`) is a small Go service that puts
+**one API and one event stream** in front of the download clients you run.
+acquire talks only to the gateway; the gateway talks to the clients, tracks
+every job until it finishes, and publishes the lifecycle as events.
+
+The download clients are **external endpoints**. Neither the gateway nor
+acquire deploys or bundles them. acquire stores which clients exist and how to
+reach them, and pushes that to the gateway; the gateway holds it in memory and
+runs them.
 
 ```mermaid
 flowchart LR
-    A["acquire"] -->|"POST /api/v1/downloads"| G["download-gateway"]
-    G -->|"adapter"| QB["qBittorrent<br/>(WebUI v2)"]
-    G -->|"adapter"| NZ["NZBGet<br/>(JSON-RPC)"]
-    G -->|"adapter"| OD["oDownloader<br/>(hoster daemon)"]
+    A["acquire<br/><i>stores the clients</i>"] -->|"PUT /api/v1/config/clients"| G["download-gateway"]
+    A -->|"POST /api/v1/downloads"| G
+    G -->|"JSON-RPC"| NZ["NZBGet"]
+    G -->|"WebUI API v2"| QB["qBittorrent"]
+    G -->|"daemon API"| OD["oDownloader"]
     G -.->|"download.client.*"| BUS[["Kafka"]]
     BUS -.-> A
 ```
 
-## The adapter model
+## Clients
 
-Every client is an **adapter** behind one interface:
+A **client** is one configured instance of an adapter type compiled into the
+gateway. Its id (`^[a-z0-9][a-z0-9-]{0,39}$`) is fixed for its lifetime: jobs,
+events and acquire's download records all refer to it.
 
-```go
-type Adapter interface {
-    Name() string
-    Add(ctx, Job) (clientJobID string, err error)
-    Status(ctx, clientJobID string) (Status, error)
-    Describe(ctx, clientJobID string) (JobView, error)
-    Remove(ctx, clientJobID string) error
-}
-```
+| Type | Protocols | Auth | Release file | Save path | Pause |
+|---|---|---|---|---|---|
+| `nzbget` | `usenet` | `basic`, `none` | NZB content via `append` | the client's category decides | yes |
+| `qbittorrent` | `torrent` | `basic`, `none` | `.torrent` as a multipart upload | yes | yes |
+| `odownloader` | `http` | `token`, `none` | refused — hoster links only | — | — |
 
-A `Job` carries a `Source` (torrent URL / magnet / NZB URL / hoster link), an
-optional `SavePath` and a `Title`. `Status` is one of `queued`, `downloading`,
-`completed`, `failed`. `Describe` returns a `JobView` (state, bytes done/total,
-speed, ETA, and — on completion — the absolute file paths).
+- **NZBGet** `append` always sends `DupeMode=FORCE`, so a requested item is
+  never silently deduplicated away.
+- **qBittorrent** returns no id from an add, so every add carries a unique
+  `dlg-…` tag that becomes the job id. Removing a job never deletes files.
+- **oDownloader** takes hoster links; one add is one package.
 
-Adapters are registered **only when configured** — an unconfigured client is
-omitted, not stubbed. `GET /api/v1/clients` lists exactly the ones that are live
-(e.g. `["qbittorrent","nzbget"]`).
+`GET /api/v1/config/types` lists the types with these capabilities; acquire's
+client dialog is built from it.
 
-### Built-in adapters
+## Where clients come from
 
-| Adapter | Speaks | Enabled by | Notes |
-|---|---|---|---|
-| **qBittorrent** | WebUI API **v2** | `QBITTORRENT_BASE_URL` | tags each add with a unique `dlg-…` tag and uses that as the stable job id (qB's add returns no id). Remove is **non-destructive** (`deleteFiles=false`). |
-| **NZBGet** | JSON-RPC (`/jsonrpc`) | `NZBGET_URL` | adds by URL via `append` (NZBGet fetches it); job id is the NZBID. See the DupeMode note below. |
-| **oDownloader** | static-token JSON API | `ODOWNLOADER_BASE_URL` | one add = a package of N hoster links; job id is the package id. |
-| JDownloader | — | (stub) | present as a type, not wired in. |
+**acquire (the normal case).** Clients are edited in acquire's console under
+**clients** and stored in acquire's database, secrets encrypted. acquire pushes
+the full set of enabled clients:
 
-**NZBGet `DupeMode="FORCE"`.** The gateway's `append` call sets `DupeMode="FORCE"`.
-An empty DupeMode is rejected by NZBGet as an invalid enum, so the gateway always
-sends a valid one; `FORCE` also guarantees a requested item is never silently
-deduped away.
+- at start,
+- right after every change,
+- every 30 seconds when the gateway reports a different revision (a gateway
+  restart comes back empty, at revision `0`),
+- and once more when an add fails because the gateway does not know the client,
+  before retrying that add once.
 
-**Non-destructive Remove.** qBittorrent's delete passes `deleteFiles=false`:
-removing a job leaves the files on disk. acquire owns cleanup of the download
-folder — the gateway never deletes content.
+A push replaces every pushed client at once. Unchanged clients keep running
+with their sessions; changed or new ones are rebuilt and adopt their running
+jobs. A removed client that still has jobs keeps being polled until they finish
+but accepts no new downloads — and acquire refuses to delete a client while
+downloads are in flight on it. acquire logs only client ids and revisions,
+never a secret. If a stored secret cannot be opened, acquire pushes nothing
+rather than a smaller set.
+
+**The gateway's environment.** `NZBGET_*`, `QBITTORRENT_*` and `ODOWNLOADER_*`
+still create a client each, with the type name as its id and source `env`. They
+cannot be replaced or removed through the API, and a pushed client with the same
+id is refused. acquire routes grabs only to the clients it stores: an
+environment client shows up in the downloads tab's client health, but no grab
+is sent to it.
+
+## How acquire routes a grab
+
+A release goes to the **enabled client that handles its protocol, lowest
+priority first** — the protocol preference in settings decides only when a
+link's kind is unknown. When none handles it, the grab is refused with “no
+download client handles torrent — add one under download clients”.
+
+For each add acquire sends:
+
+| Field | Value |
+|---|---|
+| `client` (alias `adapter`) | the client id |
+| `payload_b64` + `payload_name` | the NZB or `.torrent` acquire fetched itself |
+| `source` | instead of a payload: a magnet or a hoster link |
+| `save_path` | the client's save folder *as the client sees it* |
+| `category` | the client's category (default `acquire`) |
+| `title`, `wanted_item_id` | the request, echoed on the `completed` event |
+
+A source's download link is never sent: it carries the source's API key, which
+would then live in the client's history, logs and API. See
+[Search sources & NZB-first](./indexers-and-nzb.md#keys-never-leave-acquire).
+
+When a download completes, acquire maps the reported file paths from the
+client's folder to the same folder as acquire sees it, then ingests the video.
 
 ## HTTP API
-
-The `/api/*` routes are wrapped by an **optional** OIDC bearer verifier: set
-`OIDC_ISSUER` and every call must carry a valid bearer (issuer-only, no audience
-check); leave it unset and the API is unauthenticated (back-compat, for when the
-gateway runs on a private network behind acquire). Validation is lazy and
-self-healing — it recovers on its own when the IdP comes up.
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/healthz` | liveness |
+| `GET` | `/readyz` | readiness: the process and the event publisher are up (zero clients is still ready) |
 | `GET` | `/metrics` | Prometheus |
-| `GET` | `/api/v1/clients` | list registered adapters |
-| `POST` | `/api/v1/downloads` | enqueue a download → `202 {adapter, client_job_id}` |
-| `GET` | `/api/v1/downloads` | tracked in-flight jobs |
-| `DELETE` | `/api/v1/downloads/{adapter}/{id}` | remove a job (204) |
+| `GET` | `/api/v1/clients` | ids of the clients that accept new downloads |
+| `GET` | `/api/v1/clients/status` | per-client health and throughput (`id`, `type`, `reachable`, speeds, detail) |
+| `POST` | `/api/v1/downloads` | add a download → `202 {adapter, client, client_job_id}` |
+| `GET` | `/api/v1/downloads` | tracked in-flight jobs with their last snapshot |
+| `DELETE` | `/api/v1/downloads/{client}/{id}` | remove a job from its client |
+| `POST` | `/api/v1/downloads/{client}/{id}/pause` · `/resume` | pause or resume, where the type supports it |
+| `GET` | `/api/v1/config/types` | the adapter types a client can be created from |
+| `GET` | `/api/v1/config/clients` | `{revision, clients}` — every client, never a secret |
+| `PUT` | `/api/v1/config/clients` | atomically replace every pushed client → `{revision, applied, errors}` |
+| `POST` | `/api/v1/config/clients/test` | probe one client without registering it |
 
-`POST /api/v1/downloads` body:
+An add body is capped (a 50 MiB NZB fits); an unknown client is `404`, a client
+removed while it still has jobs is `409`, a client error is `502`. Secrets are
+write-only: `GET /api/v1/config/clients` reports `secretSet`.
 
-```json
-{ "adapter": "nzbget", "source": "<url|magnet>", "title": "…",
-  "save_path": "…", "wanted_item_id": "w_…" }
-```
+### Authentication
 
-`adapter` + `source` are required; an unknown adapter is `404`, an adapter error
-is `502`. The `wanted_item_id` is stamped onto the job and echoed on the
-`completed` event, so acquire maps a finished download back to its request.
+| `OIDC_ISSUER` | `ALLOWED_CLIENTS` | `/api/v1/*` | `/api/v1/config/*` |
+|---|---|---|---|
+| unset | — | unauthenticated | `404` |
+| set | unset | any valid bearer from the issuer | `404` |
+| set | set | a bearer whose `azp` (or `client_id`) is listed, else `403` | enabled |
+
+Pushing configuration points the gateway at arbitrary endpoints, so the
+configuration API only exists when callers are restricted to named clients.
+For acquire, list its service client: `ALLOWED_CLIENTS=laedeli-acquire-svc`.
+
+Pushed clients never connect to a link-local or cloud metadata address, follow
+redirects only within their own scheme and host, and ignore proxy variables.
 
 ## Events (the source of truth)
 
-A background poll loop `Describe`s each tracked job (`POLL_INTERVAL`, default 5s)
-and publishes JSON events to Kafka over **mTLS** (Strimzi client cert — not
-SASL/OAuth). Topics are `<KAFKA_TOPIC_PREFIX>download.client.<kind>`:
+A poll loop describes each tracked job (`POLL_INTERVAL`, default `5s`) and
+publishes JSON to Kafka over mTLS on `<KAFKA_TOPIC_PREFIX>download.client.<kind>`:
 
 | Topic | When | Carries |
 |---|---|---|
-| `…download.client.started` | on a successful add | `wanted_item_id`, title |
-| `…download.client.progress` | each poll while running | state, %, bytes, speed, eta |
-| `…download.client.completed` | poll sees completion | `wanted_item_id`, **`files[]`**, size |
-| `…download.client.failed` | poll sees failure | `error` (a `retriable` flag is reserved but always `false` today) |
+| `…download.client.started` | an add succeeded | `wanted_item_id`, title |
+| `…download.client.progress` | each poll while running | state, native state, %, bytes, speed, ETA, peers or health |
+| `…download.client.completed` | the client reports completion | `wanted_item_id`, **`files[]`**, size |
+| `…download.client.failed` | the client reports failure, or the job vanished | `error` |
 
-`KAFKA_TOPIC_PREFIX` defaults to `stube.`; a tenant sets e.g. `zaentrum-beta.` so
-its topics are `zaentrum-beta.download.client.*`. If Kafka isn't configured the
-publisher runs in log-only mode and the service stays up.
+Every event carries `client_id` (the job id at the client), `adapter` (the
+client id) and `client_type`. Without Kafka the publisher runs in log-only mode
+and the service stays ready. In acquire's capability manifest these topics
+belong to the `download-gateway` component, which is where they come from.
 
 ## Configuration
 
@@ -107,16 +156,18 @@ publisher runs in log-only mode and the service stays up.
 |---|---|---|
 | `DOWNLOAD_GATEWAY_ADDR` | `:8080` | listen address |
 | `POLL_INTERVAL` | `5s` | job poll cadence |
-| `OIDC_ISSUER` | — | blank ⇒ API unauthenticated |
-| `KAFKA_BROKERS` | — | bootstrap (`:9093` TLS listener) |
+| `OIDC_ISSUER` | — | require bearer tokens from this issuer |
+| `ALLOWED_CLIENTS` | — | OIDC client ids allowed to call; enables the configuration API |
+| `KAFKA_BROKERS` | — | bootstrap servers (TLS listener) |
 | `KAFKA_TLS_CERT` / `KAFKA_TLS_KEY` / `KAFKA_TLS_CA` | — | mTLS material |
-| `KAFKA_TOPIC_PREFIX` | `stube.` | tenant prefix |
-| `QBITTORRENT_BASE_URL` / `QBITTORRENT_USER` / `QBITTORRENT_PASS` | — | enable qBittorrent |
-| `NZBGET_URL` / `NZBGET_USER` / `NZBGET_PASS` / `NZBGET_CATEGORY` | — | enable NZBGet |
-| `ODOWNLOADER_BASE_URL` / `ODOWNLOADER_TOKEN` | — | enable oDownloader |
+| `KAFKA_TOPIC_PREFIX` | `stube.` | topic namespace — set your tenant prefix, e.g. `zaentrum-beta.` |
+| `NZBGET_*`, `QBITTORRENT_*`, `ODOWNLOADER_*` | — | optional environment clients (see above) |
+
+With acquire, the gateway needs no client variables at all.
 
 ## Next
 
-- [Indexer search & NZB-first](./indexers-and-nzb.md) — how acquire chooses which
-  `source`/`adapter` to hand the gateway.
-- [Deploying the addon](./deploying.md) — the download-plane manifests.
+- [Search sources & NZB-first](./indexers-and-nzb.md) — how acquire chooses the
+  release it hands the gateway.
+- [Deploying the addon](./deploying.md) — the two components and their
+  settings.

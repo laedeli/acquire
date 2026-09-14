@@ -28,7 +28,7 @@ NAV = [
     ("architecture", "Architecture"),
     ("acquire", "The acquire service"),
     ("download-gateway", "Download gateway & clients"),
-    ("indexers-and-nzb", "Indexer search & NZB-first"),
+    ("indexers-and-nzb", "Search sources & NZB-first"),
     ("deploying", "Deploying the addon"),
 ]
 

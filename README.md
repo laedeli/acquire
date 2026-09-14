@@ -13,17 +13,18 @@ builds on are documented canonically in the platform docs:
 
 ## What it is
 
-- **The acquire service** — requests (WantedItems), discovery search, the
-  grab decision (NZB-first ranking against your indexers), a transactional
-  outbox + scheduler, and ingestion of finished downloads into the catalog via
-  the platform's neutral ingest seam. Serves its own React console, hosted
-  inside the portal shell.
+- **The acquire service** — requests (WantedItems), discovery search, native
+  newznab/torznab search of your sources, the grab decision (NZB-first), a
+  transactional outbox + scheduler, and ingestion of finished downloads into
+  the catalog via the platform's neutral ingest seam. Search sources and
+  download clients are its own configuration, edited in its React console,
+  hosted inside the portal shell.
 - **[download-gateway](https://github.com/laedeli/download-gateway)** — the
   download plane: one API + Kafka events (`download.client.*`) in front of the
   actual download clients.
 
 The loop: a request becomes a **WantedItem** → a grab (manual, or `find &
-grab`, which searches indexers NZB-first) hands the source to the gateway →
+grab`, which searches your sources NZB-first) hands the release to the gateway →
 the gateway drives a download client and emits progress events → on
 `completed`, acquire ingests the finished file in place (`POST /api/ingest`,
 which emits `catalog.item.discovered`) → the core pipeline enriches, analyzes,
@@ -41,7 +42,7 @@ Full design docs live in [`docs/`](./docs) and are mirrored to this repo's
 - [The acquire service](./docs/acquire.md) — request lifecycle, API, console,
   schema.
 - [Download gateway & clients](./docs/download-gateway.md) — the download plane.
-- [Indexer search & NZB-first](./docs/indexers-and-nzb.md) — how auto-grab
+- [Search sources & NZB-first](./docs/indexers-and-nzb.md) — how auto-grab
   chooses a release.
 - [Deploying the addon](./docs/deploying.md) — installing it on a platform,
   the addon-side view of the platform's
@@ -51,8 +52,9 @@ Full design docs live in [`docs/`](./docs) and are mirrored to this repo's
 ## Status
 
 Live end-to-end on the author's instance: request → grab → download → ingest →
-package → playback, with the console (requests, downloads, search, indexers,
-series, missing backlog, quality profiles) hosted in the portal. Expect sharp
+package → playback, with the console (requests, downloads, search, search
+sources, download clients, series, missing backlog, quality profiles) hosted
+in the portal. Expect sharp
 edges: this is a young codebase serving one deployment so far, and
 installation still involves the manual steps the platform's
 [addon identity](https://github.com/zaentrum/zaentrum/wiki/extending-identity)

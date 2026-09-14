@@ -70,9 +70,10 @@ pipeline take it from `discovered` onward.
 
 ## Event-driven by design
 
-acquire is **consume-only** on the event bus. It never emits a platform event;
-it reacts to them and issues commands at the edges (request, grab, ingest) over
-plain HTTP. The bus carries the truth; HTTP carries the intent.
+acquire **consumes** platform events and emits none of its own beyond its
+internal schedule ticks (`acquire.schedule.due`, `acquire.schedule.saga.due`).
+It reacts to events and issues commands at the edges (request, search, grab,
+ingest) over plain HTTP. The bus carries the truth; HTTP carries the intent.
 
 ```mermaid
 sequenceDiagram
@@ -80,7 +81,7 @@ sequenceDiagram
     actor U as User
     participant W as chino-web
     participant A as acquire
-    participant PR as indexer aggregator
+    participant SS as search sources
     participant G as download-gateway
     participant DC as download client
     participant KM as katalog-manager
@@ -91,9 +92,10 @@ sequenceDiagram
     U->>A: POST /api/wanted  (request)
     Note over A: status = pending
     U->>A: find & grab (admin)
-    A->>PR: search indexers (NZB-first)
-    A->>G: POST /api/v1/downloads {adapter, source, wanted_item_id}
-    G->>DC: add (torrent / NZB)
+    A->>SS: newznab / torznab search, each with its own key (NZB-first)
+    A->>SS: fetch the winning NZB / .torrent
+    A->>G: POST /api/v1/downloads {client, payload_b64, wanted_item_id}
+    G->>DC: add (the file's content, never the source's link)
     Note over A: status = downloading
     DC-->>G: (poll) completed
     G-->>A: kafka download.client.completed
@@ -120,34 +122,53 @@ not replayed) and is poison-safe (undecodable messages are skipped).
 
 ## Component map
 
+The addon is two workloads. Search sources and download clients are external
+endpoints: acquire stores where they are — keys and passwords encrypted with
+`ACQUIRE_CONFIG_KEY` — and edits them in its console. The portal shows the
+component group and acquire's setup checklist, and never sees a configuration
+value.
+
 ```mermaid
 flowchart TB
     subgraph addon["acquire addon — laedeli"]
         direction TB
-        ACQ["acquire<br/><i>requests · brain · SPA · indexer search</i>"]
-        GW["download-gateway<br/><i>neutral client facade + events</i>"]
-        QB["qBittorrent<br/><i>torrents</i>"]
-        NZ["NZBGet<br/><i>usenet</i>"]
-        PRW["the indexer aggregator<br/><i>indexer aggregator (search only)</i>"]
+        ACQ["acquire (primary)<br/><i>requests · search · grab decisions · console<br/>configuration: sources, clients, grab policy</i>"]
+        GW["download-gateway (required)<br/><i>runs the pushed download clients + events</i>"]
+    end
+    subgraph external["external endpoints — configured in acquire, not deployed"]
+        SRC["search sources<br/><i>newznab · torznab</i>"]
+        DC["download clients<br/><i>NZBGet · qBittorrent · oDownloader</i>"]
     end
     subgraph coreapp["zaentrum core"]
-        POR["portal-api<br/><i>ui_extensions registry</i>"]
+        POR["portal-api<br/><i>addon install · components · setup checklist · proxy</i>"]
         WEB["chino-web / chino-api<br/><i>extension slot</i>"]
         KMG["katalog-manager<br/><i>/api/ingest + pipeline</i>"]
     end
+    DB[("acquire's Postgres")]
     BUS[["shared Kafka (mTLS, tenant-prefixed)"]]
 
-    POR -.->|"reads the capability manifest on install"| ACQ
+    POR -.->|"reads the capability manifest · GET /api/setup"| ACQ
     WEB -->|"read slot"| POR
-    ACQ -->|"grab"| GW
-    ACQ -->|"search"| PRW
-    GW --> QB & NZ
+    ACQ --> DB
+    ACQ -->|"search · fetch release files"| SRC
+    ACQ -->|"push clients · add downloads"| GW
+    GW --> DC
     GW -->|"download.client.*"| BUS
     BUS -->|"completed / failed"| ACQ
     ACQ -->|"POST /api/ingest"| KMG
     KMG -->|"discovered / packaged"| BUS
     BUS -->|"packaged"| ACQ
 ```
+
+| Component | Workload | Emits |
+|---|---|---|
+| `acquire` (primary) | `acquire` | `acquire.schedule.due`, `acquire.schedule.saga.due` |
+| `download-gateway` (required) | first label of `DOWNLOAD_GATEWAY_URL`'s host | `download.client.started`, `.progress`, `.completed`, `.failed` |
+
+The manifest also declares the setup checklist: `GET /api/setup` answers
+`ready`, `needs-setup` or `degraded` for **sources** and **clients** (required)
+and **grab-policy** (optional), and each section links to the console tab that
+edits it.
 
 ## The neutral-core property, restated
 
@@ -156,8 +177,9 @@ Every seam degrades to nothing:
 - **Zero registry rows** → `ExtensionSlot` renders `null`; an unreachable portal →
   chino-api returns `[]`. No button, no trace.
 - **Re-ingest of a known path** → no new item, no event. Idempotent.
-- **No download clients / no indexer configured** → the gateway simply registers
-  no adapters, and auto-grab reports “not configured.” The service stays up.
+- **No search sources / no download clients configured** → the gateway runs no
+  clients, auto-grab is off, and the setup checklist says what is missing. The
+  service stays up.
 
 That's what makes acquisition an *addon* and not a fork: install it for the whole
 capability, remove it for a clean, neutral platform.
@@ -166,5 +188,5 @@ capability, remove it for a clean, neutral platform.
 
 - [The acquire service](./acquire.md) — the request lifecycle, API, SPA and schema.
 - [Download gateway & clients](./download-gateway.md) — the download plane.
-- [Indexer search & NZB-first](./indexers-and-nzb.md) — how auto-grab picks a release.
+- [Search sources & NZB-first](./indexers-and-nzb.md) — where acquire searches and how auto-grab picks a release.
 - [Deploying the addon](./deploying.md) — installing it on a platform.
