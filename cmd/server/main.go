@@ -44,7 +44,7 @@ func main() {
 	tm := tmdb.New(cfg.TMDBAPIKey, cfg.TMDBLanguage)
 	br := sse.New()
 	if retired := config.RetiredSearchEnv(); len(retired) > 0 {
-		log.Printf("acquire: %s no longer configure anything — add search sources in the console instead",
+		log.Printf("acquire: %s set but no longer read — add search sources in the console instead",
 			strings.Join(retired, ", "))
 	}
 
