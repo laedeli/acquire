@@ -31,6 +31,8 @@ func TestCheck(t *testing.T) {
 		{"http://user:pw@worker:8080", false}, // credentials belong in the secret field
 		{"http://169.254.169.254/latest/meta-data", false},
 		{"http://[fe80::1]/", false},
+		{"http://[fe80::1%25eth0]:80/", false}, // a zone does not take it out of fe80::/10
+		{"http://[fd00:ec2::254%25eth0]/", false},
 		{"http://100.100.100.200/", false},
 		{"http://[fd00:ec2::254]/", false},
 		{"http://[::ffff:169.254.169.254]/", false},
@@ -86,7 +88,7 @@ func TestCheckResolvedRefusesNamesPointingAtMetadata(t *testing.T) {
 }
 
 func TestDialControlRefusesLinkLocal(t *testing.T) {
-	for _, addr := range []string{"169.254.169.254:80", "[fe80::1]:80", "100.100.100.200:80", "[fd00:ec2::254]:80"} {
+	for _, addr := range []string{"169.254.169.254:80", "[fe80::1]:80", "[fe80::1%eth0]:80", "100.100.100.200:80", "[fd00:ec2::254]:80", "[fd00:ec2::254%1]:80"} {
 		if err := dialControl("tcp", addr, nil); err == nil {
 			t.Errorf("dial to %s was allowed", addr)
 		}

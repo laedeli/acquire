@@ -60,7 +60,9 @@ var (
 // link-local ranges (which include the common metadata address) and the cloud
 // metadata addresses that live outside them.
 func Refused(a netip.Addr) bool {
-	a = a.Unmap()
+	// A zoned address (fe80::1%eth0) is outside every prefix as far as
+	// netip.Prefix.Contains is concerned; the zone only picks the interface.
+	a = a.Unmap().WithZone("")
 	if linkLocal4.Contains(a) || linkLocal6.Contains(a) {
 		return true
 	}
