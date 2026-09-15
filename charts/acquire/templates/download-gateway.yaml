@@ -1,0 +1,113 @@
+{{- $z := .Values.zaentrum }}
+{{- $labels := include "acquire.labels" (dict "root" $ "component" "download-gateway") }}
+{{- $certDir := include "acquire.kafkaCertDir" . }}
+# download-gateway — the addon's download facade (a required component). It
+# starts with no download clients: acquire pushes the ones configured in its
+# console at runtime. It emits the tenant's download.client.* events and accepts
+# tokens from acquire's service client only, which also enables that push.
+# One replica: pushed client configuration lives in its memory.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: download-gateway
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: download-gateway
+  template:
+    metadata:
+      labels:
+        {{- $labels | nindent 8 }}
+    spec:
+      {{- with include "acquire.imagePullSecrets" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      {{- with include "acquire.hostAliases" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "acquire.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: gateway
+          image: {{ include "acquire.image" (dict "root" $ "image" .Values.downloadGateway.image) | quote }}
+          {{- with .Values.downloadGateway.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          securityContext:
+            {{- include "acquire.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DOWNLOAD_GATEWAY_ADDR
+              value: ":8080"
+            - name: POLL_INTERVAL
+              value: {{ .Values.downloadGateway.pollInterval | quote }}
+            # Events: the platform's brokers and tenant prefix.
+            - name: KAFKA_BROKERS
+              value: {{ $z.events.brokers | quote }}
+            - name: KAFKA_TOPIC_PREFIX
+              value: {{ include "acquire.topicPrefix" . | quote }}
+            {{- if $z.events.tlsSecret }}
+            - name: KAFKA_TLS_CERT
+              value: {{ printf "%s/user.crt" $certDir | quote }}
+            - name: KAFKA_TLS_KEY
+              value: {{ printf "%s/user.key" $certDir | quote }}
+            - name: KAFKA_TLS_CA
+              value: {{ printf "%s/ca.crt" $certDir | quote }}
+            {{- end }}
+            # Only acquire's service client may call; only then is the client
+            # configuration API enabled.
+            - name: OIDC_ISSUER
+              value: {{ include "acquire.issuer" . | quote }}
+            - name: ALLOWED_CLIENTS
+              value: {{ .Values.oidc.serviceClientId | quote }}
+          {{- if $z.events.tlsSecret }}
+          volumeMounts:
+            - name: kafka-cert
+              mountPath: {{ $certDir }}
+              readOnly: true
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          {{- with .Values.downloadGateway.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with $z.events.tlsSecret }}
+      volumes:
+        - name: kafka-cert
+          secret:
+            secretName: {{ . | quote }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: download-gateway
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: download-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

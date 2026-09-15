@@ -1,0 +1,25 @@
+apiVersion: v2
+name: acquire
+description: >-
+  Requests and downloads for a zaentrum platform: the acquire service (console,
+  API, request and grab logic) and the download gateway it drives.
+type: application
+# Bump for every change that should reach installs: a version is published once.
+version: 0.1.0
+# The chart workflow replaces appVersion with the git sha it publishes from
+# (helm package --app-version <sha>). The image workflow pushes acquire under
+# that same sha, so a published chart runs exactly the code it was cut from.
+# Rendered straight from a checkout, the chart runs :latest.
+appVersion: latest
+home: https://github.com/laedeli/acquire
+sources:
+  - https://github.com/laedeli/acquire
+  - https://github.com/laedeli/download-gateway
+keywords: [zaentrum, addon]
+annotations:
+  zaentrum.io/addon: "true"
+  # The Service (port 80) that serves /.well-known/zaentrum-capability.json.
+  zaentrum.io/primary: acquire
+  zaentrum.io/title: acquire
+  zaentrum.io/description: requests and downloads
+  zaentrum.io/icon: download

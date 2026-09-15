@@ -1,0 +1,4 @@
+# Not part of the published chart.
+ci/
+*.tgz
+.DS_Store

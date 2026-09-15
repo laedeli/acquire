@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "acquire",
+  "description": "Install inputs of the acquire addon. Platform facts come from the operator's zaentrum block and are not inputs.",
+  "type": "object",
+  "required": ["database", "oidc", "config"],
+  "properties": {
+    "database": {
+      "type": "object",
+      "title": "Database",
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "title": "Postgres URL",
+          "description": "acquire's own Postgres database: postgres://user:password@host:5432/acquire?sslmode=require. acquire creates and migrates its tables on start.",
+          "writeOnly": true,
+          "minLength": 1
+        }
+      }
+    },
+    "oidc": {
+      "type": "object",
+      "title": "Identity",
+      "required": ["serviceClientSecret"],
+      "properties": {
+        "serviceClientId": {
+          "type": "string",
+          "title": "Service client id",
+          "description": "Confidential client (client credentials) acquire calls the download gateway and ingest with. The gateway accepts tokens from this client only.",
+          "default": "laedeli-acquire-svc",
+          "minLength": 1
+        },
+        "serviceClientSecret": {
+          "type": "string",
+          "title": "Service client secret",
+          "description": "Secret of the service client.",
+          "writeOnly": true,
+          "minLength": 1
+        },
+        "clientId": {
+          "type": "string",
+          "title": "Console client id",
+          "description": "Public (PKCE) client of the standalone console login.",
+          "default": "laedeli-acquire",
+          "minLength": 1
+        },
+        "adminRole": {
+          "type": "string",
+          "title": "Admin role",
+          "description": "Realm role that may grab, remove and configure.",
+          "default": "zaentrum-admin",
+          "minLength": 1
+        },
+        "userRole": {
+          "type": "string",
+          "title": "User role",
+          "description": "Realm role that may request.",
+          "default": "zaentrum-user",
+          "minLength": 1
+        }
+      }
+    },
+    "tmdb": {
+      "type": "object",
+      "title": "Discovery",
+      "properties": {
+        "apiKey": {
+          "type": "string",
+          "title": "TMDB API key",
+          "description": "Server-side key for discovery search. Without it discovery is off.",
+          "writeOnly": true
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "title": "Credential encryption",
+      "required": ["key"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "title": "Config key",
+          "description": "32 random bytes, base64. Encrypts every credential acquire stores (search source keys, download client passwords). Generated on first install when not given. Losing it means entering those credentials again.",
+          "writeOnly": true,
+          "minLength": 1,
+          "x-zaentrum-generate": "random-base64-32"
+        },
+        "previousKey": {
+          "type": "string",
+          "title": "Previous config key",
+          "description": "The key before a rotation, so stored credentials keep opening until they are entered again. Remove it afterwards.",
+          "writeOnly": true
+        }
+      }
+    },
+    "endpoints": {
+      "type": "object",
+      "title": "Where configuration may point",
+      "properties": {
+        "deny": {
+          "type": "string",
+          "title": "Denied hosts",
+          "description": "Comma list of hostnames and domain suffixes acquire must never connect to, e.g. .other-namespace.svc,files.example.org."
+        },
+        "allowInternal": {
+          "type": "boolean",
+          "title": "Allow services in other namespaces",
+          "description": "Allow search sources and download clients addressed as cluster services in other namespaces.",
+          "default": false
+        }
+      }
+    },
+    "downloadsRoot": {
+      "type": "string",
+      "title": "Downloads root",
+      "description": "Where finished downloads are visible to acquire when a download client names no folder of its own. The platform media storage is mounted at /var/lib/katalog.",
+      "default": "/var/lib/katalog",
+      "minLength": 1
+    }
+  }
+}

@@ -1,0 +1,103 @@
+# acquire addon chart.
+#
+# Installed by the zaentrum operator from a ZaentrumAddon: settings → addons → +
+# in the portal, `zae addon add oci://ghcr.io/laedeli/charts/acquire`, or a
+# ZaentrumAddon committed to a deploy repository. See docs/deploying.md.
+#
+# Three kinds of values:
+#   - `zaentrum`: platform facts. The operator sets this block and it overrides
+#     anything given here or in an install; templates read the platform from it
+#     and from nowhere else.
+#   - inputs: declared in values.schema.json (database, oidc, tmdb, config,
+#     endpoints, downloadsRoot). Secret inputs are rendered into the Secret
+#     `acquire-secrets` and reach the containers through secretKeyRef only.
+#   - tuning: images, resources, the in-namespace service URLs.
+
+# ── platform facts (set by the operator) ────────────────────────────────────
+zaentrum:
+  namespace: ""
+  hostname: ""
+  # The OIDC issuer the platform services use. Required.
+  issuer: ""
+  # When set, pods resolve the issuer host to this address (split horizon).
+  issuerHostAliasIP: ""
+  imagePullSecrets: []
+  partOf: ""
+  events:
+    brokers: ""
+    topicPrefix: ""
+    # Secret with user.crt, user.key and ca.crt for the event brokers (mTLS);
+    # "" means plaintext.
+    tlsSecret: ""
+  media:
+    # The platform media claim; mounted read-only into acquire.
+    claimName: ""
+
+# ── inputs (values.schema.json) ─────────────────────────────────────────────
+database: {}
+  # url: postgres://acquire:<password>@<host>:5432/acquire?sslmode=require
+  #   secret, required: acquire's own Postgres database.
+
+oidc:
+  # Confidential client acquire calls the gateway and ingest with. The gateway
+  # accepts tokens from this client only.
+  serviceClientId: laedeli-acquire-svc
+  # serviceClientSecret: secret, required.
+  # Public (PKCE) client of the standalone console login.
+  clientId: laedeli-acquire
+  adminRole: zaentrum-admin
+  userRole: zaentrum-user
+
+tmdb: {}
+  # apiKey: secret, optional: server-side key for discovery.
+
+config: {}
+  # key: secret: 32 random bytes, base64, encrypting every credential acquire
+  #   stores. The operator generates one on first install when none is given.
+  # previousKey: secret, optional: the key before a rotation.
+
+endpoints:
+  # Comma list of hostnames and domain suffixes configuration may never point at.
+  deny: ""
+  # true allows cluster services in other namespaces.
+  allowInternal: false
+
+# Where finished downloads are visible to acquire when a download client names
+# no folder of its own. The media claim is mounted at /var/lib/katalog.
+downloadsRoot: /var/lib/katalog
+
+# ── tuning ──────────────────────────────────────────────────────────────────
+acquire:
+  image:
+    repository: ghcr.io/laedeli/acquire
+    # Empty: the chart's appVersion, the git sha of this repository the chart
+    # was published from (acquire's image is pushed under the same sha).
+    tag: ""
+    # Empty: the cluster default (Always for :latest, IfNotPresent otherwise).
+    pullPolicy: ""
+  resources:
+    requests: { cpu: 20m, memory: 48Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+downloadGateway:
+  image:
+    repository: ghcr.io/laedeli/download-gateway
+    # The gateway is built in its own repository, so its tags are that
+    # repository's shas, not this one's, and the appVersion fallback does not
+    # apply to it. Pinned to a gateway commit this acquire speaks with; bump it
+    # together with the chart version.
+    tag: b60482461442492ca8cfa8e369204ae31336d290
+    pullPolicy: ""
+  # How often the gateway polls its download clients for job state.
+  pollInterval: 5s
+  resources:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+
+# In-namespace services acquire calls. The gateway component acquire declares is
+# the first label of the downloadGateway host, so keep it in step with the
+# gateway's Service name.
+urls:
+  downloadGateway: http://download-gateway
+  katalog: http://katalog-api
+  katalogManager: http://katalog-manager-api

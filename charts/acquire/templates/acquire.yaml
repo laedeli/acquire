@@ -1,0 +1,182 @@
+{{- $z := .Values.zaentrum }}
+{{- $labels := include "acquire.labels" (dict "root" $ "component" "acquire") }}
+{{- $secret := include "acquire.secretName" . }}
+{{- $certDir := include "acquire.kafkaCertDir" . }}
+# acquire — the primary component: console, API, and the capability manifest the
+# portal registers the addon from. It consumes download.client.* and
+# catalog.item.packaged, and ingests finished downloads through katalog-manager.
+# Search sources and download clients are configuration it stores itself.
+# No Route or Ingress: the portal proxies the console and the API.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acquire
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: acquire
+  template:
+    metadata:
+      labels:
+        {{- $labels | nindent 8 }}
+    spec:
+      {{- with include "acquire.imagePullSecrets" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      {{- with include "acquire.hostAliases" . }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "acquire.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: acquire
+          image: {{ include "acquire.image" (dict "root" $ "image" .Values.acquire.image) | quote }}
+          {{- with .Values.acquire.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          securityContext:
+            {{- include "acquire.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ADDR
+              value: ":8080"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Auth: the platform realm.
+            - name: OIDC_ISSUER
+              value: {{ include "acquire.issuer" . | quote }}
+            - name: ACQUIRE_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: ACQUIRE_ADMIN_ROLE
+              value: {{ .Values.oidc.adminRole | quote }}
+            - name: ACQUIRE_USER_ROLE
+              value: {{ .Values.oidc.userRole | quote }}
+            # acquire's own database.
+            - name: PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: database-url
+            # Services in the namespace.
+            - name: DOWNLOAD_GATEWAY_URL
+              value: {{ .Values.urls.downloadGateway | quote }}
+            - name: KATALOG_URL
+              value: {{ .Values.urls.katalog | quote }}
+            - name: KATALOG_MANAGER_URL
+              value: {{ .Values.urls.katalogManager | quote }}
+            # The service account (client credentials) for gateway and ingest calls.
+            - name: OIDC_TOKEN_URL
+              value: {{ include "acquire.tokenURL" . | quote }}
+            - name: ACQUIRE_SVC_CLIENT_ID
+              value: {{ .Values.oidc.serviceClientId | quote }}
+            - name: ACQUIRE_SVC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: oidc-service-client-secret
+            # Discovery; unset turns it off.
+            - name: TMDB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: tmdb-api-key
+                  optional: true
+            # Events: the platform's brokers and tenant prefix.
+            - name: KAFKA_BROKERS
+              value: {{ $z.events.brokers | quote }}
+            - name: KAFKA_TOPIC_PREFIX
+              value: {{ include "acquire.topicPrefix" . | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ include "acquire.kafkaGroupID" . | quote }}
+            {{- if $z.events.tlsSecret }}
+            - name: KAFKA_CERT_DIR
+              value: {{ $certDir | quote }}
+            {{- end }}
+            - name: ACQUIRE_DOWNLOADS_ROOT
+              value: {{ .Values.downloadsRoot | quote }}
+            # Encrypts the credentials acquire stores.
+            - name: ACQUIRE_CONFIG_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: config-key
+            - name: ACQUIRE_CONFIG_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: config-previous-key
+                  optional: true
+            # Where configuration may point.
+            - name: ACQUIRE_ENDPOINT_DENY
+              value: {{ .Values.endpoints.deny | default "" | quote }}
+            - name: ACQUIRE_ENDPOINT_ALLOW_INTERNAL
+              value: {{ if .Values.endpoints.allowInternal }}"true"{{ else }}"false"{{ end }}
+          {{- if or $z.events.tlsSecret $z.media.claimName }}
+          volumeMounts:
+            {{- if $z.events.tlsSecret }}
+            - name: kafka-cert
+              mountPath: {{ $certDir }}
+              readOnly: true
+            {{- end }}
+            {{- if $z.media.claimName }}
+            # The media storage, to find the files a download client finished.
+            - name: media
+              mountPath: /var/lib/katalog
+              readOnly: true
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          {{- with .Values.acquire.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if or $z.events.tlsSecret $z.media.claimName }}
+      volumes:
+        {{- with $z.events.tlsSecret }}
+        - name: kafka-cert
+          secret:
+            secretName: {{ . | quote }}
+        {{- end }}
+        {{- with $z.media.claimName }}
+        - name: media
+          persistentVolumeClaim:
+            claimName: {{ . | quote }}
+            readOnly: true
+        {{- end }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: acquire
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: acquire
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

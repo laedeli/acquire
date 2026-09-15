@@ -1,0 +1,29 @@
+# CI values: a full `zaentrum` block shaped as the operator sets it, and dummy
+# inputs. Rendered by .github/workflows/chart.yml and charts/chart_test.go.
+# Every secret input carries a distinctive dummy, so the tests can prove none of
+# them leaks outside the chart's Secret. Nothing here is a real credential.
+zaentrum:
+  namespace: zaentrum-example
+  hostname: zaentrum.example.org
+  issuer: https://sso.example.org/realms/example
+  issuerHostAliasIP: 192.0.2.10
+  imagePullSecrets: [registry-pull]
+  partOf: zaentrum-example-addons
+  events:
+    brokers: event-brokers.event-streaming.svc:9093
+    topicPrefix: zaentrum-example.
+    tlsSecret: event-client-tls
+  media:
+    claimName: media
+
+database:
+  url: postgres://acquire:ci-database-password@postgres.example.org:5432/acquire?sslmode=require
+oidc:
+  serviceClientSecret: ci-service-client-secret
+tmdb:
+  apiKey: ci-tmdb-api-key
+config:
+  key: Y2ktb25seS1jb25maWcta2V5LW5vdC1hLXNlY3JldCE=
+  previousKey: Y2ktb25seS1wcmV2aW91cy1rZXktbm90LXNlY3JldCE=
+endpoints:
+  deny: .other-namespace.svc,files.example.org
