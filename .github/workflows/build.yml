@@ -28,9 +28,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      # The chart tests (charts/) render the chart: the Helm version the zaentrum
+      # operator embeds, and REQUIRE_HELM so they fail rather than skip without it.
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.16.4
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+        env:
+          REQUIRE_HELM: "1"
       # Block scalar, not a plain one: the grep pattern contains a colon-space,
       # which YAML reads as a mapping and fails the whole workflow to parse.
       - name: the migration tests actually ran (they skip without a database)

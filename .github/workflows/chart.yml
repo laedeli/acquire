@@ -1,7 +1,7 @@
 name: chart
 
-# Checks charts/acquire, the zaentrum addon chart, and publishes one archive of
-# it in two places:
+# Checks charts/acquire, the zaentrum addon chart, on pull requests and pushes,
+# and publishes one archive of it from main in two places:
 #   - the GitHub release chart-acquire-<version>, asset acquire-<version>.tgz:
 #     the public https reference installs use;
 #   - oci://ghcr.io/laedeli/charts/acquire, version <version>, which anonymous
@@ -13,22 +13,31 @@ name: chart
 # code it was cut from. The archive is repacked reproducibly: a re-run of the
 # same commit builds the same digest and publishes nothing new. A published
 # version never changes, so a different archive for a version that is already
-# out fails the run. Bump version in Chart.yaml with every change under charts/.
+# out fails the publish job: bump version in Chart.yaml with every change a push
+# here publishes. Changes to the chart's tests and CI values do not run this on
+# main (build.yml tests them), so they need no bump.
 
 on:
   push:
     branches: [main]
     paths:
+      - "charts/acquire/**"
+      - "!charts/acquire/ci/**"
+      - ".github/workflows/chart.yml"
+      - "scripts/repack-chart.py"
+  pull_request:
+    paths:
       - "charts/**"
+      - ".github/workflows/chart.yml"
+      - "scripts/repack-chart.py"
   workflow_dispatch: {}
 
 permissions:
-  contents: write # the release
-  packages: write # the OCI push
+  contents: read
 
 concurrency:
-  group: chart
-  cancel-in-progress: false
+  group: chart-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CHART: charts/acquire
@@ -37,17 +46,17 @@ env:
   HELM_VERSION: v3.16.4
 
 jobs:
-  chart:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: ${{ env.HELM_VERSION }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24'
 
@@ -57,12 +66,10 @@ jobs:
       - name: render
         run: helm template acquire "$CHART" --namespace zaentrum-example --values "$CHART/ci/test-values.yaml"
 
-      # The tests skip without helm, so make sure they ran.
-      - name: operator guardrails
-        run: |
-          set -euo pipefail
-          go test ./charts/ -count=1 -v | tee chart-test.log
-          grep -q -- '--- PASS: TestChartGuardrails' chart-test.log
+      - name: chart tests
+        env:
+          REQUIRE_HELM: "1" # fail, never skip, without helm
+        run: go test ./charts/ -count=1 -v
 
       - name: package
         run: |
@@ -73,15 +80,50 @@ jobs:
           mkdir -p dist
           python3 scripts/repack-chart.py "build/$name-$version.tgz" "dist/$name-$version.tgz" "$(git log -1 --format=%ct)"
           helm show chart "dist/$name-$version.tgz"
-          digest="sha256:$(sha256sum "dist/$name-$version.tgz" | cut -d' ' -f1)"
+          echo "$name $version, appVersion $GITHUB_SHA: sha256:$(sha256sum "dist/$name-$version.tgz" | cut -d' ' -f1)"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chart
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: check
+    if: github.repository == 'laedeli/acquire' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # the release
+      packages: write # the OCI push
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+      # The very archive the check job tested.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chart
+          path: dist
+
+      - name: archive
+        run: |
+          set -euo pipefail
+          archive=$(ls dist/*.tgz)
+          name=$(helm show chart "$archive" | sed -n 's/^name: //p')
+          version=$(helm show chart "$archive" | sed -n 's/^version: //p')
+          [ "$archive" = "dist/$name-$version.tgz" ] || { echo "::error::unexpected archive $archive"; exit 1; }
           {
             echo "NAME=$name"
             echo "VERSION=$version"
             echo "ASSET=$name-$version.tgz"
             echo "TAG=chart-$name-$version"
-            echo "DIGEST=$digest"
+            echo "DIGEST=sha256:$(sha256sum "$archive" | cut -d' ' -f1)"
           } >> "$GITHUB_ENV"
-          echo "$name $version, appVersion $GITHUB_SHA: $digest"
 
       # Each place either lacks this version (publish it), holds this very
       # archive (nothing to do), or holds a different one (stop).
@@ -120,8 +162,9 @@ jobs:
           echo "OCI=$oci" >> "$GITHUB_ENV"
           echo "release: $release, oci: $oci"
 
-      # Publish only once the images the chart names exist: the image workflow
-      # builds acquire for this same commit, and a published version is final.
+      # Publish only once the images the chart names exist: the image workflows
+      # build acquire for this same commit and the gateway for its pinned one,
+      # and a published version is final.
       - name: wait for the images
         if: env.RELEASE != 'published' || env.OCI != 'published'
         env:
@@ -161,13 +204,15 @@ jobs:
           {
             echo "The acquire addon chart $VERSION for zaentrum, cut from $GITHUB_SHA."
             echo
-            echo "Install it in the portal (settings → addons → +) with the chart reference"
+            echo "Install it under the name acquire — the portal registers the addon under no other name."
+            echo "In the portal (settings → addons → +) use the chart reference"
             echo
             echo "    $url"
             echo
             echo "or with zae:"
             echo
-            echo "    zae addon add $url --name $NAME \\"
+            echo "    zae addon add $url --name acquire \\"
+            echo "      --url https://<instance> \\"
             echo "      --set-secret database.url=… --set-secret oidc.serviceClientSecret=…"
             echo
             echo "Archive digest: \`$DIGEST\`. The same archive is \`$REGISTRY/$NAME\` version $VERSION."
