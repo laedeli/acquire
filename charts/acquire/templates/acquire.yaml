@@ -97,10 +97,9 @@ spec:
               value: {{ include "acquire.topicPrefix" . | quote }}
             - name: KAFKA_GROUP_ID
               value: {{ include "acquire.kafkaGroupID" . | quote }}
-            {{- if $z.events.tlsSecret }}
+            # The mounted client certificate, or empty for plaintext brokers.
             - name: KAFKA_CERT_DIR
-              value: {{ $certDir | quote }}
-            {{- end }}
+              value: {{ if $z.events.tlsSecret }}{{ $certDir | quote }}{{ else }}""{{ end }}
             - name: ACQUIRE_DOWNLOADS_ROOT
               value: {{ .Values.downloadsRoot | quote }}
             # Encrypts the credentials acquire stores.

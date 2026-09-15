@@ -208,9 +208,11 @@ func TestChartPlatformFacts(t *testing.T) {
 	}
 }
 
-// TestChartWithoutOptionalFacts: plaintext brokers, no split horizon, no pull
-// secrets, no media claim and no optional secret inputs render nothing for
-// them, and the guardrails still pass.
+// TestChartWithoutOptionalFacts: on plaintext brokers (no events TLS secret) the
+// render is still valid and uses no certificate: acquire gets an empty
+// KAFKA_CERT_DIR, the gateway no TLS files, and nothing is mounted. No split
+// horizon, pull secrets, media claim or optional secret inputs render nothing
+// for them either.
 func TestChartWithoutOptionalFacts(t *testing.T) {
 	objs := mustRender(t,
 		"--set", "zaentrum.events.tlsSecret=",
@@ -224,6 +226,7 @@ func TestChartWithoutOptionalFacts(t *testing.T) {
 	if v := violations(objs, ""); len(v) > 0 {
 		t.Errorf("the operator would refuse: %s", strings.Join(v, "; "))
 	}
+	wantEnv(t, "acquire", containerOf(t, mustFind(t, objs, "Deployment", "acquire")), map[string]string{"KAFKA_CERT_DIR": ""})
 	for _, name := range []string{"acquire", "download-gateway"} {
 		dep := mustFind(t, objs, "Deployment", name)
 		pod := workloadOf(t, dep).Template.Spec
@@ -232,8 +235,8 @@ func TestChartWithoutOptionalFacts(t *testing.T) {
 			t.Errorf("%s: want no volumes, mounts, hostAliases or pull secrets, got %+v", dep.ref(), pod)
 		}
 		for _, e := range c.Env {
-			if e.Name == "KAFKA_CERT_DIR" || strings.HasPrefix(e.Name, "KAFKA_TLS_") {
-				t.Errorf("%s: %s is set for plaintext brokers", dep.ref(), e.Name)
+			if strings.HasPrefix(e.Name, "KAFKA_TLS_") || (e.Name == "KAFKA_CERT_DIR" && e.Value.Value != "") {
+				t.Errorf("%s: %s=%q set for plaintext brokers", dep.ref(), e.Name, e.Value.Value)
 			}
 		}
 		if _, ok := dep.Metadata.Labels["app.kubernetes.io/part-of"]; ok {
@@ -246,6 +249,44 @@ func TestChartWithoutOptionalFacts(t *testing.T) {
 		}
 	}
 	checkSecretRefs(t, objs)
+}
+
+// TestChartReleaseName: the addon only registers under the name acquire, so any
+// other release name fails the render. The operator reports a template failure
+// by its location alone, so that location must name the reason.
+func TestChartReleaseName(t *testing.T) {
+	helm := os.Getenv("HELM")
+	if helm == "" {
+		var err error
+		if helm, err = exec.LookPath("helm"); err != nil {
+			t.Skip("helm not found: set HELM or put helm on PATH")
+		}
+	}
+	render := func(name string) (string, string, error) {
+		cmd := exec.Command(helm, "template", name, chartDir, "--namespace", namespace, "--values", testValues)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		return stdout.String(), stderr.String(), err
+	}
+
+	_, stderr, err := render("acquire-test")
+	if err == nil {
+		t.Fatal("rendered under the release name acquire-test")
+	}
+	// The operator's reduction of a template error to its location.
+	loc := regexp.MustCompile(`\(([^()]+?\.(?:yaml|yml|tpl|txt):\d+(?::\d+)?)\)`).FindStringSubmatch(stderr)
+	if loc == nil || !strings.Contains(loc[1], "templates/release-name-must-be-acquire.yaml:") {
+		t.Errorf("want a template error located in templates/release-name-must-be-acquire.yaml, got %s", stderr)
+	}
+
+	out, stderr, err := render("acquire")
+	if err != nil {
+		t.Fatalf("%v: %s", err, stderr)
+	}
+	if strings.Contains(out, "release-name-must-be-acquire") {
+		t.Error("the release name guard renders output under the name acquire")
+	}
 }
 
 // TestChartRequiresInputs: an install without a required secret input is

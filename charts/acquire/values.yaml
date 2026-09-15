@@ -27,7 +27,8 @@ zaentrum:
     brokers: ""
     topicPrefix: ""
     # Secret with user.crt, user.key and ca.crt for the event brokers (mTLS);
-    # "" means plaintext.
+    # "" means plaintext brokers: nothing is mounted and both components
+    # connect without TLS.
     tlsSecret: ""
   media:
     # The platform media claim; mounted read-only into acquire.
@@ -86,7 +87,7 @@ downloadGateway:
     # repository's shas, not this one's, and the appVersion fallback does not
     # apply to it. Pinned to a gateway commit this acquire speaks with; bump it
     # together with the chart version.
-    tag: b60482461442492ca8cfa8e369204ae31336d290
+    tag: 11c72056542dcd4836710df8d21e877b7da4fa91
     pullPolicy: ""
   # How often the gateway polls its download clients for job state.
   pollInterval: 5s

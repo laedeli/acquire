@@ -1,0 +1,21 @@
+{{- /*
+RELEASE NAME MUST BE "acquire".
+
+The portal registers this addon from the capability manifest acquire serves,
+whose key is "acquire", and it does so only for the addon installed under that
+name: installed under any other name the components would run but the addon
+would never register. So an install under another name fails here.
+
+The operator reports a template failure only by its location, as
+"template error at acquire/templates/release-name-must-be-acquire.yaml:<line>",
+never with the message: this file's name, and this comment, are the message.
+Install the addon with the name acquire (zae addon add … --name acquire, or
+metadata.name: acquire on a ZaentrumAddon).
+
+The file renders nothing for the release acquire. It must not start with an
+underscore: Helm never executes such files on their own, so the check would
+not run.
+*/ -}}
+{{- if ne .Release.Name "acquire" }}
+{{- fail "this addon must be installed under the name acquire" }}
+{{- end }}
