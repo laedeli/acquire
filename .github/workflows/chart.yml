@@ -1,0 +1,190 @@
+name: chart
+
+# Checks charts/acquire, the zaentrum addon chart, and publishes one archive of
+# it in two places:
+#   - the GitHub release chart-acquire-<version>, asset acquire-<version>.tgz:
+#     the public https reference installs use;
+#   - oci://ghcr.io/laedeli/charts/acquire, version <version>, which anonymous
+#     installs can pull once that package is public (a new package starts
+#     private).
+#
+# The version comes from Chart.yaml. appVersion is stamped with the commit sha,
+# the tag the image workflow pushes acquire under, so a published chart runs the
+# code it was cut from. The archive is repacked reproducibly: a re-run of the
+# same commit builds the same digest and publishes nothing new. A published
+# version never changes, so a different archive for a version that is already
+# out fails the run. Bump version in Chart.yaml with every change under charts/.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "charts/**"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # the release
+  packages: write # the OCI push
+
+concurrency:
+  group: chart
+  cancel-in-progress: false
+
+env:
+  CHART: charts/acquire
+  REGISTRY: oci://ghcr.io/laedeli/charts
+  # The Helm SDK the zaentrum operator renders addon charts with.
+  HELM_VERSION: v3.16.4
+
+jobs:
+  chart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: lint
+        run: helm lint "$CHART" --strict --values "$CHART/ci/test-values.yaml"
+
+      - name: render
+        run: helm template acquire "$CHART" --namespace zaentrum-example --values "$CHART/ci/test-values.yaml"
+
+      # The tests skip without helm, so make sure they ran.
+      - name: operator guardrails
+        run: |
+          set -euo pipefail
+          go test ./charts/ -count=1 -v | tee chart-test.log
+          grep -q -- '--- PASS: TestChartGuardrails' chart-test.log
+
+      - name: package
+        run: |
+          set -euo pipefail
+          name=$(helm show chart "$CHART" | sed -n 's/^name: //p')
+          version=$(helm show chart "$CHART" | sed -n 's/^version: //p')
+          helm package "$CHART" --app-version "$GITHUB_SHA" --destination build
+          mkdir -p dist
+          python3 scripts/repack-chart.py "build/$name-$version.tgz" "dist/$name-$version.tgz" "$(git log -1 --format=%ct)"
+          helm show chart "dist/$name-$version.tgz"
+          digest="sha256:$(sha256sum "dist/$name-$version.tgz" | cut -d' ' -f1)"
+          {
+            echo "NAME=$name"
+            echo "VERSION=$version"
+            echo "ASSET=$name-$version.tgz"
+            echo "TAG=chart-$name-$version"
+            echo "DIGEST=$digest"
+          } >> "$GITHUB_ENV"
+          echo "$name $version, appVersion $GITHUB_SHA: $digest"
+
+      # Each place either lacks this version (publish it), holds this very
+      # archive (nothing to do), or holds a different one (stop).
+      - name: compare with what is published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          digest_of() { echo "sha256:$(sha256sum "$1" | cut -d' ' -f1)"; }
+          refuse() {
+            echo "::error::$1 already holds $NAME $VERSION as $2; this run built $DIGEST. Bump version in $CHART/Chart.yaml to publish a change."
+            exit 1
+          }
+          mkdir -p released pulled
+
+          release=create
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            release=upload
+            if gh release download "$TAG" --pattern "$ASSET" --dir released 2>/dev/null; then
+              got=$(digest_of "released/$ASSET")
+              [ "$got" = "$DIGEST" ] || refuse "release $TAG" "$got"
+              release=published
+            fi
+          fi
+
+          echo "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          oci=push
+          if helm pull "$REGISTRY/$NAME" --version "$VERSION" --destination pulled >/dev/null 2>&1; then
+            got=$(digest_of "pulled/$ASSET")
+            [ "$got" = "$DIGEST" ] || refuse "$REGISTRY/$NAME" "$got"
+            oci=published
+          fi
+
+          echo "RELEASE=$release" >> "$GITHUB_ENV"
+          echo "OCI=$oci" >> "$GITHUB_ENV"
+          echo "release: $release, oci: $oci"
+
+      # Publish only once the images the chart names exist: the image workflow
+      # builds acquire for this same commit, and a published version is final.
+      - name: wait for the images
+        if: env.RELEASE != 'published' || env.OCI != 'published'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          images=$(helm template acquire "dist/$ASSET" --namespace zaentrum-example --values "$CHART/ci/test-values.yaml" \
+            | sed -n 's/^ *image: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' | sort -u)
+          for image in $images; do
+            for attempt in $(seq 60); do
+              if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+                echo "$image exists"
+                break
+              fi
+              if [ "$attempt" = 60 ]; then
+                echo "::error::$image does not exist after 30 minutes"
+                exit 1
+              fi
+              echo "waiting for $image"
+              sleep 30
+            done
+          done
+
+      - name: release the archive
+        if: env.RELEASE != 'published'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE" = upload ]; then
+            gh release upload "$TAG" "dist/$ASSET"
+            exit 0
+          fi
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET"
+          {
+            echo "The acquire addon chart $VERSION for zaentrum, cut from $GITHUB_SHA."
+            echo
+            echo "Install it in the portal (settings → addons → +) with the chart reference"
+            echo
+            echo "    $url"
+            echo
+            echo "or with zae:"
+            echo
+            echo "    zae addon add $url --name $NAME \\"
+            echo "      --set-secret database.url=… --set-secret oidc.serviceClientSecret=…"
+            echo
+            echo "Archive digest: \`$DIGEST\`. The same archive is \`$REGISTRY/$NAME\` version $VERSION."
+          } > notes.md
+          gh release create "$TAG" "dist/$ASSET" --target "$GITHUB_SHA" \
+            --title "acquire chart $VERSION" --notes-file notes.md --latest=false
+
+      - name: push to ghcr
+        if: env.OCI != 'published'
+        run: helm push "dist/$ASSET" "$REGISTRY"
+
+      - name: summary
+        run: |
+          {
+            echo "### acquire chart $VERSION"
+            echo
+            echo "- digest: \`$DIGEST\`"
+            echo "- https: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET (release: $RELEASE)"
+            echo "- oci: \`$REGISTRY/$NAME\` version $VERSION (oci: $OCI)"
+          } >> "$GITHUB_STEP_SUMMARY"
