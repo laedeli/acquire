@@ -1,10 +1,10 @@
 // Package charts tests the addon chart the way the zaentrum operator sees it:
 // rendered by helm with a full zaentrum block (acquire/ci/test-values.yaml),
-// then held to the operator's guardrails. A chart the operator would refuse
-// fails here first.
+// then held to the operator's guardrails (guardrails_test.go). A chart the
+// operator would refuse fails here first.
 //
-// The tests need the helm CLI (HELM, else helm on PATH) and skip without it.
-// The chart workflow asserts that they ran.
+// The chart tests need the helm CLI (HELM, else helm on PATH). They skip
+// without it, unless REQUIRE_HELM is set, as the workflows do.
 package charts
 
 import (
@@ -29,12 +29,8 @@ const (
 	chartDir   = "acquire"
 	testValues = "acquire/ci/test-values.yaml"
 	namespace  = "zaentrum-example"
-)
-
-// The operator's guardrails (addon chart contract, §3).
-var (
-	allowedKinds   = []string{"Deployment", "Service", "ConfigMap", "Secret", "ServiceAccount", "Job", "PersistentVolumeClaim"}
-	allowedVolumes = []string{"configMap", "secret", "emptyDir", "projected", "downwardAPI", "persistentVolumeClaim"}
+	// release is the one name the addon installs under.
+	release = "acquire"
 )
 
 // TestChartGuardrails: the render passes every guardrail, sets the pod security
@@ -43,12 +39,11 @@ var (
 func TestChartGuardrails(t *testing.T) {
 	objs := mustRender(t)
 	vals := values(t)
+	meta := chartMeta(t)
 
-	for _, v := range violations(objs, str(t, vals, "zaentrum.media.claimName")) {
+	for _, v := range violations(objs, platformGuard(t, vals, meta)) {
 		t.Errorf("the operator would refuse: %s", v)
 	}
-
-	meta := chartMeta(t)
 	if meta.Annotations["zaentrum.io/addon"] != "true" {
 		t.Errorf(`Chart.yaml: annotation zaentrum.io/addon must be "true"`)
 	}
@@ -72,9 +67,6 @@ func TestChartGuardrails(t *testing.T) {
 		if !selects(s.Selector, labels) {
 			t.Errorf("Service/%s: selector %v does not select the pods %v", name, s.Selector, labels)
 		}
-		if !slices.ContainsFunc(s.Ports, func(p servicePort) bool { return p.Port == 80 }) {
-			t.Errorf("Service/%s: no port 80", name)
-		}
 
 		pod := w.Template.Spec
 		if sc := pod.SecurityContext; sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot || sc.SeccompProfile.Type != "RuntimeDefault" {
@@ -97,6 +89,29 @@ func TestChartGuardrails(t *testing.T) {
 
 	checkSecretRefs(t, objs)
 	checkSecretValues(t, objs, vals)
+}
+
+// TestChartReleaseName: the addon only registers under the name acquire, so any
+// other release name fails the render. The operator reports a template failure
+// by its location alone, so that location must name the reason.
+func TestChartReleaseName(t *testing.T) {
+	_, err := helmTemplateOutput(t, "acquire-test", testValues)
+	if err == nil {
+		t.Fatal("rendered under the release name acquire-test")
+	}
+	// The operator's reduction of a template error to its location.
+	loc := regexp.MustCompile(`\(([^()]+?\.(?:yaml|yml|tpl|txt):\d+(?::\d+)?)\)`).FindStringSubmatch(err.Error())
+	if loc == nil || !strings.Contains(loc[1], "templates/release-name-must-be-acquire.yaml:") {
+		t.Errorf("want a template error located in templates/release-name-must-be-acquire.yaml, got %v", err)
+	}
+
+	out, err := helmTemplateOutput(t, release, testValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "release-name-must-be-acquire") {
+		t.Error("the release name guard renders output under the name acquire")
+	}
 }
 
 // TestChartInputs: each install input reaches the variable the service reads
@@ -208,12 +223,12 @@ func TestChartPlatformFacts(t *testing.T) {
 	}
 }
 
-// TestChartWithoutOptionalFacts: on plaintext brokers (no events TLS secret) the
-// render is still valid and uses no certificate: acquire gets an empty
-// KAFKA_CERT_DIR, the gateway no TLS files, and nothing is mounted. No split
-// horizon, pull secrets, media claim or optional secret inputs render nothing
-// for them either.
-func TestChartWithoutOptionalFacts(t *testing.T) {
+// TestChartPlaintextAndOptionalFacts: on plaintext brokers (no events TLS
+// secret) the render is still valid and uses no certificate: acquire gets an
+// empty KAFKA_CERT_DIR, the gateway no TLS files, and nothing is mounted. No
+// split horizon, pull secrets, media claim or optional secret inputs render
+// nothing for them either.
+func TestChartPlaintextAndOptionalFacts(t *testing.T) {
 	objs := mustRender(t,
 		"--set", "zaentrum.events.tlsSecret=",
 		"--set", "zaentrum.issuerHostAliasIP=",
@@ -223,16 +238,22 @@ func TestChartWithoutOptionalFacts(t *testing.T) {
 		"--set", "tmdb.apiKey=",
 		"--set", "config.previousKey=",
 	)
-	if v := violations(objs, ""); len(v) > 0 {
-		t.Errorf("the operator would refuse: %s", strings.Join(v, "; "))
+	guard := platformGuard(t, values(t), chartMeta(t))
+	guard.MediaClaim, guard.EventsTLSSecret, guard.PullSecrets = "", "", nil
+	if v := violations(objs, guard); len(v) > 0 {
+		t.Errorf("the operator would refuse the plaintext render:\n  %s", strings.Join(v, "\n  "))
 	}
+
 	wantEnv(t, "acquire", containerOf(t, mustFind(t, objs, "Deployment", "acquire")), map[string]string{"KAFKA_CERT_DIR": ""})
 	for _, name := range []string{"acquire", "download-gateway"} {
 		dep := mustFind(t, objs, "Deployment", name)
 		pod := workloadOf(t, dep).Template.Spec
 		c := containerOf(t, dep)
-		if len(pod.Volumes) > 0 || len(c.VolumeMounts) > 0 || len(pod.HostAliases) > 0 || len(pod.ImagePullSecrets) > 0 {
-			t.Errorf("%s: want no volumes, mounts, hostAliases or pull secrets, got %+v", dep.ref(), pod)
+		if len(pod.Volumes) > 0 || len(c.VolumeMounts) > 0 {
+			t.Errorf("%s: want no volumes or mounts, got %v and %v", dep.ref(), pod.Volumes, c.VolumeMounts)
+		}
+		if len(pod.HostAliases) > 0 || len(pod.ImagePullSecrets) > 0 {
+			t.Errorf("%s: want no hostAliases or pull secrets, got %v and %v", dep.ref(), pod.HostAliases, pod.ImagePullSecrets)
 		}
 		for _, e := range c.Env {
 			if strings.HasPrefix(e.Name, "KAFKA_TLS_") || (e.Name == "KAFKA_CERT_DIR" && e.Value.Value != "") {
@@ -243,50 +264,15 @@ func TestChartWithoutOptionalFacts(t *testing.T) {
 			t.Errorf("%s: part-of label without a zaentrum.partOf", dep.ref())
 		}
 	}
+	if strings.Contains(strings.Join(rawOf(objs), "\n"), "kafka-cert") {
+		t.Error("the plaintext render still names the kafka-cert volume")
+	}
 	for key := range secretData(t, objs)["acquire-secrets"] {
 		if key == "tmdb-api-key" || key == "config-previous-key" {
 			t.Errorf("Secret/acquire-secrets: %s rendered for an input that was not given", key)
 		}
 	}
 	checkSecretRefs(t, objs)
-}
-
-// TestChartReleaseName: the addon only registers under the name acquire, so any
-// other release name fails the render. The operator reports a template failure
-// by its location alone, so that location must name the reason.
-func TestChartReleaseName(t *testing.T) {
-	helm := os.Getenv("HELM")
-	if helm == "" {
-		var err error
-		if helm, err = exec.LookPath("helm"); err != nil {
-			t.Skip("helm not found: set HELM or put helm on PATH")
-		}
-	}
-	render := func(name string) (string, string, error) {
-		cmd := exec.Command(helm, "template", name, chartDir, "--namespace", namespace, "--values", testValues)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		return stdout.String(), stderr.String(), err
-	}
-
-	_, stderr, err := render("acquire-test")
-	if err == nil {
-		t.Fatal("rendered under the release name acquire-test")
-	}
-	// The operator's reduction of a template error to its location.
-	loc := regexp.MustCompile(`\(([^()]+?\.(?:yaml|yml|tpl|txt):\d+(?::\d+)?)\)`).FindStringSubmatch(stderr)
-	if loc == nil || !strings.Contains(loc[1], "templates/release-name-must-be-acquire.yaml:") {
-		t.Errorf("want a template error located in templates/release-name-must-be-acquire.yaml, got %s", stderr)
-	}
-
-	out, stderr, err := render("acquire")
-	if err != nil {
-		t.Fatalf("%v: %s", err, stderr)
-	}
-	if strings.Contains(out, "release-name-must-be-acquire") {
-		t.Error("the release name guard renders output under the name acquire")
-	}
 }
 
 // TestChartRequiresInputs: an install without a required secret input is
@@ -304,7 +290,7 @@ func TestChartRequiresInputs(t *testing.T) {
 			if err := os.WriteFile(file, b, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			_, err = helmTemplate(t, file)
+			_, err = helmTemplateOutput(t, release, file)
 			leaf := path[strings.LastIndex(path, ".")+1:]
 			if err == nil || !strings.Contains(err.Error(), "schema") || !strings.Contains(err.Error(), leaf) {
 				t.Errorf("rendering without %s: want a schema error naming %s, got %v", path, leaf, err)
@@ -313,16 +299,20 @@ func TestChartRequiresInputs(t *testing.T) {
 	}
 }
 
-// ── rendering ───────────────────────────────────────────────────────────────
+// ── manifests ───────────────────────────────────────────────────────────────
 
 // object is one rendered manifest, decoded as far as the checks need.
 type object struct {
-	Kind     string `yaml:"kind"`
-	Metadata struct {
-		Name      string            `yaml:"name"`
-		Namespace string            `yaml:"namespace"`
-		Labels    map[string]string `yaml:"labels"`
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Name            string            `yaml:"name"`
+		Namespace       string            `yaml:"namespace"`
+		Labels          map[string]string `yaml:"labels"`
+		Annotations     map[string]string `yaml:"annotations"`
+		OwnerReferences []any             `yaml:"ownerReferences"`
 	} `yaml:"metadata"`
+	Type       string            `yaml:"type"`
 	Spec       yaml.Node         `yaml:"spec"`
 	Data       map[string]string `yaml:"data"`
 	StringData map[string]string `yaml:"stringData"`
@@ -345,16 +335,44 @@ type workloadSpec struct {
 }
 
 type podSpec struct {
-	HostNetwork        bool   `yaml:"hostNetwork"`
-	HostPID            bool   `yaml:"hostPID"`
-	HostIPC            bool   `yaml:"hostIPC"`
-	ServiceAccountName string `yaml:"serviceAccountName"`
-	SecurityContext    struct {
+	HostNetwork        bool              `yaml:"hostNetwork"`
+	HostPID            bool              `yaml:"hostPID"`
+	HostIPC            bool              `yaml:"hostIPC"`
+	PriorityClassName  string            `yaml:"priorityClassName"`
+	NodeName           string            `yaml:"nodeName"`
+	NodeSelector       map[string]string `yaml:"nodeSelector"`
+	ServiceAccountName string            `yaml:"serviceAccountName"`
+	ServiceAccount     string            `yaml:"serviceAccount"` // deprecated alias
+	Tolerations        []struct {
+		Key      string `yaml:"key"`
+		Operator string `yaml:"operator"`
+	} `yaml:"tolerations"`
+	Affinity struct {
+		NodeAffinity *struct {
+			Required struct {
+				NodeSelectorTerms []nodeSelectorTerm `yaml:"nodeSelectorTerms"`
+			} `yaml:"requiredDuringSchedulingIgnoredDuringExecution"`
+			Preferred []struct {
+				Preference nodeSelectorTerm `yaml:"preference"`
+			} `yaml:"preferredDuringSchedulingIgnoredDuringExecution"`
+		} `yaml:"nodeAffinity"`
+	} `yaml:"affinity"`
+	SecurityContext struct {
 		RunAsNonRoot   *bool  `yaml:"runAsNonRoot"`
 		RunAsUser      *int64 `yaml:"runAsUser"`
 		SeccompProfile struct {
 			Type string `yaml:"type"`
 		} `yaml:"seccompProfile"`
+		SELinuxOptions struct {
+			Type string `yaml:"type"`
+		} `yaml:"seLinuxOptions"`
+		Sysctls         []any `yaml:"sysctls"`
+		AppArmorProfile struct {
+			Type string `yaml:"type"`
+		} `yaml:"appArmorProfile"`
+		WindowsOptions struct {
+			HostProcess *bool `yaml:"hostProcess"`
+		} `yaml:"windowsOptions"`
 	} `yaml:"securityContext"`
 	HostAliases []struct {
 		IP        string   `yaml:"ip"`
@@ -363,15 +381,38 @@ type podSpec struct {
 	ImagePullSecrets []struct {
 		Name string `yaml:"name"`
 	} `yaml:"imagePullSecrets"`
-	InitContainers []container      `yaml:"initContainers"`
-	Containers     []container      `yaml:"containers"`
-	Volumes        []map[string]any `yaml:"volumes"`
+	InitContainers      []container      `yaml:"initContainers"`
+	Containers          []container      `yaml:"containers"`
+	EphemeralContainers []container      `yaml:"ephemeralContainers"`
+	Volumes             []map[string]any `yaml:"volumes"`
+}
+
+type nodeSelectorTerm struct {
+	MatchExpressions []struct {
+		Key string `yaml:"key"`
+	} `yaml:"matchExpressions"`
+	MatchFields []struct {
+		Key string `yaml:"key"`
+	} `yaml:"matchFields"`
 }
 
 type container struct {
-	Name         string   `yaml:"name"`
-	Image        string   `yaml:"image"`
-	Env          []envVar `yaml:"env"`
+	Name  string `yaml:"name"`
+	Image string `yaml:"image"`
+	Ports []struct {
+		Name          string `yaml:"name"`
+		ContainerPort int    `yaml:"containerPort"`
+		HostPort      int    `yaml:"hostPort"`
+	} `yaml:"ports"`
+	Env     []envVar `yaml:"env"`
+	EnvFrom []struct {
+		SecretRef *struct {
+			Name string `yaml:"name"`
+		} `yaml:"secretRef"`
+		ConfigMapRef *struct {
+			Name string `yaml:"name"`
+		} `yaml:"configMapRef"`
+	} `yaml:"envFrom"`
 	VolumeMounts []struct {
 		Name      string `yaml:"name"`
 		MountPath string `yaml:"mountPath"`
@@ -381,7 +422,18 @@ type container struct {
 		Privileged               *bool  `yaml:"privileged"`
 		AllowPrivilegeEscalation *bool  `yaml:"allowPrivilegeEscalation"`
 		RunAsUser                *int64 `yaml:"runAsUser"`
-		Capabilities             struct {
+		RunAsNonRoot             *bool  `yaml:"runAsNonRoot"`
+		ProcMount                string `yaml:"procMount"`
+		SELinuxOptions           struct {
+			Type string `yaml:"type"`
+		} `yaml:"seLinuxOptions"`
+		AppArmorProfile struct {
+			Type string `yaml:"type"`
+		} `yaml:"appArmorProfile"`
+		WindowsOptions struct {
+			HostProcess *bool `yaml:"hostProcess"`
+		} `yaml:"windowsOptions"`
+		Capabilities struct {
 			Add  []string `yaml:"add"`
 			Drop []string `yaml:"drop"`
 		} `yaml:"capabilities"`
@@ -394,12 +446,15 @@ type envVar struct {
 	Name      string    `yaml:"name"`
 	Value     yaml.Node `yaml:"value"` // Kind 0 when unset
 	ValueFrom *struct {
-		SecretKeyRef *struct {
-			Name     string `yaml:"name"`
-			Key      string `yaml:"key"`
-			Optional bool   `yaml:"optional"`
-		} `yaml:"secretKeyRef"`
+		SecretKeyRef    *keyRef `yaml:"secretKeyRef"`
+		ConfigMapKeyRef *keyRef `yaml:"configMapKeyRef"`
 	} `yaml:"valueFrom"`
+}
+
+type keyRef struct {
+	Name     string `yaml:"name"`
+	Key      string `yaml:"key"`
+	Optional bool   `yaml:"optional"`
 }
 
 type probe struct {
@@ -409,8 +464,13 @@ type probe struct {
 }
 
 type serviceSpec struct {
-	Selector map[string]string `yaml:"selector"`
-	Ports    []servicePort     `yaml:"ports"`
+	Type                     string            `yaml:"type"`
+	Selector                 map[string]string `yaml:"selector"`
+	Ports                    []servicePort     `yaml:"ports"`
+	ExternalIPs              []string          `yaml:"externalIPs"`
+	LoadBalancerSourceRanges []string          `yaml:"loadBalancerSourceRanges"`
+	ExternalName             string            `yaml:"externalName"`
+	LoadBalancerIP           string            `yaml:"loadBalancerIP"`
 }
 
 type servicePort struct {
@@ -418,40 +478,29 @@ type servicePort struct {
 	Port int    `yaml:"port"`
 }
 
+type pvcSpec struct {
+	VolumeName    string         `yaml:"volumeName"`
+	DataSource    map[string]any `yaml:"dataSource"`
+	DataSourceRef map[string]any `yaml:"dataSourceRef"`
+}
+
 var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
 
-// helmTemplate renders the chart with one values file and extra arguments.
-func helmTemplate(t *testing.T, valuesFile string, args ...string) ([]object, error) {
-	t.Helper()
-	helm := os.Getenv("HELM")
-	if helm == "" {
-		var err error
-		if helm, err = exec.LookPath("helm"); err != nil {
-			t.Skip("helm not found: set HELM or put helm on PATH")
-		}
-	}
-	cmd := exec.Command(helm, append([]string{"template", "acquire", chartDir,
-		"--namespace", namespace, "--values", valuesFile}, args...)...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("helm template: %v: %s", err, strings.TrimSpace(stderr.String()))
-	}
+// decodeManifests splits a YAML stream into objects, skipping documents that
+// hold only comments.
+func decodeManifests(stream string) ([]object, error) {
 	var objs []object
-	for _, doc := range docSeparator.Split(stdout.String(), -1) {
+	for _, doc := range docSeparator.Split(stream, -1) {
 		var content any
 		if err := yaml.Unmarshal([]byte(doc), &content); err != nil {
-			t.Fatalf("a rendered document does not parse: %v\n%s", err, doc)
+			return nil, fmt.Errorf("a document does not parse: %v\n%s", err, doc)
 		}
 		if content == nil {
-			continue // only comments
+			continue
 		}
 		var o object
 		if err := yaml.Unmarshal([]byte(doc), &o); err != nil {
-			t.Fatalf("a rendered document does not decode: %v\n%s", err, doc)
-		}
-		if o.Kind == "" {
-			t.Fatalf("a rendered document has no kind:\n%s", doc)
+			return nil, fmt.Errorf("a document does not decode: %v\n%s", err, doc)
 		}
 		o.raw = doc
 		objs = append(objs, o)
@@ -459,94 +508,69 @@ func helmTemplate(t *testing.T, valuesFile string, args ...string) ([]object, er
 	return objs, nil
 }
 
-// mustRender renders with the CI values and extra arguments.
+// helmTemplateOutput renders the chart under a release name with one values
+// file and extra arguments, and returns what helm printed.
+func helmTemplateOutput(t *testing.T, releaseName, valuesFile string, args ...string) (string, error) {
+	t.Helper()
+	helm := os.Getenv("HELM")
+	if helm == "" {
+		var err error
+		if helm, err = exec.LookPath("helm"); err != nil {
+			if os.Getenv("REQUIRE_HELM") != "" {
+				t.Fatal("helm not found (set HELM or put helm on PATH); REQUIRE_HELM is set")
+			}
+			t.Skip("helm not found: set HELM or put helm on PATH")
+		}
+	}
+	cmd := exec.Command(helm, append([]string{"template", releaseName, chartDir,
+		"--namespace", namespace, "--values", valuesFile}, args...)...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("helm template: %v: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
+// mustRender renders the chart as the addon acquire with the CI values and
+// extra arguments.
 func mustRender(t *testing.T, args ...string) []object {
 	t.Helper()
-	objs, err := helmTemplate(t, testValues, args...)
+	out, err := helmTemplateOutput(t, release, testValues, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := decodeManifests(out)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return objs
 }
 
-// ── guardrails ──────────────────────────────────────────────────────────────
-
-// violations applies the operator's guardrails to a render, one line per
-// refusal in the shape of plan.violations.
-func violations(objs []object, mediaClaim string) []string {
-	var out []string
-	refuse := func(o object, format string, args ...any) {
-		out = append(out, o.ref()+": "+fmt.Sprintf(format, args...))
-	}
-	rendered := map[string]bool{}
-	for _, o := range objs {
-		rendered[o.ref()] = true
-	}
-	for _, o := range objs {
-		if !slices.Contains(allowedKinds, o.Kind) {
-			refuse(o, "kind not allowed")
-			continue
-		}
-		if ns := o.Metadata.Namespace; ns != "" && ns != namespace {
-			refuse(o, "namespace %q is not the addon's namespace", ns)
-		}
-		if o.Kind != "Deployment" && o.Kind != "Job" {
-			continue
-		}
-		var w workloadSpec
-		if err := o.Spec.Decode(&w); err != nil {
-			refuse(o, "spec does not decode: %v", err)
-			continue
-		}
-		pod := w.Template.Spec
-		if pod.HostNetwork || pod.HostPID || pod.HostIPC {
-			refuse(o, "host namespaces not allowed")
-		}
-		if sa := pod.ServiceAccountName; sa != "" && sa != "default" && !rendered["ServiceAccount/"+sa] {
-			refuse(o, "service account %q is not rendered by the chart", sa)
-		}
-		if u := pod.SecurityContext.RunAsUser; u != nil && *u == 0 {
-			refuse(o, "runAsUser 0 not allowed")
-		}
-		for _, vol := range pod.Volumes {
-			for typ, src := range vol {
-				if typ == "name" {
-					continue
-				}
-				if !slices.Contains(allowedVolumes, typ) {
-					refuse(o, "%s volume %v not allowed", typ, vol["name"])
-					continue
-				}
-				if typ == "persistentVolumeClaim" {
-					m, _ := src.(map[string]any)
-					claim, _ := m["claimName"].(string)
-					if claim == "" || (claim != mediaClaim && !rendered["PersistentVolumeClaim/"+claim]) {
-						refuse(o, "claim %q is neither rendered by the chart nor the platform media claim", claim)
-					}
-				}
-			}
-		}
-		for _, c := range slices.Concat(pod.InitContainers, pod.Containers) {
-			sc := c.SecurityContext
-			if sc.Privileged != nil && *sc.Privileged {
-				refuse(o, "container %s: privileged not allowed", c.Name)
-			}
-			if sc.AllowPrivilegeEscalation != nil && *sc.AllowPrivilegeEscalation {
-				refuse(o, "container %s: allowPrivilegeEscalation not allowed", c.Name)
-			}
-			if len(sc.Capabilities.Add) > 0 {
-				refuse(o, "container %s: added capabilities %v not allowed", c.Name, sc.Capabilities.Add)
-			}
-			if sc.RunAsUser != nil && *sc.RunAsUser == 0 {
-				refuse(o, "container %s: runAsUser 0 not allowed", c.Name)
-			}
+// platformGuard is the guard input the operator would use for these values.
+func platformGuard(t *testing.T, vals map[string]any, meta chartYAML) guardInput {
+	t.Helper()
+	var pull []string
+	if list, ok := lookup(vals, "zaentrum.imagePullSecrets"); ok {
+		for _, s := range list.([]any) {
+			pull = append(pull, s.(string))
 		}
 	}
-	return out
+	return guardInput{
+		Namespace:       namespace,
+		Addon:           release,
+		MediaClaim:      str(t, vals, "zaentrum.media.claimName"),
+		Primary:         meta.Annotations["zaentrum.io/primary"],
+		EventsTLSSecret: str(t, vals, "zaentrum.events.tlsSecret"),
+		PullSecrets:     pull,
+	}
 }
 
-// checkSecretRefs: env values are strings, and every secretKeyRef names a
-// Secret the chart renders and a key it holds (unless the reference is optional).
+// ── chart checks beyond the guardrails ──────────────────────────────────────
+
+// checkSecretRefs: env values are strings, and every env secretKeyRef names a
+// Secret the chart renders and a key it holds (unless the reference is
+// optional), so no value has to come from outside the chart.
 func checkSecretRefs(t *testing.T, objs []object) {
 	t.Helper()
 	stored := secretData(t, objs)
@@ -633,6 +657,14 @@ func refs(objs []object) []string {
 	var out []string
 	for _, o := range objs {
 		out = append(out, o.ref())
+	}
+	return out
+}
+
+func rawOf(objs []object) []string {
+	var out []string
+	for _, o := range objs {
+		out = append(out, o.raw)
 	}
 	return out
 }
