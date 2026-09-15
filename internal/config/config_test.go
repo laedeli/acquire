@@ -1,6 +1,33 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+// KAFKA_CERT_DIR is the one setting where empty differs from unset: empty
+// selects plaintext brokers, unset keeps the certificate mount.
+func TestKafkaCertDir(t *testing.T) {
+	t.Run("unset keeps the mount", func(t *testing.T) {
+		t.Setenv("KAFKA_CERT_DIR", "") // restores the variable afterwards
+		os.Unsetenv("KAFKA_CERT_DIR")
+		if got := Load().KafkaCertDir; got != "/etc/kafka-cert" {
+			t.Errorf("KafkaCertDir = %q, want /etc/kafka-cert", got)
+		}
+	})
+	t.Run("empty means plaintext", func(t *testing.T) {
+		t.Setenv("KAFKA_CERT_DIR", "")
+		if got := Load().KafkaCertDir; got != "" {
+			t.Errorf("KafkaCertDir = %q, want empty", got)
+		}
+	})
+	t.Run("a directory", func(t *testing.T) {
+		t.Setenv("KAFKA_CERT_DIR", " /run/kafka ")
+		if got := Load().KafkaCertDir; got != "/run/kafka" {
+			t.Errorf("KafkaCertDir = %q, want /run/kafka", got)
+		}
+	})
+}
 
 func TestClusterDomainFromResolvConf(t *testing.T) {
 	cases := map[string]string{

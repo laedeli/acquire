@@ -40,7 +40,7 @@ type Config struct {
 
 	// Kafka (shared cluster, mTLS). Prefix is the tenant namespace.
 	KafkaBrokers     string // KAFKA_BROKERS
-	KafkaCertDir     string // KAFKA_CERT_DIR (user.crt/user.key/ca.crt)
+	KafkaCertDir     string // KAFKA_CERT_DIR (user.crt/user.key/ca.crt); set but empty = plaintext
 	KafkaTopicPrefix string // KAFKA_TOPIC_PREFIX (default zaentrum-beta.)
 	KafkaGroupID     string // KAFKA_GROUP_ID (default acquire)
 
@@ -98,7 +98,7 @@ func Load() Config {
 		PreferUsenet: def("usenet", "ACQUIRE_PREFER") == "usenet",
 
 		KafkaBrokers:     env("KAFKA_BROKERS"),
-		KafkaCertDir:     def("/etc/kafka-cert", "KAFKA_CERT_DIR"),
+		KafkaCertDir:     kafkaCertDir(),
 		KafkaTopicPrefix: def("zaentrum-beta.", "KAFKA_TOPIC_PREFIX"),
 		KafkaGroupID:     def("acquire", "KAFKA_GROUP_ID"),
 
@@ -110,6 +110,18 @@ func Load() Config {
 		PodNamespace:          podNamespace(),
 		ClusterDomain:         clusterDomain(),
 	}
+}
+
+// kafkaCertDir is where the brokers' client certificate lives. Unlike other
+// settings, an empty value is not "unset": KAFKA_CERT_DIR set to "" means the
+// brokers are a plaintext listener and no TLS is used. Unset keeps the
+// /etc/kafka-cert mount.
+func kafkaCertDir() string {
+	v, set := os.LookupEnv("KAFKA_CERT_DIR")
+	if !set {
+		return "/etc/kafka-cert"
+	}
+	return strings.TrimSpace(v)
 }
 
 // serviceAccountNamespace is where Kubernetes mounts the pod's namespace.

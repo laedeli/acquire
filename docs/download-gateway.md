@@ -142,7 +142,7 @@ redirects only within their own scheme and host, and ignore proxy variables.
 ## Events (the source of truth)
 
 A poll loop describes each tracked job (`POLL_INTERVAL`, default `5s`) and
-publishes JSON to Kafka over mTLS on `<KAFKA_TOPIC_PREFIX>download.client.<kind>`:
+publishes JSON to Kafka on `<KAFKA_TOPIC_PREFIX>download.client.<kind>`:
 
 | Topic | When | Carries |
 |---|---|---|
@@ -152,9 +152,11 @@ publishes JSON to Kafka over mTLS on `<KAFKA_TOPIC_PREFIX>download.client.<kind>
 | `…download.client.failed` | the client reports failure, or the job vanished | `error` |
 
 Every event carries `client_id` (the job id at the client), `adapter` (the
-client id) and `client_type`. Without Kafka the publisher runs in log-only mode
-and the service stays ready. In acquire's capability manifest these topics
-belong to the `download-gateway` component, which is where they come from.
+client id) and `client_type`. The brokers are reached over mTLS when the
+`KAFKA_TLS_*` files are set and in plaintext when none is; without
+`KAFKA_BROKERS` the publisher runs in log-only mode and the service stays ready.
+In acquire's capability manifest these topics belong to the `download-gateway`
+component, which is where they come from.
 
 ## Configuration
 
@@ -164,8 +166,8 @@ belong to the `download-gateway` component, which is where they come from.
 | `POLL_INTERVAL` | `5s` | job poll cadence |
 | `OIDC_ISSUER` | — | require bearer tokens from this issuer |
 | `ALLOWED_CLIENTS` | — | OIDC client ids allowed to call; enables the configuration API |
-| `KAFKA_BROKERS` | — | bootstrap servers (TLS listener) |
-| `KAFKA_TLS_CERT` / `KAFKA_TLS_KEY` / `KAFKA_TLS_CA` | — | mTLS material |
+| `KAFKA_BROKERS` | — | bootstrap servers; unset runs events log-only |
+| `KAFKA_TLS_CERT` / `KAFKA_TLS_KEY` / `KAFKA_TLS_CA` | — | mTLS material; none set connects in plaintext |
 | `KAFKA_TOPIC_PREFIX` | `stube.` | topic namespace — set your tenant prefix, e.g. `zaentrum-beta.` |
 | `NZBGET_*`, `QBITTORRENT_*`, `ODOWNLOADER_*` | — | optional environment clients (see above) |
 

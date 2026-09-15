@@ -214,7 +214,7 @@ progress message.
 | `ACQUIRE_STORAGE_FLOOR_GB` | `500` | seeds the free-space floor on first boot |
 | `ACQUIRE_MAX_CONCURRENT_GRABS` | `3` | seeds the downloads-at-once cap on first boot |
 | `KAFKA_BROKERS` | — | bootstrap (blank ⇒ consumer off, service stays up) |
-| `KAFKA_CERT_DIR` | `/etc/kafka-cert` | mTLS cert dir (`user.crt`/`user.key`/`ca.crt`) |
+| `KAFKA_CERT_DIR` | `/etc/kafka-cert` | mTLS cert dir (`user.crt`/`user.key`/`ca.crt`); set to an empty value for a plaintext broker |
 | `KAFKA_TOPIC_PREFIX` | `zaentrum-beta.` | tenant prefix |
 | `KAFKA_GROUP_ID` | `acquire` | consumer group |
 | `ACQUIRE_INBOX_ROOT` | `/var/lib/katalog/packages/_inbox` | staging folder on the media storage |
