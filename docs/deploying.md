@@ -40,10 +40,9 @@ flowchart TB
 - A running **zaentrum platform** with the ingest seam (katalog-manager
   `POST /api/ingest`) and the portal's addon install. Installing the chart
   needs the operator's addon charts (the `ZaentrumAddon` resource).
-- The platform's **event streaming over mTLS**. Both components talk to the
-  brokers with the platform's client certificate: on a plaintext broker the
-  gateway emits no events and acquire's consumer does not start, so finished
-  downloads are never picked up.
+- The platform's **event streaming**: brokers over mTLS with the platform's
+  client certificate, or plaintext brokers such as a bundled one. The chart
+  follows whichever the platform has.
 - An **OIDC realm** you can add two clients to (see [Identity](#identity)).
 - A **Postgres database** for acquire.
 - The **media storage** the download clients write to, mountable into acquire
@@ -83,6 +82,14 @@ Both images run as non-root on a distroless base and need no extra privileges.
 
 ## Install the addon chart
 
+> **Install it under the name `acquire`.** The portal registers the addon from
+> the manifest acquire serves, whose key is `acquire`, and only when the addon
+> is installed under that name. The chart refuses any other name, and the plan
+> reports it as
+> `template error at acquire/templates/release-name-must-be-acquire.yaml:<line>`:
+> the operator shows where a chart failed, never its message, so the file's name
+> is the message.
+
 Every chart version is published as a release archive:
 
 ```text
@@ -102,18 +109,21 @@ and the service client's secret.
 
 > portal → settings → **addons** → **+** → chart reference → plan → inputs → **install**
 
-Paste the https link as the chart reference. The plan shows the chart, both
-workloads with their images, and every object the chart renders. Fill in the
-inputs — secret ones are masked and never shown back — and install. Progress
-follows both components; once they are ready, the portal registers the addon
-from acquire's manifest (the app, its tiles, the **Request this** row and the
-setup checklist) without an address to type.
+Paste the https link as the chart reference and keep the name `acquire`. The
+plan shows the chart, both workloads with their images, and every object the
+chart renders. Fill in the inputs — secret ones are masked and never shown
+back — and install. Progress follows both components; once they are ready, the
+portal registers the addon from acquire's manifest (the app, its tiles, the
+**Request this** row and the setup checklist) without an address to type.
 
 ### With zae
+
+With `ZAE_TOKEN` holding an admin bearer for the instance:
 
 ```bash
 zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.1.0/acquire-0.1.0.tgz \
   --name acquire \
+  --url https://<instance> \
   --set-secret database.url='postgres://acquire:…@db.example.org:5432/acquire?sslmode=require' \
   --set-secret oidc.serviceClientSecret='…' \
   --wait
@@ -123,7 +133,8 @@ zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire
 question). With the OCI reference, once the package is public:
 
 ```bash
-zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.1.0 \
+zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.1.0 --name acquire \
+  --url https://<instance> \
   --set-secret database.url=… --set-secret oidc.serviceClientSecret=…
 ```
 
@@ -157,7 +168,7 @@ Tuning:
 | `downloadGateway.image.repository`, `downloadGateway.image.tag` | `ghcr.io/laedeli/download-gateway`, the gateway commit pinned for this chart version |
 | `acquire.image.pullPolicy`, `downloadGateway.image.pullPolicy` | the cluster default |
 | `acquire.resources` | requests `20m` / `48Mi`, limits `500m` / `256Mi` |
-| `downloadGateway.resources` | requests `20m` / `32Mi`, limits `200m` / `128Mi` |
+| `downloadGateway.resources` | requests `20m` / `32Mi`, limits `200m` / `256Mi` (large adds hold up to about 140 MiB in flight) |
 | `downloadGateway.pollInterval` | `5s` (`POLL_INTERVAL`) |
 | `urls.downloadGateway` | `http://download-gateway` |
 | `urls.katalog` | `http://katalog-api` |
@@ -178,7 +189,7 @@ platform from them and nowhere else:
 | `zaentrum.issuer` | `OIDC_ISSUER` on both; acquire's token endpoint `<issuer>/protocol/openid-connect/token` |
 | `zaentrum.issuerHostAliasIP` | a host alias resolving the issuer's host to that address, on both |
 | `zaentrum.events.brokers`, `zaentrum.events.topicPrefix` | `KAFKA_BROKERS` and `KAFKA_TOPIC_PREFIX` on both; acquire's consumer group is the prefix without its trailing dot, then `-acquire` |
-| `zaentrum.events.tlsSecret` | mounted at `/etc/kafka-cert`: acquire reads it as `KAFKA_CERT_DIR`, the gateway as `KAFKA_TLS_CERT`, `KAFKA_TLS_KEY` and `KAFKA_TLS_CA` |
+| `zaentrum.events.tlsSecret` | mounted at `/etc/kafka-cert`: acquire reads it as `KAFKA_CERT_DIR`, the gateway as `KAFKA_TLS_CERT`, `KAFKA_TLS_KEY` and `KAFKA_TLS_CA`. Empty means plaintext brokers: nothing is mounted, acquire gets an empty `KAFKA_CERT_DIR` and the gateway no TLS files |
 | `zaentrum.media.claimName` | mounted read-only into acquire at `/var/lib/katalog` |
 | `zaentrum.imagePullSecrets` | the pull secrets of both pods |
 | `zaentrum.partOf` | the `app.kubernetes.io/part-of` label |
@@ -190,16 +201,18 @@ profile, no privilege escalation, no capabilities and no service account token.
 ### GitOps
 
 Committing the addon to a deploy repository is equally valid: a
-`ZaentrumAddon` in the platform namespace, with the secret inputs in a values
-Secret next to it. Create that Secret with your usual secret tooling rather
-than committing the values in plain text.
+`ZaentrumAddon` named `acquire` in the platform namespace, with the secret
+inputs in a values Secret next to it. Create that Secret with your usual secret
+tooling rather than committing the values in plain text.
 
 ```yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: zaentrum-addon-acquire-values
-  namespace: zaentrum            # the platform namespace
+  name: zaentrum-addon-acquire-values   # must start with zaentrum-addon-acquire-
+  namespace: zaentrum                   # the platform namespace
+  labels:
+    zaentrum.io/addon: acquire          # required, or the operator will not read it
 type: Opaque
 stringData:
   database.url: postgres://acquire:CHANGE-ME@db.example.org:5432/acquire?sslmode=require
@@ -208,7 +221,7 @@ stringData:
 apiVersion: zaentrum.io/v1alpha1
 kind: ZaentrumAddon
 metadata:
-  name: acquire
+  name: acquire                         # the only name the addon registers under
   namespace: zaentrum
 spec:
   chart:
@@ -228,26 +241,32 @@ spec:
       targetPath: oidc.serviceClientSecret
 ```
 
-`suspend: true` in the spec only plans: the status shows the plan and nothing
-is applied. The values Secret above stays yours. Labelled
-`zaentrum.io/addon: acquire`, it would belong to the addon and be removed with
-it, unless it also carries `zaentrum.io/keep: "true"`.
+The operator reads `valuesFrom` only from Secrets and ConfigMaps whose name
+starts with `zaentrum-addon-acquire-` **and** that carry the label
+`zaentrum.io/addon: acquire`; it refuses any other. The label also makes the
+Secret part of the addon, removed with it — add `zaentrum.io/keep: "true"` to
+keep it. `suspend: true` in the spec only plans: the status shows the plan and
+nothing is applied.
 
 ### The config key
 
 When no `config.key` is given, the operator generates one on the first install,
 stores it in the Secret `zaentrum-addon-acquire-generated` and never generates
-it again. That Secret belongs to the addon: **removing the addon deletes the
-key**, and an install after that generates a new one that cannot open the
-credentials stored before. To keep them across a remove and a new install, save
-the key:
+it again. Removing the addon with **keep values** (the portal's checkbox, or
+`zae addon remove acquire --url https://<instance> --keep-values`) keeps that
+Secret together with the values Secret, so a later install reuses the key and
+the stored credentials keep opening. **Removing it without keep values deletes
+the key**: an install after that generates a new one that cannot open the
+credentials stored before.
+
+A copy of the key survives any removal:
 
 ```bash
 kubectl -n <platform namespace> get secret zaentrum-addon-acquire-generated \
   -o jsonpath='{.data.config\.key}' | base64 -d
 ```
 
-and give it back as the secret input `config.key` — or set `config.key`
+Give it back as the secret input `config.key` when needed, or set `config.key`
 yourself from the start. To rotate it, set the new key as `config.key` and the
 old one as `config.previousKey`, enter the credentials again, then clear
 `config.previousKey` (see [ACQUIRE_CONFIG_KEY](#acquire_config_key)).
@@ -256,13 +275,20 @@ old one as `config.previousKey`, enter the credentials again, then clear
 
 A new chart version is a new release archive (and a new OCI version). Point the
 addon at it — **upgrade** on the addon's row in the portal, `spec.chart.ref` in
-a deploy repository, or `zae addon upgrade acquire --version <version>` for the
-OCI reference. The plan lists what changes, images included, before anything is
-applied.
+a deploy repository, or zae:
+
+```bash
+zae addon upgrade acquire --url https://<instance> \
+  --chart https://github.com/laedeli/acquire/releases/download/chart-acquire-<version>/acquire-<version>.tgz
+zae addon upgrade acquire --url https://<instance> --version <version>   # the OCI reference
+```
+
+The plan lists what changes, images included, before anything is applied.
 
 ### Moving an existing deployment to the chart
 
-If acquire already runs from manifests you applied:
+If acquire already runs from manifests you applied and was installed in the
+portal by address:
 
 1. Note the database URL and the `ACQUIRE_CONFIG_KEY` it runs with, and give
    both to the install (`database.url`, `config.key`). With a new key, the
@@ -270,8 +296,13 @@ If acquire already runs from manifests you applied:
 2. Delete the `acquire` and `download-gateway` Deployments and Services you
    applied. The operator never takes over objects it does not own: while they
    exist, the plan reports them as violations and nothing is installed.
-3. Install the chart. The address stays `http://acquire`, so the portal keeps
-   the addon's registration. Remove the old deployment Secrets once acquire runs.
+3. Installing from settings or zae: first remove the address install
+   (settings → addons → **remove**). While an addon installed by address holds
+   the key `acquire`, a chart install is refused with `409`. Install the chart
+   afterwards; the portal registers the addon again once it is ready.
+   Committing a `ZaentrumAddon` instead (see [GitOps](#gitops)) takes over the
+   address install directly, with nothing to remove first.
+4. Delete the old deployment Secrets once acquire runs from the chart.
 
 ## Identity
 
@@ -298,8 +329,8 @@ clients and setup says so. The chart always sets both.
 ## Secrets
 
 The chart renders its own Secret, `acquire-secrets`, from the secret inputs and
-mounts the platform's event streaming certificate. Deploying the manifests
-yourself, create:
+mounts the platform's event streaming certificate when it has one. Deploying
+the manifests yourself, create:
 
 | Secret | Key | Read as |
 |---|---|---|
@@ -431,8 +462,8 @@ and acquire must allow at least a minute per request.
 
 ## Verifying
 
-- For a chart install, `zae addon status acquire` (or the addon's row in the
-  portal) reads *Ready* with both components ready.
+- For a chart install, `zae addon status acquire --url https://<instance>` (or
+  the addon's row in the portal) reads *Ready* with both components ready.
 - `GET /api/setup` on acquire (or the portal's checklist) reads `ready`.
 - `GET /api/v1/config/clients` on the gateway reports the same revision the
   clients tab shows.
@@ -463,11 +494,12 @@ acquire and configured them through environment variables and secrets.
 
 Installed as a chart:
 
-1. Settings → addons → **remove**, or `zae addon remove acquire`. Both
-   Deployments, both Services and `acquire-secrets` go with the addon, and so
-   does a generated config key (see [the config key](#the-config-key)). Tick
-   *keep values* (`--keep-values`) to keep the values Secret with the inputs you
-   gave.
+1. Settings → addons → **remove**, or
+   `zae addon remove acquire --url https://<instance>`. Both Deployments, both
+   Services and `acquire-secrets` go with the addon. With *keep values*
+   (`--keep-values`) the values Secret with the inputs you gave and the Secret
+   with a generated config key both stay for a later install; without it they
+   are deleted too (see [the config key](#the-config-key)).
 2. Drop acquire's database when you no longer need the data. All of its
    configuration lives there and nowhere else.
 
