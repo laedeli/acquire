@@ -92,7 +92,9 @@ downloadGateway:
   pollInterval: 5s
   resources:
     requests: { cpu: 20m, memory: 32Mi }
-    limits: { cpu: 200m, memory: 128Mi }
+    # Large adds carry whole release files through the gateway (up to about
+    # 140 MiB in flight at once), so leave headroom above that.
+    limits: { cpu: 200m, memory: 256Mi }
 
 # In-namespace services acquire calls. The gateway component acquire declares is
 # the first label of the downloadGateway host, so keep it in step with the
