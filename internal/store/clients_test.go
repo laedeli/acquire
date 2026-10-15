@@ -189,6 +189,29 @@ func TestClientWithDownloadsInFlightCannotBeDeleted(t *testing.T) {
 	}
 }
 
+// Whether the deployment manages a client is stored with it and changes only
+// when a write says so.
+func TestManagedFlagIsStored(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	in := sampleClient("qbittorrent")
+	in.Managed = true
+	c, err := s.CreateDownloadClient(ctx, in, SecretWrite{}, "deployment")
+	if err != nil || !c.Managed {
+		t.Fatalf("create managed: %+v %v", c, err)
+	}
+	if got, _ := s.GetDownloadClient(ctx, "qbittorrent"); !got.Managed {
+		t.Fatal("managed was not stored")
+	}
+	c.Managed = false
+	if u, err := s.UpdateDownloadClient(ctx, c, SecretWrite{}, c.Generation, "admin"); err != nil || u.Managed {
+		t.Fatalf("update to unmanaged: %+v %v", u, err)
+	}
+	if plain, err := s.CreateDownloadClient(ctx, sampleClient("nzbget"), SecretWrite{}, "admin"); err != nil || plain.Managed {
+		t.Fatalf("an admin's client is not managed: %+v %v", plain, err)
+	}
+}
+
 // The id rule is the gateway's; the database enforces it too, so no code path
 // can store an id the gateway would refuse.
 func TestClientIDRuleIsEnforcedByTheDatabase(t *testing.T) {

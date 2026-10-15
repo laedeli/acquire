@@ -55,6 +55,14 @@ type Config struct {
 	EndpointAllowInternal bool     // ACQUIRE_ENDPOINT_ALLOW_INTERNAL: allow services in other namespaces
 	PodNamespace          string   // POD_NAMESPACE, else the service account's namespace file
 	ClusterDomain         string   // the cluster DNS domain from /etc/resolv.conf; "" outside a cluster
+
+	// The download clients the deployment runs itself (the addon chart's
+	// clients.*), stored as managed clients at start: ACQUIRE_MANAGED_CLIENTS,
+	// a JSON list of client writes, credentials included. ManagedClientsSet is
+	// false when the variable is unset, and the stored clients are then the
+	// console's alone; set but empty is a declaration of none.
+	ManagedClients    string
+	ManagedClientsSet bool
 }
 
 func env(keys ...string) string {
@@ -75,6 +83,7 @@ func def(d string, keys ...string) string {
 
 func Load() Config {
 	downloads := def("/var/lib/katalog/packages/_downloads", "ACQUIRE_DOWNLOADS_ROOT")
+	managed, managedSet := os.LookupEnv("ACQUIRE_MANAGED_CLIENTS")
 	return Config{
 		Addr:         def(":8080", "ADDR"),
 		OIDCIssuer:   env("OIDC_ISSUER"),
@@ -109,6 +118,9 @@ func Load() Config {
 		EndpointAllowInternal: env("ACQUIRE_ENDPOINT_ALLOW_INTERNAL") == "true",
 		PodNamespace:          podNamespace(),
 		ClusterDomain:         clusterDomain(),
+
+		ManagedClients:    strings.TrimSpace(managed),
+		ManagedClientsSet: managedSet,
 	}
 }
 

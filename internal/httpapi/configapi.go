@@ -80,6 +80,8 @@ func writeConfigError(w http.ResponseWriter, err error) {
 		http.Error(w, "a client with this id already exists", http.StatusConflict)
 	case errors.Is(err, store.ErrInFlight):
 		http.Error(w, "downloads are still in flight on this client — wait for them or cancel them first", http.StatusConflict)
+	case errors.Is(err, app.ErrManaged):
+		http.Error(w, "this download client runs with the addon and follows its deployment — change it in the addon's values (clients.*), not here", http.StatusConflict)
 	case errors.Is(err, app.ErrNoKey):
 		http.Error(w, "ACQUIRE_CONFIG_KEY is not set — credentials cannot be stored", http.StatusConflict)
 	case errors.Is(err, gateway.ErrNoConfigAPI):

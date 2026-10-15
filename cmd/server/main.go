@@ -66,6 +66,20 @@ func main() {
 	if err := svc.SeedSettings(ctx); err != nil {
 		log.Printf("acquire: could not seed search settings (environment defaults apply): %v", err)
 	}
+	// The download clients the deployment runs itself (ACQUIRE_MANAGED_CLIENTS)
+	// are stored before the first push, so the gateway gets them with the rest.
+	if cfg.ManagedClientsSet {
+		res, err := svc.ApplyManagedClients(ctx)
+		switch {
+		case err != nil:
+			log.Printf("acquire: the deployment's download clients were not applied: %v", err)
+		default:
+			log.Printf("acquire: the deployment's download clients: %s", res)
+			for _, s := range res.Skipped {
+				log.Printf("acquire: a download client of the deployment was not stored — %s", s)
+			}
+		}
+	}
 	// The gateway holds download clients in memory only: push acquire's stored
 	// set now, after every change, and whenever the gateway falls behind.
 	go svc.RunConfigSync(ctx)

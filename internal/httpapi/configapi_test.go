@@ -116,6 +116,7 @@ func TestConfigErrorStatuses(t *testing.T) {
 		{store.ErrStale, http.StatusConflict},
 		{store.ErrExists, http.StatusConflict},
 		{store.ErrInFlight, http.StatusConflict},
+		{app.ErrManaged, http.StatusConflict},
 		{fmt.Errorf("seal: %w", app.ErrNoKey), http.StatusConflict},
 		{gateway.ErrNoConfigAPI, http.StatusBadGateway},
 		{errors.New("boom"), http.StatusInternalServerError},

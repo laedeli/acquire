@@ -29,6 +29,30 @@ func TestKafkaCertDir(t *testing.T) {
 	})
 }
 
+// ACQUIRE_MANAGED_CLIENTS unset leaves the stored clients alone; set, even to
+// nothing, is the deployment's declaration.
+func TestManagedClientsDeclaration(t *testing.T) {
+	t.Run("unset declares nothing", func(t *testing.T) {
+		t.Setenv("ACQUIRE_MANAGED_CLIENTS", "")
+		os.Unsetenv("ACQUIRE_MANAGED_CLIENTS")
+		if c := Load(); c.ManagedClientsSet || c.ManagedClients != "" {
+			t.Errorf("unset: set=%v %q", c.ManagedClientsSet, c.ManagedClients)
+		}
+	})
+	t.Run("empty declares none", func(t *testing.T) {
+		t.Setenv("ACQUIRE_MANAGED_CLIENTS", " ")
+		if c := Load(); !c.ManagedClientsSet || c.ManagedClients != "" {
+			t.Errorf("empty: set=%v %q", c.ManagedClientsSet, c.ManagedClients)
+		}
+	})
+	t.Run("a list", func(t *testing.T) {
+		t.Setenv("ACQUIRE_MANAGED_CLIENTS", `[{"id":"nzbget"}]`)
+		if c := Load(); !c.ManagedClientsSet || c.ManagedClients != `[{"id":"nzbget"}]` {
+			t.Errorf("list: set=%v %q", c.ManagedClientsSet, c.ManagedClients)
+		}
+	})
+}
+
 func TestClusterDomainFromResolvConf(t *testing.T) {
 	cases := map[string]string{
 		// What Kubernetes writes into a pod.

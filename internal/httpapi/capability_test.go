@@ -151,13 +151,52 @@ func TestGatewayWorkloadComesFromTheGatewayAddress(t *testing.T) {
 		"http://under_score:8080":                    "",
 	}
 	for in, want := range cases {
-		if got := gatewayWorkload(in); got != want {
-			t.Errorf("gatewayWorkload(%q) = %q, want %q", in, got, want)
+		if got := workloadOf(in); got != want {
+			t.Errorf("workloadOf(%q) = %q, want %q", in, got, want)
 		}
 	}
 	// No gateway configured: nothing to match, so no component.
 	if comps := capabilityDoc(config.Config{}).Components; len(comps) != 1 || comps[0].Role != "primary" {
 		t.Errorf("without a gateway only acquire is declared: %+v", comps)
+	}
+}
+
+// The download clients the deployment runs are optional components, matched
+// by the workload behind their address; their credentials never reach the
+// manifest, and a declaration that collides or does not parse adds nothing.
+func TestManagedClientsAreOptionalComponents(t *testing.T) {
+	cfg := testCfg
+	cfg.ManagedClients = `[
+	  {"id":"qbittorrent","type":"qbittorrent","baseUrl":"http://qbittorrent:8080","secret":"hunter2"},
+	  {"id":"nzbget","type":"nzbget","baseUrl":"http://nzbget.zaentrum.svc:6789","secret":"hunter2"},
+	  {"id":"gateway-clash","type":"nzbget","baseUrl":"http://download-gateway:6789"},
+	  {"id":"by-address","type":"nzbget","baseUrl":"http://10.0.0.9:6789"}
+	]`
+	cfg.ManagedClientsSet = true
+	doc := capabilityDoc(cfg)
+	comps := doc.Components
+	if len(comps) != 4 {
+		t.Fatalf("components = %+v", comps)
+	}
+	for i, want := range []capComponent{
+		{Name: "qbittorrent", Workload: "qbittorrent", Role: "optional"},
+		{Name: "nzbget", Workload: "nzbget", Role: "optional"},
+	} {
+		got := comps[2+i]
+		if got.Name != want.Name || got.Workload != want.Workload || got.Role != want.Role || got.Summary == "" || len(got.Summary) > 120 {
+			t.Errorf("component %d = %+v, want %+v", 2+i, got, want)
+		}
+	}
+	body, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "hunter2") {
+		t.Error("the manifest carries a client secret")
+	}
+	cfg.ManagedClients = `{broken`
+	if comps := capabilityDoc(cfg).Components; len(comps) != 2 {
+		t.Errorf("an unreadable declaration adds components: %+v", comps)
 	}
 }
 

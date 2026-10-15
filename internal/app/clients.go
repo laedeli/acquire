@@ -22,6 +22,7 @@ import (
 
 // Download clients are acquire's configuration: stored here, edited in the
 // console, pushed to the gateway by configsync. The gateway only runs them.
+// The ones the deployment runs itself are declared by it instead (managed.go).
 
 // clientIDRule is the gateway's id rule; the table enforces it too.
 var clientIDRule = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
@@ -142,9 +143,12 @@ type ClientView struct {
 	LocalPath  string     `json:"localPath"`
 	Priority   int        `json:"priority"`
 	Enabled    bool       `json:"enabled"`
-	Revision   int64      `json:"revision"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	UpdatedAt  time.Time  `json:"updatedAt"`
+	// Managed: the deployment runs this client and declares it (managed.go);
+	// it is changed there, never through this API.
+	Managed   bool      `json:"managed"`
+	Revision  int64     `json:"revision"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 	// Live state, best effort: what the gateway reports for this client, and
 	// its reason when the gateway refused to apply it.
 	Status     *gateway.ClientStatus `json:"status,omitempty"`
@@ -156,7 +160,7 @@ func clientView(c store.DownloadClient) ClientView {
 		ID: c.ID, Type: c.Type, BaseURL: c.BaseURL, Auth: c.Auth, Username: c.Username,
 		Secret:    SecretView{Set: len(c.SecretCT) > 0, UpdatedAt: c.SecretUpdatedAt},
 		Protocols: c.Protocols, Category: c.Category, RemotePath: c.RemotePath, LocalPath: c.LocalPath,
-		Priority: c.Priority, Enabled: c.Enabled, Revision: c.Generation,
+		Priority: c.Priority, Enabled: c.Enabled, Managed: c.Managed, Revision: c.Generation,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
@@ -311,11 +315,15 @@ func (s *Service) CreateClient(ctx context.Context, in ClientInput, actor string
 }
 
 // UpdateClient replaces a client's editable fields. The id and type are fixed
-// once created: downloads, grabs and events all refer to the id.
+// once created: downloads, grabs and events all refer to the id. A managed
+// client is refused: it follows the deployment.
 func (s *Service) UpdateClient(ctx context.Context, id string, in ClientInput, ifRevision int64, actor string) (ClientWriteResult, error) {
 	current, err := s.st.GetDownloadClient(ctx, id)
 	if err != nil {
 		return ClientWriteResult{}, err
+	}
+	if current.Managed {
+		return ClientWriteResult{}, ErrManaged
 	}
 	if in.ID != "" && in.ID != id {
 		return ClientWriteResult{}, &ValidationError{Fields: []FieldError{{Entity: "client", ID: id, Field: "id", Message: "the id cannot change once a client exists"}}}
@@ -347,9 +355,16 @@ func (s *Service) UpdateClient(ctx context.Context, id string, in ClientInput, i
 	return ClientWriteResult{ClientView: clientView(stored), Sync: s.pushNow(ctx)}, nil
 }
 
-// DeleteClient removes a client (refused while its downloads are in flight)
-// and pushes the smaller set.
+// DeleteClient removes a client (refused while its downloads are in flight,
+// and for a managed client) and pushes the smaller set.
 func (s *Service) DeleteClient(ctx context.Context, id string, ifRevision int64, actor string) (SyncResult, error) {
+	current, err := s.st.GetDownloadClient(ctx, id)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	if current.Managed {
+		return SyncResult{}, ErrManaged
+	}
 	if err := s.st.DeleteDownloadClient(ctx, id, ifRevision, actor); err != nil {
 		return SyncResult{}, err
 	}

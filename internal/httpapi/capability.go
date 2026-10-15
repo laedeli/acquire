@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -130,12 +131,12 @@ var capVersion = ""
 // dnsLabel is a DNS-1123 label: what a workload or component name must be.
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 
-// gatewayWorkload is the gateway's Deployment and Service name: the first label
-// of the host acquire reaches it at (http://download-gateway:8080 gives
-// download-gateway). "" when no gateway is configured or the host is not a
-// service name (an IP address, say), since then there is nothing to match.
-func gatewayWorkload(gatewayURL string) string {
-	u, err := url.Parse(strings.TrimSpace(gatewayURL))
+// workloadOf is the Deployment and Service name behind an in-namespace
+// address: the first label of its host (http://download-gateway:8080 gives
+// download-gateway). "" when there is no address or the host is not a service
+// name (an IP address, say), since then there is nothing to match.
+func workloadOf(address string) string {
+	u, err := url.Parse(strings.TrimSpace(address))
 	if err != nil || u.Hostname() == "" {
 		return ""
 	}
@@ -146,9 +147,9 @@ func gatewayWorkload(gatewayURL string) string {
 	return label
 }
 
-// capabilityComponents declares acquire itself and the gateway it drives. The
-// download clients are external endpoints configured inside acquire, not
-// components of the addon.
+// capabilityComponents declares acquire itself, the gateway it drives and the
+// download clients the deployment runs with them. Clients an admin adds in the
+// console are endpoints acquire is configured with, not components.
 func capabilityComponents(cfg config.Config) []capComponent {
 	out := []capComponent{{
 		Name:     "acquire",
@@ -157,7 +158,7 @@ func capabilityComponents(cfg config.Config) []capComponent {
 		Summary:  "requests, search, grab decisions and the console; serves this manifest",
 		Topics:   []string{"acquire.schedule.due", "acquire.schedule.saga.due"},
 	}}
-	if wl := gatewayWorkload(cfg.GatewayURL); wl != "" && wl != "acquire" {
+	if wl := workloadOf(cfg.GatewayURL); wl != "" && wl != "acquire" {
 		out = append(out, capComponent{
 			Name:     "download-gateway",
 			Workload: wl,
@@ -169,6 +170,40 @@ func capabilityComponents(cfg config.Config) []capComponent {
 				"download.client.completed",
 				"download.client.failed",
 			},
+		})
+	}
+	return append(out, managedComponents(cfg, out)...)
+}
+
+// managedComponents are the download clients the deployment runs itself
+// (ACQUIRE_MANAGED_CLIENTS), each matched by its address's workload: the
+// chart names a client's Deployment and Service after it. Only the names are
+// read from the declaration, never its credentials.
+func managedComponents(cfg config.Config, declared []capComponent) []capComponent {
+	var clients []struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		BaseURL string `json:"baseUrl"`
+	}
+	if cfg.ManagedClients == "" || json.Unmarshal([]byte(cfg.ManagedClients), &clients) != nil {
+		return nil
+	}
+	taken := map[string]bool{}
+	for _, c := range declared {
+		taken[c.Name], taken[c.Workload] = true, true
+	}
+	var out []capComponent
+	for _, c := range clients {
+		wl := workloadOf(c.BaseURL)
+		if wl == "" || !dnsLabel.MatchString(c.ID) || !dnsLabel.MatchString(c.Type) || taken[wl] || taken[c.ID] {
+			continue
+		}
+		taken[wl], taken[c.ID] = true, true
+		out = append(out, capComponent{
+			Name:     c.ID,
+			Workload: wl,
+			Role:     "optional",
+			Summary:  "a download client (" + c.Type + ") the addon runs; acquire hands it downloads",
 		})
 	}
 	return out

@@ -35,9 +35,13 @@ type DownloadClient struct {
 	LocalPath       string // the same folder as acquire sees it
 	Priority        int
 	Enabled         bool
-	Generation      int64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Managed: the deployment runs this client and declares it; acquire
+	// writes the row from that declaration at start, and the API refuses to
+	// change it.
+	Managed    bool
+	Generation int64
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // ClientSecretAAD is the secretbox binding for a client's secret.
@@ -62,13 +66,13 @@ type SecretWrite struct {
 }
 
 const clientCols = `id, type, base_url, auth, username, secret_ct, secret_kid, secret_updated_at,
-	protocols, category, remote_path, local_path, priority, enabled, generation, created_at, updated_at`
+	protocols, category, remote_path, local_path, priority, enabled, managed, generation, created_at, updated_at`
 
 func scanClient(r interface{ Scan(...any) error }) (DownloadClient, error) {
 	var c DownloadClient
 	err := r.Scan(&c.ID, &c.Type, &c.BaseURL, &c.Auth, &c.Username, &c.SecretCT, &c.SecretKID,
 		&c.SecretUpdatedAt, &c.Protocols, &c.Category, &c.RemotePath, &c.LocalPath,
-		&c.Priority, &c.Enabled, &c.Generation, &c.CreatedAt, &c.UpdatedAt)
+		&c.Priority, &c.Enabled, &c.Managed, &c.Generation, &c.CreatedAt, &c.UpdatedAt)
 	if c.Protocols == nil {
 		c.Protocols = []string{}
 	}
@@ -175,11 +179,11 @@ func (s *Store) CreateDownloadClient(ctx context.Context, c DownloadClient, secr
 	out, err := scanClient(tx.QueryRow(ctx, `
 		INSERT INTO download_clients (id, type, base_url, auth, username, secret_ct, secret_kid,
 		                              secret_updated_at, protocols, category, remote_path, local_path,
-		                              priority, enabled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+		                              priority, enabled, managed)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		RETURNING `+clientCols,
 		c.ID, c.Type, c.BaseURL, c.Auth, c.Username, ct, kid, secretAt, nonNil(c.Protocols),
-		c.Category, c.RemotePath, c.LocalPath, c.Priority, c.Enabled))
+		c.Category, c.RemotePath, c.LocalPath, c.Priority, c.Enabled, c.Managed))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -193,9 +197,9 @@ func (s *Store) CreateDownloadClient(ctx context.Context, c DownloadClient, secr
 	return out, tx.Commit(ctx)
 }
 
-// UpdateDownloadClient replaces a client's editable fields. ifGeneration > 0
-// makes the write conditional on the row still being at that generation;
-// ErrStale when it is not. The id and type never change.
+// UpdateDownloadClient replaces a client's editable fields and whether it is
+// managed. ifGeneration > 0 makes the write conditional on the row still being
+// at that generation; ErrStale when it is not. The id and type never change.
 func (s *Store) UpdateDownloadClient(ctx context.Context, c DownloadClient, secret SecretWrite, ifGeneration int64, actor string) (DownloadClient, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -220,7 +224,7 @@ func (s *Store) UpdateDownloadClient(ctx context.Context, c DownloadClient, secr
 	out, err := scanClient(tx.QueryRow(ctx, `
 		UPDATE download_clients SET
 		  base_url = $2, auth = $3, username = $4, protocols = $5, category = $6,
-		  remote_path = $7, local_path = $8, priority = $9, enabled = $10,
+		  remote_path = $7, local_path = $8, priority = $9, enabled = $10, managed = $14,
 		  secret_ct         = CASE $11::int WHEN 1 THEN $12::bytea WHEN 2 THEN NULL ELSE secret_ct END,
 		  secret_kid        = CASE $11::int WHEN 1 THEN $13 WHEN 2 THEN '' ELSE secret_kid END,
 		  secret_updated_at = CASE $11::int WHEN 1 THEN now() WHEN 2 THEN NULL ELSE secret_updated_at END,
@@ -230,7 +234,7 @@ func (s *Store) UpdateDownloadClient(ctx context.Context, c DownloadClient, secr
 		RETURNING `+clientCols,
 		c.ID, c.BaseURL, c.Auth, c.Username, nonNil(c.Protocols), c.Category,
 		c.RemotePath, c.LocalPath, c.Priority, c.Enabled,
-		int(secret.Op), secret.CT, secret.KID))
+		int(secret.Op), secret.CT, secret.KID, c.Managed))
 	if err != nil {
 		return DownloadClient{}, err
 	}
