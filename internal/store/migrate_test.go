@@ -191,6 +191,81 @@ func TestMigrateRepairsAnEditedProfileWithoutLosingEdits(t *testing.T) {
 	}
 }
 
+// migrateUpTo applies the embedded migrations that sort before name: the
+// schema of an install from before that migration shipped.
+func migrateUpTo(t *testing.T, pool *pgxpool.Pool, name string) {
+	t.Helper()
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".sql" || e.Name() >= name {
+			continue
+		}
+		body, err := migrationFS.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(context.Background(), string(body)); err != nil {
+			t.Fatalf("apply %s: %v", e.Name(), err)
+		}
+	}
+}
+
+// 040 over an install that already tracks titles, targets and a grab's
+// targets: every row keeps its state, the new columns read as their defaults,
+// and every title's holdings are unknown until a reconcile learns them — so
+// the backlog is empty rather than wrong until then. Re-running changes
+// nothing.
+func TestMigrate040OverAnExistingWantModel(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	migrateUpTo(t, pool, "040_target_grabs.sql")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO titles (id, tmdb_id, kind, title, tvdb_id) VALUES ('series:1396', 1396, 'series', 'Breaking Bad', 81189);
+		INSERT INTO acquisition_targets (id, title_id, kind, season_number, episode_number, state, air_window_opens_at,
+		                                 held_item_id, search_failures, search_backoff_until)
+		VALUES ('series:1396:s01e001', 'series:1396', 'episode', 1, 1, 'wanted', now() - interval '1 day', '', 3, now() + interval '1 hour'),
+		       ('series:1396:s01e002', 'series:1396', 'episode', 1, 2, 'held', now() - interval '1 day', 'item-2', 0, NULL);
+		INSERT INTO grab_targets (adapter, client_job_id, target_id) VALUES ('nzbget', '9', 'series:1396:s01e001');`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := migrate(ctx, pool); err != nil {
+			t.Fatalf("boot %d: %v", i+1, err)
+		}
+	}
+	s := &Store{pool: pool}
+	one, err := s.GetTarget(ctx, "series:1396:s01e001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.State != TargetWanted || one.SearchFailures != 3 || one.Detail != "" || one.GrabID != "" || one.SearchOutcome != "" {
+		t.Errorf("an existing wanted target: %+v", one)
+	}
+	two, _ := s.GetTarget(ctx, "series:1396:s01e002")
+	if two.State != TargetHeld || two.HeldItemID != "item-2" || two.HeldVia != "" || two.HeldPlayable {
+		t.Errorf("an existing held target: %+v", two)
+	}
+	ti, err := s.TitleByID(ctx, "series:1396")
+	if err != nil || ti.HoldingsKnown() || ti.CatalogID != "" {
+		t.Errorf("an existing title: %+v %v", ti, err)
+	}
+	if miss, _ := s.Missing(ctx, 10); len(miss) != 0 {
+		t.Errorf("before its first reconcile a title is missing nothing: %+v", miss)
+	}
+	var grabID string
+	if err := pool.QueryRow(ctx, `SELECT grab_id FROM grab_targets WHERE client_job_id = '9'`).Scan(&grabID); err != nil || grabID != "" {
+		t.Errorf("an existing grab_targets row: %q %v", grabID, err)
+	}
+	var n int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM target_grabs`).Scan(&n)
+	if n != 0 {
+		t.Errorf("target_grabs holds %d rows on an install that never grabbed a target", n)
+	}
+}
+
 // The registry lives in the migrations directory, and migrate() Execs every file
 // it can see. Only *.sql is embedded, so a .md is invisible to it — but that is
 // one edit away from being false. Widening the embed to migrations/* would make

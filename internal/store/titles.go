@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Title is a movie or series we track intent for.
@@ -21,6 +24,30 @@ type Title struct {
 	Monitored  bool
 	MonitorNew bool
 	ProfileID  string
+
+	// HoldingsAt is when acquire last learned what the library holds of the
+	// title; nil while that is unknown, and then none of its targets is
+	// missing or grabbed automatically. HoldingsError is why the last attempt
+	// to learn it failed. CatalogID is the catalog's own id for it.
+	HoldingsAt    *time.Time
+	HoldingsError string
+	CatalogID     string
+}
+
+// HoldingsKnown reports whether acquire knows what the library holds of it.
+func (t Title) HoldingsKnown() bool { return t.HoldingsAt != nil }
+
+// titleCols are the columns scanTitle reads.
+const titleCols = `id, tmdb_id, COALESCE(tvdb_id,0), imdb_id, kind, title, sort_title,
+	COALESCE(year,0), status, series_type, monitored, monitor_new, profile_id,
+	holdings_at, holdings_error, catalog_id`
+
+func scanTitle(r interface{ Scan(...any) error }) (Title, error) {
+	var t Title
+	err := r.Scan(&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
+		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
+		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID)
+	return t, err
 }
 
 // TitleID is the deterministic id for a title. Deriving it from the identity
@@ -97,9 +124,7 @@ func (s *Store) UpsertSeason(ctx context.Context, titleID string, number, episod
 
 // TitlesOfKind lists tracked titles, optionally only the monitored ones.
 func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly bool) ([]Title, error) {
-	q := `SELECT id, tmdb_id, COALESCE(tvdb_id,0), imdb_id, kind, title, sort_title,
-	             COALESCE(year,0), status, series_type, monitored, monitor_new
-	        FROM titles WHERE kind = $1`
+	q := `SELECT ` + titleCols + ` FROM titles WHERE kind = $1`
 	if monitoredOnly {
 		q += ` AND monitored`
 	}
@@ -111,9 +136,8 @@ func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly boo
 	defer rows.Close()
 	var out []Title
 	for rows.Next() {
-		var t Title
-		if err := rows.Scan(&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title,
-			&t.SortTitle, &t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew); err != nil {
+		t, err := scanTitle(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, t)
@@ -121,32 +145,52 @@ func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly boo
 	return out, rows.Err()
 }
 
-// TitleByID reads one title.
+// TitleByID reads one title, or ErrNotFound.
 func (s *Store) TitleByID(ctx context.Context, id string) (Title, error) {
-	var t Title
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, tmdb_id, COALESCE(tvdb_id,0), imdb_id, kind, title, sort_title,
-		       COALESCE(year,0), status, series_type, monitored, monitor_new, profile_id
-		  FROM titles WHERE id = $1`, id).
-		Scan(&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
-			&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID)
+	t, err := scanTitle(s.pool.QueryRow(ctx, `SELECT `+titleCols+` FROM titles WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Title{}, ErrNotFound
+	}
+	return t, err
+}
+
+// TitleByIdentity finds the tracked title of a kind (movie | series) that one
+// of the identities names: tmdb first, then tvdb, then imdb. ErrNotFound when
+// none does.
+func (s *Store) TitleByIdentity(ctx context.Context, kind string, tmdb, tvdb int64, imdb string) (Title, error) {
+	t, err := scanTitle(s.pool.QueryRow(ctx, `
+		SELECT `+titleCols+` FROM titles
+		 WHERE kind = $1 AND (($2::bigint > 0 AND tmdb_id = $2) OR ($3::bigint > 0 AND tvdb_id = $3)
+		                      OR ($4::text <> '' AND imdb_id = $4))
+		 ORDER BY tmdb_id = $2 DESC, COALESCE(tvdb_id = $3, false) DESC, id
+		 LIMIT 1`, kind, tmdb, tvdb, imdb))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Title{}, ErrNotFound
+	}
 	return t, err
 }
 
 // TargetWithTitle reads a target together with the title it belongs to, which
 // is always what a search needs — the ids and aliases live on the title.
 func (s *Store) TargetWithTitle(ctx context.Context, targetID string) (Target, Title, error) {
-	var t Target
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, title_id, kind, season_number, episode_number, air_date, monitored, state
-		  FROM acquisition_targets WHERE id = $1`, targetID).
-		Scan(&t.ID, &t.TitleID, &t.Kind, &t.SeasonNumber, &t.EpisodeNumber,
-			&t.AirDate, &t.Monitored, &t.State)
+	t, err := s.GetTarget(ctx, targetID)
 	if err != nil {
 		return t, Title{}, err
 	}
 	ti, err := s.TitleByID(ctx, t.TitleID)
 	return t, ti, err
+}
+
+// TargetAt reads a title's target at a coordinate: an episode, or — season and
+// episode nil — the movie. ErrNotFound when it has none there.
+func (s *Store) TargetAt(ctx context.Context, titleID string, season, episode *int) (Target, error) {
+	t, err := scanTarget(s.pool.QueryRow(ctx, `SELECT `+targetCols+` FROM acquisition_targets a
+		 WHERE a.title_id = $1 AND a.season_number IS NOT DISTINCT FROM $2::int
+		   AND a.episode_number IS NOT DISTINCT FROM $3::int`, titleID, season, episode))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Target{}, ErrNotFound
+	}
+	return t, err
 }
 
 // AliasesFor returns every known alias, across sources. Production matched 119

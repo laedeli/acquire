@@ -189,7 +189,7 @@ func TestCutoffNeverUpgradesADerivedScore(t *testing.T) {
 func TestUnairedEpisodesAreNotDue(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title) VALUES ('t7',7,'series','S')`)
+	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title,holdings_at) VALUES ('t7',7,'series','S',now())`)
 	for i, when := range []string{"now() - interval '1 day'", "now() + interval '7 days'"} {
 		ep := i + 1
 		_, err := s.pool.Exec(ctx, `
@@ -212,8 +212,11 @@ func TestUnairedEpisodesAreNotDue(t *testing.T) {
 func TestSearchBackoffGrows(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title) VALUES ('t8',8,'movie','M')`)
+	_, _ = s.pool.Exec(ctx, `INSERT INTO titles (id,tmdb_id,kind,title,holdings_at) VALUES ('t8',8,'movie','M',now())`)
 	_ = s.UpsertTarget(ctx, Target{ID: "b1", TitleID: "t8", Kind: "movie", Monitored: true, State: "wanted"})
+	if due, _ := s.DueTargets(ctx, 10); len(due) != 1 {
+		t.Fatalf("a wanted movie of known holdings is due before any search, got %d", len(due))
+	}
 	var prev time.Duration
 	for i := 1; i <= 3; i++ {
 		if err := s.BackoffSearch(ctx, "b1", 10*time.Minute, 24*time.Hour); err != nil {
@@ -236,6 +239,17 @@ func TestSearchBackoffGrows(t *testing.T) {
 }
 
 func intp(v int) *int { return &v }
+
+// knownHoldings records that acquire knows what the library holds of a title,
+// as a successful reconcile does: until then its targets are neither missing
+// nor due.
+func knownHoldings(t *testing.T, s *Store, titleID string) {
+	t.Helper()
+	if _, err := s.pool.Exec(context.Background(),
+		`UPDATE titles SET holdings_at = now() WHERE id = $1`, titleID); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // The import must be safe to re-run: ids derive from identity, so a second pass
 // updates the same rows instead of building a parallel library.
@@ -319,8 +333,9 @@ func TestAliasesAreReplacedNotAccumulated(t *testing.T) {
 func TestAirWindowAppliesGrace(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	_ = s.UpsertTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "S"})
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "S", Monitored: true})
 	id := TitleID("series", 2)
+	knownHoldings(t, s, id)
 	season, ep := 1, 1
 	tid := TargetID(id, &season, &ep)
 	if err := s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "episode",
@@ -409,6 +424,7 @@ func TestReadViewsAgree(t *testing.T) {
 	_ = s.UpsertTitle(ctx, Title{TMDBID: 1396, Kind: "series", Title: "Breaking Bad",
 		TVDBID: 81189, Monitored: true})
 	id := TitleID("series", 1396)
+	knownHoldings(t, s, id)
 	now := time.Now()
 	// 2 aired (one held, one wanted) + 1 unaired.
 	for i, spec := range []struct {
@@ -479,6 +495,7 @@ func TestMissingFlagsUnsearchableTitles(t *testing.T) {
 	ctx := context.Background()
 	_ = s.UpsertTitle(ctx, Title{TMDBID: 999, Kind: "series", Title: "No Ids Here", Monitored: true})
 	id := TitleID("series", 999)
+	knownHoldings(t, s, id)
 	season, ep := 1, 1
 	tid := TargetID(id, &season, &ep)
 	_ = s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "episode",
@@ -582,8 +599,9 @@ func TestBlocklistExcludesAndExpires(t *testing.T) {
 func TestRetryableTargetsRespectBackoff(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	_ = s.UpsertTitle(ctx, Title{TMDBID: 7, Kind: "movie", Title: "M"})
+	_ = s.UpsertTitle(ctx, Title{TMDBID: 7, Kind: "movie", Title: "M", Monitored: true})
 	id := TitleID("movie", 7)
+	knownHoldings(t, s, id)
 	tid := TargetID(id, nil, nil)
 	_ = s.UpsertTarget(ctx, Target{ID: tid, TitleID: id, Kind: "movie", Monitored: true, State: "wanted"})
 
