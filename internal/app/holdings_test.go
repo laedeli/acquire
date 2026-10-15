@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -24,11 +25,16 @@ type holdingsAPI struct {
 	mode   string
 	series map[string][]katalog.SeasonHoldings // by "tmdb:4711", "tvdb:…"
 	movies map[string]katalog.MovieHolding     // by "imdb:tt…"
-	asked  []string
+	// listing is every title the listing pages answer, by type;
+	// listingDown answers them 503.
+	listing     map[string][]map[string]any
+	listingDown bool
+	asked       []string
 }
 
 func newHoldingsAPI() *holdingsAPI {
-	return &holdingsAPI{series: map[string][]katalog.SeasonHoldings{}, movies: map[string]katalog.MovieHolding{}}
+	return &holdingsAPI{series: map[string][]katalog.SeasonHoldings{}, movies: map[string]katalog.MovieHolding{},
+		listing: map[string][]map[string]any{}}
 }
 
 func (h *holdingsAPI) set(f func(h *holdingsAPI)) {
@@ -50,8 +56,24 @@ func (h *holdingsAPI) server(t *testing.T) *httptest.Server {
 		case h.mode == "unsupported" || r.URL.Path != "/api/v1/holdings":
 			http.NotFound(w, r)
 			return
-		case q.Get("page") != "":
-			_, _ = w.Write([]byte(`{"items":[],"page":1,"pageSize":1,"total":0}`))
+		case h.listingDown && q.Get("pageSize") != "1" && q.Get("page") != "":
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		case q.Get("page") != "" || (q.Get("tmdb") == "" && q.Get("tvdb") == "" && q.Get("imdb") == ""):
+			items := h.listing[q.Get("type")]
+			page, size := 1, 200
+			if v, err := strconv.Atoi(q.Get("page")); err == nil {
+				page = v
+			}
+			if v, err := strconv.Atoi(q.Get("pageSize")); err == nil {
+				size = v
+			}
+			from, to := min((page-1)*size, len(items)), min(page*size, len(items))
+			out := items[from:to]
+			if out == nil {
+				out = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": out, "page": page, "pageSize": size, "total": len(items)})
 			return
 		}
 		key := ""
@@ -312,4 +334,85 @@ func TestTheReconcileScheduleWakesItsWorker(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// A title none of whose identities the library holds, but whose name — and
+// year, when both have one — is that of a title the catalog holds without an
+// identity, is of unknown holdings: its episodes may all be on disk. A title
+// of the same name from another year is another title.
+func TestATitleTheCatalogHoldsWithoutAnIdentityIsUnknown(t *testing.T) {
+	r := newTargetRig(t)
+	ctx := context.Background()
+	show, _ := track(t, r.svc, 4711, "Show Name", 2, false)
+	other, _ := track(t, r.svc, 99, "Other Show", 1, false)
+	r.api.set(func(h *holdingsAPI) {
+		h.listing["series"] = []map[string]any{
+			{"itemId": "s1", "title": "Show  Name (2019)", "year": nil, "externalIds": map[string]any{}},
+			{"itemId": "s2", "title": "Other Show", "year": 1990, "externalIds": map[string]any{}},
+			{"itemId": "s3", "title": "Other Show", "year": 2019, "externalIds": map[string]any{"tvdb": "5"}},
+		}
+	})
+	run, err := r.svc.ReconcileHoldings(ctx)
+	if err != nil || run.Unknown != 1 || run.Known != 1 {
+		t.Fatalf("run: %+v %v", run, err)
+	}
+	ti, _ := r.svc.st.TitleByID(ctx, show.ID)
+	if ti.HoldingsKnown() || !strings.Contains(ti.HoldingsError, "the catalog holds a title of this name without an identity") {
+		t.Errorf("a series held without an identity: %+v", ti)
+	}
+	if ti, _ := r.svc.st.TitleByID(ctx, other.ID); !ti.HoldingsKnown() {
+		t.Errorf("another year's series, and one with an identity of its own: %+v", ti)
+	}
+	if miss, _ := r.svc.st.Missing(ctx, 10); len(miss) != 1 || miss[0].TitleID != other.ID {
+		t.Errorf("missing = %+v, want Other Show's one episode", miss)
+	}
+	// A listing that cannot be read leaves what was known as it was.
+	r.api.set(func(h *holdingsAPI) { h.listingDown = true })
+	if run, _ := r.svc.ReconcileHoldings(ctx, other.ID); run.Failed != 1 {
+		t.Errorf("a listing that is down: %+v", run)
+	}
+	if ti, _ := r.svc.st.TitleByID(ctx, other.ID); !ti.HoldingsKnown() || ti.HoldingsError == "" {
+		t.Errorf("after a listing that is down: %+v", ti)
+	}
+}
+
+// A series the catalog holds twice is answered as one, the episodes of both
+// copies in its seasons: an episode both hold is listed twice, and is held by
+// the copy that plays.
+func TestASeriesHeldTwiceIsReadAsOne(t *testing.T) {
+	r := newTargetRig(t)
+	ctx := context.Background()
+	title, eps := track(t, r.svc, 4711, "Show Name", 2, false)
+	r.api.set(func(h *holdingsAPI) {
+		h.series["tmdb:4711"] = season1(
+			katalog.EpisodeHolding{Episode: 1, ItemID: "copy-a", HasFile: true},
+			katalog.EpisodeHolding{Episode: 1, ItemID: "copy-b", HasFile: true, Playable: true},
+			katalog.EpisodeHolding{Episode: 2, ItemID: "b2", HasFile: true},
+		)
+	})
+	if _, err := r.svc.ReconcileHoldings(ctx, title.ID); err != nil {
+		t.Fatal(err)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.HeldItemID != "copy-b" || !st.HeldPlayable {
+		t.Errorf("an episode held twice: %+v", st)
+	}
+	if st := target(t, r.svc, eps[1].ID); st.State != store.TargetHeld || st.HeldItemID != "b2" {
+		t.Errorf("the other copy's episode: %+v", st)
+	}
+}
+
+func TestTitleKey(t *testing.T) {
+	for in, want := range map[string]struct {
+		key  string
+		year int
+	}{
+		"Show Name":                  {"show name", 0},
+		"Show  Name (2019)":          {"show name", 2019},
+		"Über den Fluss – Teil Eins": {"über den fluss teil eins", 0},
+		"A*B*C":                      {"a b c", 0},
+	} {
+		if key, year := titleKey(in); key != want.key || year != want.year {
+			t.Errorf("titleKey(%q) = %q %d, want %q %d", in, key, year, want.key, want.year)
+		}
+	}
 }

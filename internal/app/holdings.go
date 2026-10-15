@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/laedeli/acquire/internal/events"
 	"github.com/laedeli/acquire/internal/katalog"
@@ -40,13 +43,16 @@ const (
 type HoldingsRun struct {
 	// Supported is false when the catalog does not answer holdings by
 	// identity: every title's holdings are unknown then.
-	Supported bool   `json:"supported"`
-	Titles    int    `json:"titles"`
-	Known     int    `json:"known"`
-	Failed    int    `json:"failed"`
-	Held      int64  `json:"held"`
-	Released  int64  `json:"released"`
-	Error     string `json:"error,omitempty"`
+	Supported bool `json:"supported"`
+	Titles    int  `json:"titles"`
+	Known     int  `json:"known"`
+	// Unknown are the titles the catalog may hold as an item without an
+	// identity (heldWithoutIdentity): of unknown holdings until it has one.
+	Unknown  int    `json:"unknown"`
+	Failed   int    `json:"failed"`
+	Held     int64  `json:"held"`
+	Released int64  `json:"released"`
+	Error    string `json:"error,omitempty"`
 }
 
 // ReconcileHoldings asks katalog-api what the library holds of the titles
@@ -94,17 +100,22 @@ func (s *Service) ReconcileHoldings(ctx context.Context, titleIDs ...string) (Ho
 		return run, fmt.Errorf("holdings: %w", err)
 	}
 	run.Supported = true
+	ns := &namesakes{read: map[string]error{}, byName: map[string][]katalog.ListedTitle{}}
 	for _, t := range titles {
 		if ctx.Err() != nil {
 			run.Error = ctx.Err().Error()
 			break
 		}
-		ch, err := s.reconcileTitle(ctx, t)
+		ch, err := s.reconcileTitle(ctx, t, ns)
 		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		var unnamed heldWithoutIdentity
 		switch {
 		case errors.Is(err, katalog.ErrHoldingsUnsupported):
 			run.Failed++
 			_, _ = s.st.HoldingsUnknown(wctx, []string{t.ID}, holdingsUnsupported)
+		case errors.As(err, &unnamed):
+			run.Unknown++
+			_, _ = s.st.HoldingsUnknown(wctx, []string{t.ID}, unnamed.Error())
 		case err != nil:
 			run.Failed++
 			_ = s.st.HoldingsFailed(wctx, []string{t.ID}, err.Error())
@@ -115,8 +126,8 @@ func (s *Service) ReconcileHoldings(ctx context.Context, titleIDs ...string) (Ho
 		}
 		cancel()
 	}
-	log.Printf("acquire holdings: %d title(s) — %d known, %d failed; %d target(s) held, %d no longer held",
-		run.Titles, run.Known, run.Failed, run.Held, run.Released)
+	log.Printf("acquire holdings: %d title(s) — %d known, %d held without an identity, %d failed; %d target(s) held, %d no longer held",
+		run.Titles, run.Known, run.Unknown, run.Failed, run.Held, run.Released)
 	s.notify()
 	return run, nil
 }
@@ -149,15 +160,22 @@ func (s *Service) holdingsTitles(ctx context.Context, ids []string) ([]store.Tit
 }
 
 // reconcileTitle asks what the library holds of one title, by each identity
-// acquire holds in turn — TMDB, then TVDB, then IMDb — and applies it.
-func (s *Service) reconcileTitle(ctx context.Context, t store.Title) (store.HoldingsChange, error) {
+// acquire holds in turn — TMDB, then TVDB, then IMDb — and applies it. A title
+// none of whose identities the library holds, but that it may hold as an item
+// without an identity (ns), is heldWithoutIdentity: nothing is applied.
+func (s *Service) reconcileTitle(ctx context.Context, t store.Title, ns *namesakes) (store.HoldingsChange, error) {
 	_, profileID := s.ScoringProfile(ctx, t.ProfileID)
 	if t.Kind == "movie" {
 		m, err := lookupByIdentity(t, func(kind, id string) (katalog.MovieHolding, error) {
 			return s.kc.MovieHoldings(ctx, kind, id)
 		}, false)
 		switch {
-		case errors.Is(err, katalog.ErrNotHeld), err == nil && !m.Held():
+		case errors.Is(err, katalog.ErrNotHeld):
+			if err := ns.check(ctx, s.kc, t); err != nil {
+				return store.HoldingsChange{}, err
+			}
+			return s.st.ApplyMovieHolding(ctx, t.ID, "", profileID, nil)
+		case err == nil && !m.Held():
 			return s.st.ApplyMovieHolding(ctx, t.ID, "", profileID, nil)
 		case err != nil:
 			return store.HoldingsChange{}, err
@@ -168,21 +186,137 @@ func (s *Service) reconcileTitle(ctx context.Context, t store.Title) (store.Hold
 		return s.kc.SeriesHoldings(ctx, kind, id)
 	}, true)
 	if errors.Is(err, katalog.ErrNotHeld) {
+		if err := ns.check(ctx, s.kc, t); err != nil {
+			return store.HoldingsChange{}, err
+		}
 		return s.st.ApplySeriesHoldings(ctx, t.ID, "", profileID, nil)
 	}
 	if err != nil {
 		return store.HoldingsChange{}, err
 	}
+	return s.st.ApplySeriesHoldings(ctx, t.ID, sh.SeriesID, profileID, heldEpisodes(sh))
+}
+
+// heldEpisodes are the episodes a series' holdings hold, each once. A series
+// the catalog holds twice is answered as one, the first made, with the
+// episodes of every copy in its seasons — an episode both copies hold is
+// listed twice: it is held by the copy that plays, else one with a file of its
+// own, else the first listed.
+func heldEpisodes(sh katalog.SeriesHoldings) []store.HeldEpisode {
+	rank := func(e katalog.EpisodeHolding) int {
+		switch {
+		case e.Playable:
+			return 3
+		case e.HasFile && e.CoveredBy == "":
+			return 2
+		case e.HasFile:
+			return 1
+		}
+		return 0
+	}
 	var held []store.HeldEpisode
+	var ranks []int
+	at := map[[2]int]int{}
 	for _, season := range sh.Seasons {
 		for _, e := range season.Episodes {
-			if e.Held() {
-				held = append(held, store.HeldEpisode{Season: season.Season, Episode: e.Episode,
-					ItemID: e.ItemID, Via: e.CoveredBy, Playable: e.Playable})
+			if !e.Held() {
+				continue
 			}
+			h := store.HeldEpisode{Season: season.Season, Episode: e.Episode, ItemID: e.ItemID, Via: e.CoveredBy, Playable: e.Playable}
+			key := [2]int{season.Season, e.Episode}
+			if i, ok := at[key]; ok {
+				if rank(e) > ranks[i] {
+					held[i], ranks[i] = h, rank(e)
+				}
+				continue
+			}
+			at[key] = len(held)
+			held, ranks = append(held, h), append(ranks, rank(e))
 		}
 	}
-	return s.st.ApplySeriesHoldings(ctx, t.ID, sh.SeriesID, profileID, held)
+	return held
+}
+
+// heldWithoutIdentity is a title the library may hold as an item that carries
+// no identity: a lookup by identity cannot find it, but its name — and its
+// year, when both have one — is the title's. What the library holds of it
+// cannot be known until the item carries an identity; until then nothing of
+// it is missing, nor grabbed automatically.
+type heldWithoutIdentity struct{ item katalog.ListedTitle }
+
+func (e heldWithoutIdentity) Error() string {
+	return fmt.Sprintf("the catalog holds a title of this name without an identity (item %s, %q): "+
+		"what it holds of it cannot be known until that item carries one", e.item.ItemID, e.item.Title)
+}
+
+// namesakes are the titles the catalog holds without an identity, by kind and
+// name, read once per reconcile — from the listing, page by page — when a
+// lookup by identity first finds nothing.
+type namesakes struct {
+	read   map[string]error // kind → the listing's error, once read
+	byName map[string][]katalog.ListedTitle
+}
+
+// check reports a title none of whose identities the library holds as
+// heldWithoutIdentity when the library holds a title of its name without an
+// identity, and an error when that cannot be told.
+func (n *namesakes) check(ctx context.Context, kc *katalog.Client, t store.Title) error {
+	kind := t.Kind
+	if _, done := n.read[kind]; !done {
+		all, err := kc.ListHoldings(ctx, kind)
+		n.read[kind] = err
+		for _, it := range all {
+			if len(it.ExternalIDs) > 0 {
+				continue
+			}
+			key, year := titleKey(it.Title)
+			if it.Year == 0 {
+				it.Year = year
+			}
+			n.byName[kind+"\x00"+key] = append(n.byName[kind+"\x00"+key], it)
+		}
+	}
+	if err := n.read[kind]; err != nil {
+		return fmt.Errorf("the catalog's titles without an identity could not be read: %w", err)
+	}
+	key, year := titleKey(t.Title)
+	if t.Year != 0 {
+		year = t.Year
+	}
+	for _, it := range n.byName[kind+"\x00"+key] {
+		if it.Year == 0 || year == 0 || it.Year == year {
+			return heldWithoutIdentity{it}
+		}
+	}
+	return nil
+}
+
+// trailingYear is a year a title's name ends with, in parentheses.
+var trailingYear = regexp.MustCompile(`\s*\((\d{4})\)\s*$`)
+
+// titleKey is a title's name as namesakes compare it — letters and digits in
+// lower case, one space between words — and the year its name ends with in
+// parentheses, if any.
+func titleKey(name string) (string, int) {
+	year := 0
+	if m := trailingYear.FindStringSubmatchIndex(name); m != nil {
+		year, _ = strconv.Atoi(name[m[2]:m[3]])
+		name = name[:m[0]]
+	}
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteRune(r)
+			space = false
+			continue
+		}
+		space = true
+	}
+	return b.String(), year
 }
 
 // lookupByIdentity asks by each identity of a title in turn, in the order an

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/laedeli/acquire/internal/identity"
@@ -91,18 +92,25 @@ type MovieHolding struct {
 // Held reports whether the movie is in the library with a file.
 func (m MovieHolding) Held() bool { return m.ItemID != "" && m.HasFile }
 
+// ListedTitle is one title of the listing: its item, name, year (0 when it
+// has none) and identities ({} when the catalog keeps none for it).
+type ListedTitle struct {
+	ItemID      string       `json:"itemId"`
+	Title       string       `json:"title"`
+	Year        int          `json:"year"`
+	ExternalIDs identity.IDs `json:"externalIds"`
+}
+
 // HoldingsPage is one page of every title of a kind with its identities.
 type HoldingsPage struct {
-	Items []struct {
-		ItemID      string       `json:"itemId"`
-		Title       string       `json:"title"`
-		Year        int          `json:"year"`
-		ExternalIDs identity.IDs `json:"externalIds"`
-	} `json:"items"`
-	Page     int `json:"page"`
-	PageSize int `json:"pageSize"`
-	Total    int `json:"total"`
+	Items    []ListedTitle `json:"items"`
+	Page     int           `json:"page"`
+	PageSize int           `json:"pageSize"`
+	Total    int           `json:"total"`
 }
+
+// listingPage is the largest page the read side serves.
+const listingPage = 1000
 
 // ProbeHoldings asks whether the read side answers holdings by identity, with
 // the cheapest request there is: one page of one series. nil means it does;
@@ -112,20 +120,44 @@ type HoldingsPage struct {
 // The probe is what tells "this series is not held" (404 for a lookup) from
 // "there is no such endpoint" (404 for every lookup) apart.
 func (c *Client) ProbeHoldings(ctx context.Context) error {
-	var page HoldingsPage
+	var page struct {
+		Items json.RawMessage `json:"items"`
+		Page  *int            `json:"page"`
+		Total *int            `json:"total"`
+	}
 	err := c.holdings(ctx, url.Values{"type": {"series"}, "page": {"1"}, "pageSize": {"1"}}, &page)
-	switch {
+	switch items := strings.TrimSpace(string(page.Items)); {
 	case errors.Is(err, ErrNotHeld):
 		// A 404 for a listing is no endpoint, not an empty library.
 		return ErrHoldingsUnsupported
 	case err != nil:
 		return err
-	case page.Items == nil:
-		// 200 with something that is not a page (a catch-all answering every
-		// path) is not the contract either.
-		return ErrHoldingsUnsupported
+	case strings.HasPrefix(items, "["):
+		return nil
+	case (items == "" || items == "null") && page.Page != nil && page.Total != nil:
+		// An empty page that says so with null is a page all the same.
+		return nil
 	}
-	return nil
+	// 200 with something that is not a page (a catch-all answering every
+	// path) is not the contract either.
+	return ErrHoldingsUnsupported
+}
+
+// ListHoldings reads every title of a kind (series or movie) the library
+// holds, page by page.
+func (c *Client) ListHoldings(ctx context.Context, kind string) ([]ListedTitle, error) {
+	var out []ListedTitle
+	for page := 1; ; page++ {
+		var p HoldingsPage
+		q := url.Values{"type": {kind}, "page": {strconv.Itoa(page)}, "pageSize": {strconv.Itoa(listingPage)}}
+		if err := c.holdings(ctx, q, &p); err != nil {
+			return nil, fmt.Errorf("the %s listing, page %d: %w", kind, page, err)
+		}
+		out = append(out, p.Items...)
+		if len(p.Items) == 0 || page*listingPage >= p.Total {
+			return out, nil
+		}
+	}
 }
 
 // SeriesHoldings asks what the library holds of the series an identity names

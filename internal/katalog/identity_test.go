@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -185,6 +187,11 @@ func TestHoldingsProbe(t *testing.T) {
 		{func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte(`{"items":[],"page":1,"pageSize":1,"total":0}`))
 		}, nil},
+		// An empty page that says so with null is a page all the same.
+		{func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"items":null,"page":1,"pageSize":1,"total":0}`))
+		}, nil},
+		{func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"items":null}`)) }, ErrHoldingsUnsupported},
 	} {
 		srv := httptest.NewServer(c.h)
 		err := New("", srv.URL, nil).ProbeHoldings(context.Background())
@@ -204,6 +211,29 @@ func TestHoldingsProbe(t *testing.T) {
 			t.Errorf("a refusal should say what the service account needs: %v", err)
 		}
 		srv.Close()
+	}
+}
+
+// The listing is read to its last page, at the largest page there is.
+func TestListHoldings(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		asked = append(asked, q.Get("page")+"/"+q.Get("pageSize"))
+		page, _ := strconv.Atoi(q.Get("page"))
+		items := `[]`
+		if page <= 2 {
+			items = fmt.Sprintf(`[{"itemId":"s%d","title":"Show %d","year":null,"externalIds":{}}]`, page, page)
+		}
+		_, _ = fmt.Fprintf(w, `{"items":%s,"page":%d,"pageSize":1000,"total":1500}`, items, page)
+	}))
+	defer srv.Close()
+	got, err := New("", srv.URL, nil).ListHoldings(context.Background(), "series")
+	if err != nil || len(got) != 2 || got[1].ItemID != "s2" || got[1].Year != 0 || len(got[1].ExternalIDs) != 0 {
+		t.Fatalf("listing: %+v %v", got, err)
+	}
+	if strings.Join(asked, ",") != "1/1000,2/1000" {
+		t.Errorf("asked %v", asked)
 	}
 }
 
