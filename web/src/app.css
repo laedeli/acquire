@@ -1,12 +1,6 @@
 /* Console layout. Colours, type and spacing all come from the design system's
-   tokens; nothing here re-defines the palette. Square corners throughout. */
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--fg-2);
-  font-family: var(--ff-ui);
-}
+   tokens; nothing here re-defines the palette. Square corners throughout.
+   Nothing here styles the page itself: the page is the portal's. */
 
 .acq {
   max-width: 1180px;
@@ -14,30 +8,8 @@ body {
   padding: var(--s-4);
 }
 
-.acq__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-3);
-  flex-wrap: wrap;
-  padding-bottom: var(--s-3);
-}
-
-.acq__who {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
 .acq__main {
   padding-top: var(--s-4);
-}
-
-.acq__center {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: var(--s-4);
 }
 
 /* The design system ships no progress bar: a square accent fill on a

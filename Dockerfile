@@ -1,7 +1,8 @@
 # Build acquire (Go + embedded console).
 #
-# The console is a Vite/React app baked into the binary with go:embed, so the
-# image stays a single static server — no nginx sidecar, no runtime asset fetch.
+# The console is a Vite/React federated module the portal hosts, baked into the
+# binary with go:embed, so the image stays a single static server — no nginx
+# sidecar, no runtime asset fetch.
 # A built copy is also committed under internal/httpapi/web so `go build` works
 # without node; this stage rebuilds it so the image never ships a stale one.
 FROM node:20-alpine AS web
@@ -19,8 +20,8 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
-# vite writes to ../internal/httpapi/web, i.e. /internal/httpapi/web in the web
-# stage. Overwrite the committed copy before go:embed reads it.
+# vite writes to ../internal/httpapi/web/embed, i.e. under /internal/httpapi/web
+# in the web stage. Overwrite the committed copy before go:embed reads it.
 COPY --from=web /internal/httpapi/web ./internal/httpapi/web
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /acquire ./cmd/server
 

@@ -1,9 +1,10 @@
 // The acquire REST surface. Every call carries the signed-in user's bearer;
-// a 401 means the session lapsed, which the auth layer handles by re-login.
+// a 401 means the session lapsed, which the portal shell handles by signing
+// the user in again.
 
+// What the console reads from /api/config: the realm role that makes a user an
+// admin, and whether "find & grab" has a source and a client to work with.
 export interface Config {
-  oidcIssuer: string
-  oidcClientId: string
   adminRole: string
   autoGrab: boolean
 }
@@ -315,13 +316,6 @@ export interface FieldError {
   id: string
   field: string
   message: string
-}
-
-// Where the API lives depends on how the console is running: standalone it sits
-// next to the SPA, embedded it is reached through the portal's proxy. The host
-// tells us, so nothing here assumes a mount point.
-export function defaultApiBase(): string {
-  return window.location.pathname.replace(/\/[^/]*$/, '/')
 }
 
 export class ApiError extends Error {

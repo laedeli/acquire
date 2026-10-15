@@ -4,18 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build && vite build --config vite.embed.config.ts",
-    "preview": "vite preview",
-    "build:embed": "vite build --config vite.embed.config.ts"
+    "build": "tsc -b && vite build"
   },
   "dependencies": {
     "@nalet/design-system": "file:vendor/nalet-design-system-0.1.0.tgz",
     "lucide-react": "^0.469.0",
-    "oidc-client-ts": "^3.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-oidc-context": "^3.2.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@originjs/vite-plugin-federation": "^1.4.1",

@@ -62,15 +62,19 @@ jobs:
       # never byte-identical across machines. Assert the build produced the
       # artifacts the shell actually loads instead — `npm run build` above
       # already type-checks the source, which is what catches a stale edit.
-      - name: the build produced what the portal loads
+      # acquire has no page of its own, so the build must not make one either.
+      - name: the build produced what the portal loads, and no page
         run: |
           set -e
           for f in \
-            ../internal/httpapi/web/index.html \
             ../internal/httpapi/web/embed/assets/remoteEntry.js \
             ../internal/httpapi/web/embed/assets/console.css; do
             test -s "$f" || { echo "missing or empty: $f" >&2; exit 1; }
           done
           grep -q "./Console" ../internal/httpapi/web/embed/assets/remoteEntry.js \
             || { echo "remoteEntry does not expose ./Console" >&2; exit 1; }
+          grep -q "acq__main" ../internal/httpapi/web/embed/assets/console.css \
+            || { echo "console.css lacks the console's own styles" >&2; exit 1; }
+          pages=$(find ../internal/httpapi/web -name '*.html')
+          [ -z "$pages" ] || { echo "the build made a page: $pages" >&2; exit 1; }
         working-directory: web

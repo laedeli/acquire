@@ -37,9 +37,9 @@ export function health(h: number | null | undefined): string {
 }
 
 /**
- * Realm roles live in the ACCESS token, not in the ID-token profile that
- * oidc-client-ts exposes as `user.profile` — reading the profile silently
- * yields no roles, so the console would render as if you were not an admin.
+ * Realm roles live in the ACCESS token the shell hands the console, not in the
+ * ID-token profile — reading the profile silently yields no roles, so the
+ * console would render as if you were not an admin.
  */
 export function realmRoles(accessToken: string | undefined): string[] {
   if (!accessToken) return []

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Tabs } from '@nalet/design-system'
+// The console's styles: the design system's and its own layout. The build
+// emits them as one stylesheet, assets/console.css, which the portal links
+// when it mounts the console.
+import '@nalet/design-system/styles.css'
+import './app.css'
 import {
   makeApi,
   type ClientStatus,
@@ -24,8 +29,8 @@ import { Settings } from './views/Settings'
 const FALLBACK_POLL_MS = 30_000
 
 // Each surface is its own launchpad tile, so it needs its own address. Hash
-// routing keeps that working behind the ingress that strips the /acquire prefix,
-// without the server having to know where it is mounted.
+// routes give it one inside the portal's route for the app
+// (/portal/app/acquire#/downloads) that the shell's own router leaves alone.
 const TABS = ['requests', 'series', 'missing', 'downloads', 'search', 'discover', 'indexers', 'clients', 'settings'] as const
 type Tab = (typeof TABS)[number]
 
@@ -35,10 +40,10 @@ function tabFromHash(): Tab {
 }
 
 /**
- * Console is the whole acquire UI, with no opinion about how it is hosted: the
- * portal shell mounts it in-page and supplies the proxied API base and the
- * signed-in user's token, and the standalone entry supplies its own. It never
- * runs an OIDC flow itself — whoever hosts it already did.
+ * Console is the whole acquire UI, and the portal shell is its only host: the
+ * shell mounts it in place and supplies the proxied API base and the signed-in
+ * user's token. It never runs a sign-in itself — the shell already did, and a
+ * 401 is handed back to it through onUnauthorized.
  */
 export function Console({
   apiBase,
