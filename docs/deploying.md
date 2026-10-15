@@ -130,10 +130,10 @@ need no extra privileges; the client images run as non-root too (see
 Every chart version is published as a release archive:
 
 ```text
-https://github.com/laedeli/acquire/releases/download/chart-acquire-0.3.0/acquire-0.3.0.tgz
+https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.0/acquire-0.4.0.tgz
 ```
 
-The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.3.0`.
+The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.4.0`.
 The operator pulls charts anonymously, so the OCI reference works once that
 package is public; the https archive works everywhere. Each release names the
 archive's digest: set it as the chart digest to pin exactly that archive.
@@ -159,7 +159,7 @@ tiles open the console in place, in the portal.
 With `ZAE_TOKEN` holding an admin bearer for the instance:
 
 ```bash
-zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.3.0/acquire-0.3.0.tgz \
+zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.0/acquire-0.4.0.tgz \
   --name acquire \
   --url https://<instance> \
   --set-secret database.url='postgres://acquire:…@db.example.org:5432/acquire?sslmode=require' \
@@ -171,7 +171,7 @@ zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire
 question). With the OCI reference, once the package is public:
 
 ```bash
-zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.3.0 --name acquire \
+zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.4.0 --name acquire \
   --url https://<instance> \
   --set-secret database.url=… --set-secret oidc.serviceClientSecret=…
 ```
@@ -271,7 +271,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.3.0/acquire-0.3.0.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.0/acquire-0.4.0.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -338,6 +338,12 @@ there (see [where the console is](#where-the-console-is)). The public client
 still sets `oidc.clientId` renders, and the value is ignored. A Route or
 Ingress you gave acquire for the old console now only leads to the portal:
 remove it too.
+
+**To 0.4.0.** acquire grabs the episodes and movies it tracks, hands episodes
+to the catalog by identity and learns what the library holds from it: see
+[upgrading to episode grabs](#upgrading-to-episode-grabs) for what that asks
+of the platform. Nothing is grabbed on its own after the upgrade: the backlog
+sweep only searches until an admin switches it on in settings.
 
 ### Moving an existing deployment to the chart
 
@@ -841,9 +847,13 @@ nothing runs on a schedule, and the reconcile runs only when it is asked for.
 
 ## Upgrading to episode grabs
 
-This version adds migration `040` (target grabs, what the library holds, each
-search's outcome), applied on start like every other. Nothing else is asked
-of the deployment, but three things read differently after the upgrade:
+This version (chart 0.4.0) adds migration `040` (target grabs, what the
+library holds, each search's outcome), applied on start like every other. It
+asks two things of the platform: the catalog's ingest and holdings by identity
+(zaentrum's ADR-0012; without them episodes wait and holdings stay unknown,
+see [What the library holds](./acquire.md#what-the-library-holds)), and a
+service token with the audience katalog-api accepts (see
+[Identity](#identity)). Three things read differently after the upgrade:
 
 - The **missing** tab is empty until acquire has asked the catalog what the
   library holds — right after the first start, through the
@@ -855,9 +865,10 @@ of the deployment, but three things read differently after the upgrade:
   the whole backlog. It grabs only once **the backlog sweep** is switched on
   in settings.
 - The catalog's `catalog.item.discovered` and `catalog.item.removed` events are
-  read in a second consumer group (`…-acquire-catalog`). Until those topics
-  exist on the brokers that group reads nothing; the reconcile's schedule
-  keeps the holdings right in the meantime, six hours apart.
+  read in a second consumer group, `<KAFKA_GROUP_ID>-catalog`. A broker with
+  ACLs must let that group read; until those topics exist on the brokers that
+  group reads nothing. The reconcile's schedule keeps the holdings right in
+  the meantime, six hours apart.
 
 ## Upgrading from an earlier deployment
 
