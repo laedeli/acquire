@@ -213,6 +213,24 @@ func (s *Store) AliasesFor(ctx context.Context, titleID string) ([]string, error
 	return out, rows.Err()
 }
 
+// AllAliases returns every title's aliases, by title id.
+func (s *Store) AllAliases(ctx context.Context) (map[string][]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT title_id, alias FROM title_aliases ORDER BY title_id, alias`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var id, a string
+		if err := rows.Scan(&id, &a); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], a)
+	}
+	return out, rows.Err()
+}
+
 // SetAirWindow computes when a target becomes searchable: air time plus the
 // title's grace hours. Searching the instant an episode airs mostly finds
 // nothing and spends indexer quota, so the grace period is a real setting

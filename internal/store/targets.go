@@ -280,6 +280,15 @@ func (s *Store) ClearHolding(ctx context.Context, itemID string) (int64, error) 
 	return tag.RowsAffected(), nil
 }
 
+// RelinkHeldItem records the item a held target is, keeping everything else
+// it holds: an episode held through another's file learning its own item.
+func (s *Store) RelinkHeldItem(ctx context.Context, targetID, itemID string, playable bool) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE acquisition_targets SET held_item_id = $2, held_playable = held_playable OR $3, updated_at = now()
+		 WHERE id = $1 AND state = 'held'`, targetID, itemID, playable)
+	return err
+}
+
 // MarkItemPlayable records that the pipeline packaged an item: every target it
 // holds, or holds the file of, is playable.
 func (s *Store) MarkItemPlayable(ctx context.Context, itemID string) (int64, error) {
@@ -387,27 +396,29 @@ type SearchRecord struct {
 
 // RecordSearch records a search's outcome on its target and when the target
 // is due again. A find resets the misses; a miss, or an error, backs off.
+//
+// Durations go to Postgres as seconds: a Go duration's text (1ms, 1µs, 1ns)
+// is not always an interval Postgres reads.
 func (s *Store) RecordSearch(ctx context.Context, targetID string, r SearchRecord) error {
 	if r.Outcome == SearchFound {
 		_, err := s.pool.Exec(ctx, `
 			UPDATE acquisition_targets
 			   SET search_failures = 0, last_search_at = now(),
-			       search_backoff_until = now() + $2::interval,
+			       search_backoff_until = now() + make_interval(secs => $2),
 			       search_outcome = $3, search_detail = $4, updated_at = now()
-			 WHERE id = $1`, targetID, r.Again.String(), r.Outcome, clipText(r.Detail))
+			 WHERE id = $1`, targetID, r.Again.Seconds(), r.Outcome, clipText(r.Detail))
 		return err
 	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE acquisition_targets
 		   SET search_failures = search_failures + 1,
 		       last_search_at = now(),
-		       search_backoff_until = now() + LEAST(
-		         $2::interval * POWER(2, LEAST(search_failures, 10)),
-		         $3::interval),
+		       search_backoff_until = now() + make_interval(secs => LEAST(
+		         $2::float8 * POWER(2, LEAST(search_failures, 10)), $3::float8)),
 		       search_outcome = CASE WHEN $4::text = '' THEN search_outcome ELSE $4::text END,
 		       search_detail = CASE WHEN $4::text = '' THEN search_detail ELSE $5::text END,
 		       updated_at = now()
-		 WHERE id = $1`, targetID, r.Base.String(), r.Max.String(), r.Outcome, clipText(r.Detail))
+		 WHERE id = $1`, targetID, r.Base.Seconds(), r.Max.Seconds(), r.Outcome, clipText(r.Detail))
 	return err
 }
 
@@ -475,19 +486,22 @@ func (s *Store) ApplySeriesHoldings(ctx context.Context, titleID, catalogID, pro
 }
 
 // holdSet holds a target from a holdings row h (item, via, playable) and the
-// profile in the parameter named. A target held before by the same item keeps
-// what it knew of its file; one the library holds by another item, or newly,
-// is a derived holding: acquire knows nothing of the file's release.
+// profile in the parameter named. A target held before by the same file keeps
+// what it knew of it: by the same item, or — an episode a file of several
+// covers — through the same holder, as a grab's hand-over records it before
+// the holdings name the episode's own item. One the library holds by another
+// file, or newly, is a derived holding: acquire knows nothing of its release.
 func holdSet(profileParam string) string {
+	const same = `(a.state = 'held' AND (a.held_item_id = h.item OR (h.via <> '' AND (a.held_item_id = h.via OR a.held_via = h.via))))`
 	return `
-			   SET held_source = CASE WHEN a.held_item_id = h.item AND a.held_source <> '' THEN a.held_source ELSE 'derived' END,
-			       held_release = CASE WHEN a.held_item_id = h.item THEN a.held_release ELSE '' END,
-			       held_quality = CASE WHEN a.held_item_id = h.item THEN a.held_quality ELSE '{}'::jsonb END,
-			       held_score = CASE WHEN a.held_item_id = h.item THEN a.held_score ELSE 0 END,
-			       held_score_profile = CASE WHEN a.held_item_id = h.item AND a.held_score_profile <> ''
+			   SET held_source = CASE WHEN ` + same + ` AND a.held_source <> '' THEN a.held_source ELSE 'derived' END,
+			       held_release = CASE WHEN ` + same + ` THEN a.held_release ELSE '' END,
+			       held_quality = CASE WHEN ` + same + ` THEN a.held_quality ELSE '{}'::jsonb END,
+			       held_score = CASE WHEN ` + same + ` THEN a.held_score ELSE 0 END,
+			       held_score_profile = CASE WHEN ` + same + ` AND a.held_score_profile <> ''
 			                                 THEN a.held_score_profile ELSE ` + profileParam + `::text END,
-			       held_scored_at = CASE WHEN a.held_item_id = h.item THEN a.held_scored_at ELSE now() END,
-			       held_at = CASE WHEN a.held_item_id = h.item AND a.held_at IS NOT NULL THEN a.held_at ELSE now() END,
+			       held_scored_at = CASE WHEN ` + same + ` THEN a.held_scored_at ELSE now() END,
+			       held_at = CASE WHEN ` + same + ` AND a.held_at IS NOT NULL THEN a.held_at ELSE now() END,
 			       held_item_id = h.item, held_via = h.via, held_playable = h.playable,
 			       detail = CASE WHEN a.state = 'held' THEN a.detail ELSE 'in the library' END,
 			       state = 'held', grab_requested_at = NULL, grab_claimed_until = NULL,
@@ -566,12 +580,14 @@ func (s *Store) HoldingsUnknown(ctx context.Context, titleIDs []string, reason s
 	return tag.RowsAffected(), nil
 }
 
-// HoldingsFailed records why a title's holdings could not be read this time.
-// What was known before stays known: a catalog that is down for a minute does
-// not make the library empty, nor full.
-func (s *Store) HoldingsFailed(ctx context.Context, titleID, reason string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE titles SET holdings_error = $2, updated_at = now() WHERE id = $1`, titleID, clipText(reason))
+// HoldingsFailed records why the holdings of the titles named — every title
+// when none is named — could not be read this time. What was known before
+// stays known: a catalog that is down for a minute does not make the library
+// empty, nor full.
+func (s *Store) HoldingsFailed(ctx context.Context, titleIDs []string, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE titles SET holdings_error = $2, updated_at = now()
+		 WHERE cardinality($1::text[]) = 0 OR id = ANY($1)`, nonNil(titleIDs), clipText(reason))
 	return err
 }
 

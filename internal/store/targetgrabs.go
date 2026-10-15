@@ -86,6 +86,8 @@ type NotGrabbableError struct {
 
 func (e *NotGrabbableError) Error() string {
 	switch {
+	case e.State == "":
+		return e.Detail
 	case e.Busy:
 		return "another grab is under way for it"
 	case e.State == TargetHeld:
@@ -147,7 +149,8 @@ func (s *Store) ReserveTargetGrab(ctx context.Context, g TargetGrab, anchor stri
 		return TargetGrab{}, anchorErr
 	}
 	if len(free) == 0 {
-		return TargetGrab{}, &NotGrabbableError{TargetID: anchor, State: "covered", Detail: "nothing it covers is wanted"}
+		return TargetGrab{}, &NotGrabbableError{TargetID: anchor,
+			Detail: "nothing it covers can be grabbed: held already, or another grab is under way"}
 	}
 	g.TargetIDs, g.State = free, GrabPending
 	if _, err := tx.Exec(ctx, `
@@ -385,12 +388,13 @@ func (s *Store) DeferTargetGrabRequest(ctx context.Context, id string, wait time
 // GrabsInFlight counts the target grabs handed to a client whose download the
 // downloads table does not show yet. The table follows the gateway's events,
 // which arrive after the hand-over, so counting it alone lets a run of grabs
-// overshoot the limit on downloads at once.
+// overshoot the limit on downloads at once. A pending reservation is not
+// counted: it is the grab being admitted.
 func (s *Store) GrabsInFlight(ctx context.Context) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM target_grabs g
-		 WHERE g.state IN ('pending','grabbed') AND g.created_at > now() - interval '1 hour'
+		 WHERE g.state = 'grabbed' AND g.created_at > now() - interval '1 hour'
 		   AND NOT EXISTS (SELECT 1 FROM downloads d
 		                    WHERE d.adapter = g.adapter AND d.client_job_id = g.client_job_id)`).Scan(&n)
 	return n, err

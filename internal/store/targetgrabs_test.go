@@ -416,8 +416,8 @@ func TestGrabsInFlightUntilTheDownloadShows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.ActiveDownloads(ctx); n != 1 {
-		t.Fatalf("a reservation counts: %d", n)
+	if n, _ := s.ActiveDownloads(ctx); n != 0 {
+		t.Fatalf("the reservation being admitted counted against itself: %d", n)
 	}
 	g.Adapter, g.ClientJobID = "nzbget", "7"
 	if _, err := s.BindTargetGrab(ctx, g, "grabbed"); err != nil {
