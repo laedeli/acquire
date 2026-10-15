@@ -365,6 +365,26 @@ func TestReleaseWithoutCoordinatesIsRejectedForAnEpisode(t *testing.T) {
 	}
 }
 
+// A file of several episodes in a row and a season pack hold the episode too;
+// a run that stops short of it, or another season's pack, does not.
+func TestReleasesHoldingTheEpisodeAmongOthers(t *testing.T) {
+	for name, want := range map[string]bool{
+		"Breaking.Bad.S02E04E05.1080p-G":      true,
+		"Breaking.Bad.S02E05-E06.1080p-G":     true,
+		"Breaking.Bad.S02.1080p.BluRay-G":     true,
+		"Breaking.Bad.S01-S03.1080p.BluRay-G": true,
+		"Breaking.Bad.S02E03E04.1080p-G":      false,
+		"Breaking.Bad.S03.1080p.BluRay-G":     false,
+	} {
+		if m := Verify("Breaking Bad", nil, name, ip(2), ip(5), false); m.OK != want {
+			t.Errorf("Verify(%q) = %+v, want OK=%v", name, m, want)
+		}
+	}
+	if m := Verify("Breaking Bad", nil, "Breaking.Bad.S03.1080p-G", ip(2), ip(5), true); m.OK || m.Reason != "wrong episode: release is S03" {
+		t.Errorf("another season's pack: %+v", m)
+	}
+}
+
 var (
 	idCaps     = &Caps{TVSearch: SearchMode{Available: true, Params: []string{"q", "tvdbid", "season", "ep"}}}
 	coordsCaps = &Caps{TVSearch: SearchMode{Available: true, Params: []string{"q", "season", "ep"}}}

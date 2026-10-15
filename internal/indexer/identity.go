@@ -30,14 +30,17 @@ func Verify(title string, aliases []string, name string, season, episode *int, i
 	in := release.Parse(name)
 
 	// Coordinates first: an id-resolved search still returns a whole season, so
-	// the wrong episode is the likeliest error.
+	// the wrong episode is the likeliest error. A release that holds the
+	// episode among others — a file of several episodes in a row, or a season
+	// pack — holds it too; which targets a grab of it covers is decided when it
+	// is grabbed.
 	if season != nil && episode != nil {
-		if in.Season == 0 && in.Episode == 0 {
+		cov := release.ParseCoverage(name)
+		if !cov.Found {
 			return Match{Reason: "no season/episode in the release name"}
 		}
-		if in.Season != *season || in.Episode != *episode {
-			return Match{Reason: "wrong episode: release is S" +
-				pad(in.Season) + "E" + pad(in.Episode)}
+		if !cov.Covers(*season, *episode) {
+			return Match{Reason: "wrong episode: release is " + cov.String()}
 		}
 	}
 	if idMatched {
@@ -91,25 +94,4 @@ func normalise(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
-}
-
-func pad(n int) string {
-	if n < 10 {
-		return "0" + itoa(n)
-	}
-	return itoa(n)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [8]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(b[i:])
 }
