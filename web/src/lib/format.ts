@@ -64,3 +64,15 @@ export function ago(iso: string | null | undefined): string {
   if (s < 86400) return `${Math.round(s / 3600)}h ago`
   return `${Math.round(s / 86400)}d ago`
 }
+
+/** until says how far off a moment is: "in 25m", "in 3h", "now" once it passed. */
+export function until(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const then = new Date(iso).getTime()
+  if (!Number.isFinite(then)) return ''
+  const s = Math.round((then - Date.now()) / 1000)
+  if (s <= 0) return 'now'
+  if (s < 3600) return `in ${Math.max(1, Math.round(s / 60))}m`
+  if (s < 86400) return `in ${Math.round(s / 3600)}h`
+  return `in ${Math.round(s / 86400)}d`
+}

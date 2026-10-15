@@ -5,7 +5,7 @@
 // what the search and picker views show — so a change is visible immediately
 // in the "why" line next to each release.
 import { useEffect, useState } from 'react'
-import { Badge, Button, Checkbox, Divider, Field, Input, Select, Text } from '@nalet/design-system'
+import { Badge, Button, Checkbox, Divider, Field, Input, Select, Switch, Text } from '@nalet/design-system'
 import { Save } from 'lucide-react'
 import { ApiError, type Api, type QualityProfile, type SearchSettings } from '../lib/api'
 
@@ -64,7 +64,8 @@ function SearchAndGrab({ api }: { api: Api }) {
         <div>
           <span className="acq__mono">search and grab</span>
           <Text variant="muted" as="div">
-            which protocol is searched first, and when acquire refuses to start a download.
+            which protocol is searched first, when acquire refuses to start a download, and whether the
+            backlog sweep grabs.
           </Text>
         </div>
         <Button variant="primary" loading={saving} leading={<Save size={14} />} onClick={() => void save()}>
@@ -100,6 +101,17 @@ function SearchAndGrab({ api }: { api: Api }) {
           />
         </Field>
       </div>
+      <Field
+        label="the backlog sweep"
+        error={fields.autoGrab}
+        hint="on: it grabs the best release of what it finds missing, within the floor and the downloads at once above — never a season pack for one episode, never a title whose holdings the catalog has not told. off: it only searches, and missing episodes are grabbed from the missing tab."
+      >
+        <Switch
+          checked={draft.autoGrab}
+          onChange={(e) => setDraft({ ...draft, autoGrab: e.currentTarget.checked })}
+          label={draft.autoGrab ? 'grabs on its own' : 'only searches'}
+        />
+      </Field>
       <Divider />
     </div>
   )

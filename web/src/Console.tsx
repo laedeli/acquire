@@ -132,6 +132,9 @@ export function Console({
   }, [token, loadLists, loadSide])
 
   const debouncedLists = useMemo(() => debounce(() => void loadLists(), 400), [loadLists])
+  // Views that load their own rows (missing) refetch on the stream's pings too.
+  const [tick, setTick] = useState(0)
+  const debouncedTick = useMemo(() => debounce(() => setTick((n) => n + 1), 400), [])
 
   useEventStream(apiBase, token, {
     // Telemetry arrives every few seconds — apply it in place rather than
@@ -146,7 +149,10 @@ export function Console({
         next[i] = d
         return next
       }),
-    onChanged: debouncedLists,
+    onChanged: () => {
+      debouncedLists()
+      debouncedTick()
+    },
     onReconnect: () => {
       void loadLists()
       void loadSide()
@@ -191,7 +197,7 @@ export function Console({
           />
         )}
         {tab === 'series' && <Series api={api} />}
-        {tab === 'missing' && <Missing api={api} />}
+        {tab === 'missing' && <Missing api={api} admin={admin} tick={tick} />}
         {tab === 'downloads' && (
           <Downloads
             api={api}

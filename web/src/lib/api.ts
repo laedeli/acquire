@@ -78,6 +78,12 @@ export interface Candidate {
   guid?: string
   /** Opaque reference a grab sends back; the server resolves the real link. */
   release?: string
+  /** How a target's typed search found it (id | coords | text) and what matched. */
+  stage?: string
+  matchedVia?: string
+  /** For a target's search: the episodes the release holds (S04E07, S04E07-E08, S01) and whether it is a season pack. */
+  covers?: string
+  pack?: boolean
 }
 
 /** A search's answer: what arrived, and which sources did not answer. */
@@ -296,6 +302,8 @@ export interface SearchSettings {
   preferProtocol: 'usenet' | 'torrent'
   storageFloorGb: number
   maxConcurrentGrabs: number
+  /** The backlog sweep grabs what it finds missing (off: it only searches). */
+  autoGrab: boolean
   revision: number
   updatedAt?: string
 }
@@ -454,33 +462,77 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
       call<SearchSettings>('settings/search', {
         method: 'PUT',
         headers: ifMatch(s.revision),
+        // The server replaces the whole document: every field goes, or the
+        // ones left out read as their defaults.
         body: JSON.stringify({
           preferProtocol: s.preferProtocol,
           storageFloorGb: s.storageFloorGb,
           maxConcurrentGrabs: s.maxConcurrentGrabs,
+          autoGrab: s.autoGrab,
         }),
       }),
     // The WANT model's read side. `missing` is the backlog: monitored, aired,
-    // still wanted — including rows in search backoff, flagged rather than
-    // hidden, because a backlog view that omits everything failing is the least
-    // useful version of itself.
+    // not held, of titles whose holdings are known — including rows in search
+    // backoff, flagged rather than hidden, because a backlog view that omits
+    // everything failing is the least useful version of itself.
     missing: (limit = 500) =>
-      call<{ missing: MissingRow[] }>('missing?limit=' + limit).then((r) => r.missing ?? []),
+      call<MissingAnswer>('missing?limit=' + limit).then((r) => ({ ...r, missing: r.missing ?? [] })),
     counts: () => call<Counts>('counts'),
     series: () => call<{ series: SeriesRow[] }>('series').then((r) => r.series ?? []),
+    // Grabs bound to targets (admin): queued per episode or for a selection,
+    // and a pick among one target's typed search results.
+    grabTargets: (targetIds: string[]) =>
+      call<{ queued: string[]; skipped: number }>('targets/grab', {
+        method: 'POST',
+        body: JSON.stringify({ targetIds }),
+      }),
+    targetReleases: (id: string) =>
+      call<{ candidates: Candidate[] | null }>('targets/' + encodeURIComponent(id) + '/search').then(
+        (r): SearchResult => ({ candidates: r.candidates ?? [], incomplete: [] }),
+      ),
+    pickTarget: (id: string, c: Candidate) =>
+      call<unknown>('targets/' + encodeURIComponent(id) + '/pick', { method: 'POST', body: JSON.stringify(c) }),
+    reconcileHoldings: () => call<unknown>('holdings/reconcile', { method: 'POST' }),
   }
 }
 
-// MissingRow is one thing we want and do not have.
+/** What acquire knows of the library's holdings. */
+export type HoldingsSummary = {
+  known: number
+  unknown: number
+  /** Why the unknown titles' holdings are unknown, as most of them say. */
+  reason?: string
+  lastAt: string | null
+}
+
+export type MissingAnswer = {
+  missing: MissingRow[]
+  holdings: HoldingsSummary
+  /** Whether the backlog sweep grabs on its own (search.autoGrab). */
+  autoGrab: boolean
+}
+
+// MissingRow is one thing we want and do not have, and what is under way for it.
 export type MissingRow = {
   targetId: string
+  titleId: string
   title: string
   kind: string
   season: number | null
   episode: number | null
   airDate: string | null
+  /** wanted | failed, or grabbed | downloaded | waiting while a grab is under way. */
+  state: string
+  detail: string
+  /** The last search: found | none | error, and what it said. */
+  searchOutcome: string
+  searchDetail: string
+  lastSearchAt: string | null
   searchFailures: number
+  /** When the sweep looks again after searches that found nothing. */
   backoffUntil: string | null
+  /** A grab asked for in this tab waits for the grab worker. */
+  grabQueued: boolean
   // False when the title carries no id an indexer will accept. Zero of 70
   // indexers accept a tmdbId, so such a row can only be searched as free text
   // and needs to say so rather than look like an ordinary miss.
@@ -500,7 +552,13 @@ export type SeriesRow = {
   episodes: number
   held: number
   missing: number
+  /** Of the missing: grabbed, downloaded or waiting for the catalog. */
+  inFlight: number
   unaired: number
+  /** False until acquire knows what the library holds of the series. */
+  holdingsKnown: boolean
+  holdingsAt: string | null
+  holdingsError?: string
 }
 
 export type Counts = {
@@ -510,8 +568,13 @@ export type Counts = {
   targets: number
   held: number
   missing: number
+  inFlight: number
+  failed: number
   unaired: number
   inBackoff: number
+  /** Monitored titles whose holdings are unknown, and their aired targets left out of missing. */
+  holdingsUnknown: number
+  unknownTargets: number
 }
 
 export type Api = ReturnType<typeof makeApi>

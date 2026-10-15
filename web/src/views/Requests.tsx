@@ -149,8 +149,9 @@ export function Requests({
       />
       {picking && (
         <ReleasePicker
-          api={api}
-          wanted={picking}
+          title={`${picking.title}${picking.year ? ` (${picking.year})` : ''}`}
+          load={() => api.releases(picking.id)}
+          pick={(c) => api.pick(picking.id, c)}
           onClose={() => setPicking(null)}
           onGrabbed={refresh}
         />

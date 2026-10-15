@@ -204,3 +204,13 @@
   display: grid;
   gap: var(--s-3);
 }
+
+/* A line of state and actions above a table: the Missing tab's holdings, the
+   sweep and the bulk grab. */
+.acq__toolbar {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+  margin: var(--s-2) 0;
+}

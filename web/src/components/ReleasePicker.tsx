@@ -1,20 +1,26 @@
 // Interactive search: show what the search sources actually offer for a
-// request, in the order acquire would pick, and let an admin choose a different
-// release.
+// request or a missing episode, in the order acquire would pick, and let an
+// admin choose a different release. For an episode the releases say what they
+// hold — the episode alone, a file of several, a season pack — since a grab is
+// bound to every wanted episode the release covers.
 import { useEffect, useState } from 'react'
 import { Badge, Button, Modal, Table, Text, type TableColumn } from '@nalet/design-system'
-import type { Api, Candidate, Wanted } from '../lib/api'
+import type { Candidate, SearchResult } from '../lib/api'
 import { bytes } from '../lib/format'
 import { candidateKey } from '../views/Search'
 
 export function ReleasePicker({
-  api,
-  wanted,
+  title,
+  load,
+  pick,
   onClose,
   onGrabbed,
 }: {
-  api: Api
-  wanted: Wanted
+  title: string
+  /** Runs the search: a request's free text, or a target's typed search. */
+  load: () => Promise<SearchResult>
+  /** Grabs the release picked. */
+  pick: (c: Candidate) => Promise<unknown>
   onClose: () => void
   onGrabbed: () => void
 }) {
@@ -25,8 +31,7 @@ export function ReleasePicker({
 
   useEffect(() => {
     let live = true
-    api
-      .releases(wanted.id)
+    load()
       .then((r) => {
         if (!live) return
         setRows(r.candidates)
@@ -36,12 +41,14 @@ export function ReleasePicker({
     return () => {
       live = false
     }
-  }, [api, wanted.id])
+    // load is a fresh closure on every render of the caller: the search runs
+    // once, when the picker opens.
+  }, [])
 
-  async function pick(c: Candidate) {
+  async function grab(c: Candidate) {
     setGrabbing(candidateKey(c))
     try {
-      await api.pick(wanted.id, c)
+      await pick(c)
       onGrabbed()
       onClose()
     } catch (e) {
@@ -57,7 +64,10 @@ export function ReleasePicker({
       header: 'release',
       render: (c) => (
         <div>
-          <div className="acq__mono">{c.title}</div>
+          <div className="acq__mono">
+            {c.title}{' '}
+            {c.covers && <Badge tone={c.pack ? 'amber' : 'neutral'}>{c.pack ? `${c.covers} · season pack` : c.covers}</Badge>}
+          </div>
           <div className="acq__sub">{c.reason}</div>
         </div>
       ),
@@ -88,7 +98,7 @@ export function ReleasePicker({
           size="sm"
           variant={c.best ? 'primary' : 'default'}
           loading={grabbing === candidateKey(c)}
-          onClick={() => void pick(c)}
+          onClick={() => void grab(c)}
         >
           grab
         </Button>
@@ -97,12 +107,7 @@ export function ReleasePicker({
   ]
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={900}
-      title={`releases · ${wanted.title}${wanted.year ? ` (${wanted.year})` : ''}`}
-    >
+    <Modal open onClose={onClose} width={900} title={`releases · ${title}`}>
       {error && <Text variant="muted">{error}</Text>}
       {!rows && !error && <Text variant="muted">searching the sources…</Text>}
       {rows && incomplete.length > 0 && (

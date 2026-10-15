@@ -67,7 +67,21 @@ export function Series({ api }: { api: Api }) {
         // tracked but TMDB has not been asked for its inventory. Showing it as
         // "0 missing" would read as complete.
         if (r.episodes === 0) return <Badge tone="neutral">inventory not derived</Badge>
-        if (r.missing > 0) return <Badge tone="amber">{r.missing} missing</Badge>
+        // Until the catalog has said what it holds of the series, nothing is
+        // known to be missing: its episodes may all be on disk.
+        if (!r.holdingsKnown)
+          return (
+            <div>
+              <Badge tone="neutral">holdings unknown</Badge>
+              {r.holdingsError && <div className="acq__sub">{r.holdingsError}</div>}
+            </div>
+          )
+        if (r.missing > 0)
+          return (
+            <Badge tone="amber">
+              {r.missing} missing{r.inFlight > 0 ? ` · ${r.inFlight} on their way` : ''}
+            </Badge>
+          )
         if (r.unaired > 0) return <Badge tone="blue">{r.unaired} upcoming</Badge>
         return <Badge tone="green">complete</Badge>
       },
@@ -78,7 +92,8 @@ export function Series({ api }: { api: Api }) {
     <div className="acq__view">
       {rows.length > 0 && (
         <Text variant="ui">
-          {rows.length} series · {rows.filter((r) => r.episodes === 0).length} awaiting inventory
+          {rows.length} series · {rows.filter((r) => r.episodes === 0).length} awaiting inventory ·{' '}
+          {rows.filter((r) => !r.holdingsKnown).length} of unknown holdings
         </Text>
       )}
       {error && <Text variant="muted">could not load series: {error}</Text>}
