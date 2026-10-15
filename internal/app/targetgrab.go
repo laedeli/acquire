@@ -132,7 +132,7 @@ func (s *Service) covering(ctx context.Context, title store.Title, anchor store.
 func (s *Service) grabRelease(ctx context.Context, title store.Title, anchor store.Target, c Candidate, via string) (store.TargetGrab, error) {
 	targets, cov, err := s.covering(ctx, title, anchor, c.Title)
 	if err != nil {
-		return store.TargetGrab{}, err
+		return store.TargetGrab{}, notCovered{err}
 	}
 	ids := make([]string, 0, len(targets))
 	for _, t := range targets {
@@ -235,6 +235,13 @@ type searchFailed struct{ error }
 
 func (e searchFailed) Unwrap() error { return e.error }
 
+// notCovered is a release that holds nothing a grab could be bound to — not
+// the target it was picked for, or no episode acquire tracks. Nothing was
+// grabbed; it says nothing about the target either.
+type notCovered struct{ error }
+
+func (e notCovered) Unwrap() error { return e.error }
+
 // grabBest grabs the first of the ranked releases that can be grabbed: a
 // source out of release downloads for today passes to the next.
 func (s *Service) grabBest(ctx context.Context, title store.Title, t store.Target, ranked []Candidate, via string) (store.TargetGrab, error) {
@@ -279,6 +286,7 @@ func (s *Service) targetGrabFailed(ctx context.Context, t store.Target, err erro
 	var ng *store.NotGrabbableError
 	var r refused
 	var sf searchFailed
+	var nc notCovered
 	switch {
 	case err == nil, errors.As(err, &ng), errors.Is(err, errStaleRelease):
 		return
@@ -286,7 +294,7 @@ func (s *Service) targetGrabFailed(ctx context.Context, t store.Target, err erro
 		_ = s.st.SetTargetDetail(ctx, t.ID, clip("search failed: "+sf.Error(), 300))
 	case errors.Is(err, errNoReleases):
 		_ = s.st.SetTargetDetail(ctx, t.ID, clip("searched: "+err.Error(), 300))
-	case errors.As(err, &r):
+	case errors.As(err, &r), errors.As(err, &nc):
 		_ = s.st.SetTargetDetail(ctx, t.ID, clip("not grabbed: "+err.Error(), 300))
 	default:
 		_, _ = s.st.SetTargetState(ctx, t.ID, []string{store.TargetWanted, store.TargetFailed},

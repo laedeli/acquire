@@ -751,6 +751,19 @@ func TestAnEpisodeFromTheManualSearchIsNoMovie(t *testing.T) {
 	if err != nil || len(found.Candidates) != 2 {
 		t.Fatalf("search: %+v %v", found, err)
 	}
+	// A release picked for an episode it does not hold grabs nothing, and
+	// says why without failing the episode.
+	for _, c := range found.Candidates {
+		if !strings.HasPrefix(c.Title, "Show.Name") {
+			continue
+		}
+		if _, err := r.svc.GrabTargetCandidate(ctx, eps[0].ID, c); err == nil || !strings.Contains(err.Error(), "does not hold S01E01") {
+			t.Fatalf("a release that does not hold the episode: %v", err)
+		}
+		if st := target(t, r.svc, eps[0].ID); st.State != store.TargetWanted || !strings.HasPrefix(st.Detail, "not grabbed: ") || len(r.gw.added()) != 0 {
+			t.Fatalf("after it: %+v (adds %d)", st, len(r.gw.added()))
+		}
+	}
 	for _, c := range found.Candidates {
 		var back Candidate
 		b, _ := json.Marshal(c)
