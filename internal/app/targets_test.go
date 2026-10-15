@@ -561,6 +561,12 @@ func TestAFileOfTooManyEpisodesIsRefused(t *testing.T) {
 		!strings.Contains(st.Detail, "covers 12 episodes in a row (S01E01-E12); the catalog takes at most 10 in one file") {
 		t.Errorf("E12: %+v", st)
 	}
+	// Blocked for each of them, so that no grab after its failure takes it.
+	for _, e := range eps {
+		if blocked, _ := r.svc.st.BlockedFor(ctx, e.ID); blocked["Show.Name.S01E01-E12.1080p.WEB-DL-G"] == "" {
+			t.Errorf("%s: the release is not blocked: %v", coords(e), blocked)
+		}
+	}
 }
 
 // ── the catalog's answers ──────────────────────────────────────────────────

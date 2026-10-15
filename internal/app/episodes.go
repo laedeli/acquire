@@ -40,8 +40,10 @@ type fileFor struct {
 // episodePlan is what a finished download's files are handed over for.
 type episodePlan struct {
 	Files []fileFor
-	// Left are the files left out, each with why.
-	Left []string
+	// Left are the files left out, each with why; Unnamed are those of them
+	// whose name, and folder's, name no episode at all.
+	Left    []string
+	Unnamed []string
 	// Missing are the grab's targets no file holds.
 	Missing []store.Target
 }
@@ -150,6 +152,7 @@ func planEpisodes(videos []videoFile, targets []store.Target, releaseName string
 	}
 	for _, v := range unnamed {
 		plan.Left = append(plan.Left, filepath.Base(v.Path)+": no episode in its name")
+		plan.Unnamed = append(plan.Unnamed, filepath.Base(v.Path))
 	}
 	sort.SliceStable(known, func(i, j int) bool {
 		a, b := known[i].cov, known[j].cov

@@ -349,7 +349,7 @@ func (s *Store) MoveGrabTargets(ctx context.Context, grabID string, from []strin
 // over for it, the episode run that file covers, and the catalog's answer.
 type GrabFile struct {
 	Adapter, ClientJobID, GrabID, TargetID string
-	State                                  string // imported | waiting | missing | failed
+	State                                  string // imported | held (by an item of its own) | waiting | missing | failed
 	Path                                   string
 	EpisodeEnd                             *int
 	ItemID                                 string
