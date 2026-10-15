@@ -34,10 +34,6 @@ import (
 // library's own word on what it holds comes from holdings.go.
 
 const (
-	// pendingTTL is how long a reservation holds its targets before its
-	// hand-over counts as abandoned. A large payload add may take a couple
-	// of minutes; nothing takes this long.
-	pendingTTL = 15 * time.Minute
 	// targetGrabTick is how often the grab worker looks for queued grabs when
 	// nothing woke it; targetGrabLease holds a claimed one against a second
 	// replica while it is searched and grabbed.
@@ -156,7 +152,7 @@ func (s *Service) grabRelease(ctx context.Context, title store.Title, anchor sto
 		n := int32(c.Seeders)
 		seeders, g.Seeders = &n, &n
 	}
-	g, err = s.st.ReserveTargetGrab(ctx, g, anchor.ID, ids, pendingTTL)
+	g, err = s.st.ReserveTargetGrab(ctx, g, anchor.ID, ids)
 	if err != nil {
 		return store.TargetGrab{}, err
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -103,11 +105,16 @@ func (e *NotGrabbableError) Error() string {
 
 // ReserveTargetGrab writes a pending grab for the targets a release covers and
 // holds them against a second grab, in one transaction: until it is bound or
-// released, or pendingTTL has passed, no other reservation takes them.
-// Covered targets that are held, in flight or held by another grab are left
-// out of it; anchor, the target the grab is for, must not be (a
-// NotGrabbableError says why). The grab is returned with the targets it took.
-func (s *Store) ReserveTargetGrab(ctx context.Context, g TargetGrab, anchor string, covered []string, pendingTTL time.Duration) (TargetGrab, error) {
+// released, no other reservation takes them. Covered targets that are held,
+// in flight or reserved by another grab are left out of it; anchor, the
+// target the grab is for, must not be (a NotGrabbableError says why). The
+// grab is returned with the targets it took.
+//
+// The claim is one conditional UPDATE (reserved_by = ” … RETURNING): a
+// second reservation racing for the same target waits on its row lock and
+// then finds it taken. Reading the target and its grab first and deciding in
+// the client let both take it.
+func (s *Store) ReserveTargetGrab(ctx context.Context, g TargetGrab, anchor string, covered []string) (TargetGrab, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return TargetGrab{}, err
@@ -115,38 +122,38 @@ func (s *Store) ReserveTargetGrab(ctx context.Context, g TargetGrab, anchor stri
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx, `
-		SELECT a.id, a.state, a.detail,
-		       COALESCE(g.state = 'pending' AND g.created_at > now() - make_interval(secs => $2), false)
-		  FROM acquisition_targets a
-		  LEFT JOIN target_grabs g ON g.id = a.grab_id
-		 WHERE a.id = ANY($1)
-		 ORDER BY a.id
-		   FOR UPDATE OF a`, nonNil(covered), pendingTTL.Seconds())
+		UPDATE acquisition_targets SET reserved_by = $2, updated_at = now()
+		 WHERE id = ANY($1) AND state IN ('wanted','failed') AND reserved_by = ''
+		 RETURNING id`, nonNil(covered), g.ID)
 	if err != nil {
 		return TargetGrab{}, err
 	}
 	var free []string
-	var anchorErr error
 	for rows.Next() {
-		var id, state, detail string
-		var held bool
-		if err := rows.Scan(&id, &state, &detail, &held); err != nil {
+		var id string
+		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return TargetGrab{}, err
 		}
-		ok := Grabbable(state) && !held
-		if ok {
-			free = append(free, id)
-		} else if id == anchor {
-			anchorErr = &NotGrabbableError{TargetID: id, State: state, Detail: detail, Busy: held && Grabbable(state)}
-		}
+		free = append(free, id)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return TargetGrab{}, err
 	}
-	if anchorErr != nil {
-		return TargetGrab{}, anchorErr
+	sort.Strings(free)
+	if anchor != "" && !slices.Contains(free, anchor) {
+		var state, detail, reservedBy string
+		err := tx.QueryRow(ctx, `SELECT state, detail, reserved_by FROM acquisition_targets WHERE id = $1`, anchor).
+			Scan(&state, &detail, &reservedBy)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TargetGrab{}, ErrNotFound
+		}
+		if err != nil {
+			return TargetGrab{}, err
+		}
+		return TargetGrab{}, &NotGrabbableError{TargetID: anchor, State: state, Detail: detail,
+			Busy: reservedBy != "" && Grabbable(state)}
 	}
 	if len(free) == 0 {
 		return TargetGrab{}, &NotGrabbableError{TargetID: anchor,
@@ -161,15 +168,13 @@ func (s *Store) ReserveTargetGrab(ctx context.Context, g TargetGrab, anchor stri
 		g.ReleaseGUID, g.Protocol, g.SizeBytes, g.Seeders, g.Reason, g.Source); err != nil {
 		return TargetGrab{}, err
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE acquisition_targets SET grab_id = $2, updated_at = now() WHERE id = ANY($1)`, free, g.ID); err != nil {
-		return TargetGrab{}, err
-	}
 	return g, tx.Commit(ctx)
 }
 
 // ReleaseTargetGrab undoes a reservation whose hand-over did not happen: the
-// targets keep the state they had, and the pending row goes.
+// targets keep the state they had, and the pending row goes. Only call it when
+// the gateway certainly has no job for the grab; one whose outcome is unknown
+// stays reserved for the job's events, or the stale-grab sweep, to settle.
 func (s *Store) ReleaseTargetGrab(ctx context.Context, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -177,7 +182,7 @@ func (s *Store) ReleaseTargetGrab(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
-		`UPDATE acquisition_targets SET grab_id = '' WHERE grab_id = $1 AND state IN ('wanted','failed')`, id); err != nil {
+		`UPDATE acquisition_targets SET reserved_by = '', updated_at = now() WHERE reserved_by = $1`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM target_grabs WHERE id = $1 AND state = 'pending'`, id); err != nil {
@@ -186,10 +191,10 @@ func (s *Store) ReleaseTargetGrab(ctx context.Context, id string) error {
 	return tx.Commit(ctx)
 }
 
-// BindTargetGrab records the client job a grab was handed to, with where its
-// link came from, and moves the targets it holds to grabbed. A grab bound
-// before (a second completed event finding a grab still pending) only gets
-// its job.
+// BindTargetGrab records the client job a pending grab was handed to, with
+// where its link came from, and moves the targets reserved for it to grabbed.
+// A grab that is no longer pending — bound already, or failed meanwhile — is
+// returned as it is: binding moves nothing twice.
 func (s *Store) BindTargetGrab(ctx context.Context, g TargetGrab, detail string) (TargetGrab, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -201,20 +206,19 @@ func (s *Store) BindTargetGrab(ctx context.Context, g TargetGrab, detail string)
 		   SET adapter = $2, client_job_id = $3, protocol = CASE WHEN $4::text <> '' THEN $4::text ELSE protocol END,
 		       source = CASE WHEN $5::text <> '' THEN $5::text ELSE source END,
 		       source_ct = COALESCE($6, source_ct), source_kid = CASE WHEN $7::text <> '' THEN $7::text ELSE source_kid END,
-		       state = CASE WHEN state = 'pending' THEN 'grabbed' ELSE state END,
-		       detail = $8, updated_at = now()
-		 WHERE id = $1
+		       state = 'grabbed', detail = $8, updated_at = now()
+		 WHERE id = $1 AND state = 'pending'
 		 RETURNING `+targetGrabCols, g.ID, g.Adapter, g.ClientJobID, g.Protocol, g.Source, g.SourceCT, g.SourceKID, clipText(detail)))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return TargetGrab{}, ErrNotFound
+		return s.GetTargetGrab(ctx, g.ID)
 	}
 	if err != nil {
 		return TargetGrab{}, err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE acquisition_targets SET state = 'grabbed', detail = $3, updated_at = now(),
+		UPDATE acquisition_targets SET state = 'grabbed', grab_id = $1, reserved_by = '', detail = $3, updated_at = now(),
 		       grab_requested_at = NULL, grab_claimed_until = NULL
-		 WHERE grab_id = $1 AND id = ANY($2) AND state IN ('wanted','failed')`,
+		 WHERE reserved_by = $1 AND id = ANY($2) AND state IN ('wanted','failed')`,
 		bound.ID, bound.TargetIDs, clipText(detail)); err != nil {
 		return TargetGrab{}, err
 	}
@@ -225,6 +229,74 @@ func (s *Store) BindTargetGrab(ctx context.Context, g TargetGrab, detail string)
 		return TargetGrab{}, err
 	}
 	return bound, tx.Commit(ctx)
+}
+
+// UnbindGrabTarget takes a target off a grab: the release turned out not to
+// hold it. The grab answers for the rest.
+func (s *Store) UnbindGrabTarget(ctx context.Context, grabID, targetID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE target_grabs SET target_ids = array_remove(target_ids, $2), updated_at = now() WHERE id = $1`,
+		grabID, targetID)
+	return err
+}
+
+// StaleTargetGrabs are the grabs that may be stuck: pending, grabbed or
+// downloaded, with no word of them for age — the grab's own row and its
+// download's last event alike — and no import working on them.
+func (s *Store) StaleTargetGrabs(ctx context.Context, age time.Duration) ([]TargetGrab, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+prefixCols("g", targetGrabCols)+`
+		  FROM target_grabs g
+		  LEFT JOIN downloads d ON g.client_job_id <> '' AND d.adapter = g.adapter AND d.client_job_id = g.client_job_id
+		 WHERE g.state IN ('pending','grabbed','downloaded')
+		   AND GREATEST(g.updated_at, COALESCE(d.updated_at, g.updated_at)) < now() - make_interval(secs => $1)
+		   AND NOT EXISTS (SELECT 1 FROM imports i WHERE i.wanted_id = g.id AND i.state IN ('pending','imported'))
+		 ORDER BY g.created_at`, age.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TargetGrab
+	for rows.Next() {
+		g, err := scanTargetGrab(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// FreeTargetGrab fails a grab that will not finish — cancelled, or stale —
+// and frees its targets: those it reserved, and those in flight with it, go
+// back to wanted with the reason. It reports how many it freed.
+func (s *Store) FreeTargetGrab(ctx context.Context, id, reason string) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx,
+		`UPDATE target_grabs SET state = 'failed', detail = $2, updated_at = now() WHERE id = $1`, id, clipText(reason)); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE acquisition_targets
+		   SET state = CASE WHEN grab_id = $1 AND state IN ('grabbed','downloaded','waiting') THEN 'wanted' ELSE state END,
+		       detail = $2, reserved_by = '', updated_at = now()
+		 WHERE reserved_by = $1 OR (grab_id = $1 AND state IN ('grabbed','downloaded','waiting'))`, id, clipText(reason))
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), tx.Commit(ctx)
+}
+
+func prefixCols(alias, cols string) string {
+	parts := strings.Split(cols, ",")
+	for i, p := range parts {
+		parts[i] = alias + "." + strings.TrimSpace(p)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // GetTargetGrab reads one target grab, or ErrNotFound.

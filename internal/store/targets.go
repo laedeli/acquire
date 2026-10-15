@@ -50,8 +50,18 @@ type Target struct {
 	// Detail is why the target is in its state: the grab, what the download
 	// held for it, the catalog's answer, the reason it failed.
 	Detail string `json:"detail"`
-	// GrabID is the target grab that covers it now, or covered it last.
-	GrabID string `json:"grabId,omitempty"`
+	// GrabID is the target grab that covers it now, or covered it last;
+	// ReservedBy the pending grab it is reserved for while that grab's release
+	// is handed to a client.
+	GrabID     string `json:"grabId,omitempty"`
+	ReservedBy string `json:"reservedBy,omitempty"`
+	// GrabFailures counts the times its release failed it in a row; RetryAt
+	// is when it is wanted again (nil once it is left for someone to look at).
+	GrabFailures int        `json:"grabFailures"`
+	RetryAt      *time.Time `json:"retryAt,omitempty"`
+	// HandedOverAt is when acquire last handed a file for it to the catalog
+	// and the catalog answered that it holds it.
+	HandedOverAt *time.Time `json:"handedOverAt,omitempty"`
 
 	// The last search: found | none | error, what it said, when it ran, and
 	// when the target is due to be searched again.
@@ -72,13 +82,15 @@ type Target struct {
 
 // targetCols are the columns scanTarget reads, under the alias a.
 const targetCols = `a.id, a.title_id, a.kind, a.season_number, a.episode_number, a.air_date, a.monitored, a.state,
-	a.detail, a.grab_id, a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
+	a.detail, a.grab_id, a.reserved_by, a.grab_failures, a.retry_at, a.handed_over_at,
+	a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
 	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source`
 
 func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 	var t Target
 	err := r.Scan(&t.ID, &t.TitleID, &t.Kind, &t.SeasonNumber, &t.EpisodeNumber, &t.AirDate, &t.Monitored, &t.State,
-		&t.Detail, &t.GrabID, &t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
+		&t.Detail, &t.GrabID, &t.ReservedBy, &t.GrabFailures, &t.RetryAt, &t.HandedOverAt,
+		&t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
 		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource)
 	return t, err
 }
@@ -192,6 +204,10 @@ type Hold struct {
 	Quality   map[string]any
 	Score     int
 	Detail    string
+	// HandedOver is set when acquire handed the file over and the catalog
+	// answered that it holds it: a reconcile does not take it back for a
+	// while, since katalog-api may not list it yet.
+	HandedOver bool
 }
 
 // HoldTarget records that the library holds a target. The quality, score and
@@ -214,10 +230,78 @@ func (s *Store) HoldTarget(ctx context.Context, h Hold) error {
 		       held_item_id = $2, held_via = $3, held_release = $5, held_source = $6,
 		       held_score_profile = $7, held_quality = $8, held_score = $9, held_scored_at = now(),
 		       state = 'held', detail = $10, grab_requested_at = NULL, grab_claimed_until = NULL,
+		       handed_over_at = CASE WHEN $11 THEN now() ELSE handed_over_at END,
+		       grab_failures = 0, retry_at = NULL, reserved_by = '',
 		       updated_at = now()
 		 WHERE id = $1`,
-		h.TargetID, h.ItemID, h.Via, h.Playable, h.Release, h.Source, h.ProfileID, quality, h.Score, clipText(h.Detail))
+		h.TargetID, h.ItemID, h.Via, h.Playable, h.Release, h.Source, h.ProfileID, quality, h.Score, clipText(h.Detail),
+		h.HandedOver)
 	return err
+}
+
+// MoveGrabTarget moves one target of a grab to another state, with its
+// reason, when it is still the grab's and in one of from. It reports whether
+// it moved: a target a reconcile held meanwhile, or another grab took, is
+// left alone.
+func (s *Store) MoveGrabTarget(ctx context.Context, grabID, targetID string, from []string, to, detail string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE acquisition_targets SET state = $4, detail = $5, updated_at = now()
+		 WHERE id = $2 AND grab_id = $1 AND state = ANY($3)`, grabID, targetID, nonNil(from), to, clipText(detail))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// Failure recovery: a target its release failed is wanted again after
+// RetryBase, doubling per failure up to RetryCeiling, MaxGrabFailures times;
+// then it stays failed for someone to look at.
+const (
+	RetryBase       = 6 * time.Hour
+	RetryCeiling    = 48 * time.Hour
+	MaxGrabFailures = 5
+)
+
+// LeftForAHuman starts the detail of a target that failed MaxGrabFailures
+// times and is not tried again on its own.
+const LeftForAHuman = "failed 5 times, not tried again on its own: "
+
+// FailGrabTargets fails the targets of a grab that are still the grab's and
+// in one of from, with the reason. When its release failed them (byRelease),
+// each failure counts: the target is wanted again after the backoff, until it
+// failed MaxGrabFailures times. It reports how many it failed.
+func (s *Store) FailGrabTargets(ctx context.Context, grabID string, ids, from []string, reason string, byRelease bool) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE acquisition_targets
+		   SET state = 'failed',
+		       grab_failures = CASE WHEN $5 THEN grab_failures + 1 ELSE grab_failures END,
+		       retry_at = CASE WHEN NOT $5 OR grab_failures + 1 >= $6 THEN NULL
+		                       ELSE now() + make_interval(secs => LEAST($7::float8 * POWER(2, grab_failures), $8::float8)) END,
+		       detail = CASE WHEN $5 AND grab_failures + 1 >= $6 THEN $9 || $4 ELSE $4 END,
+		       reserved_by = '', updated_at = now()
+		 WHERE grab_id = $1 AND id = ANY($2) AND state = ANY($3)`,
+		grabID, nonNil(ids), nonNil(from), clipText(reason), byRelease, MaxGrabFailures,
+		RetryBase.Seconds(), RetryCeiling.Seconds(), LeftForAHuman)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// RecoverFailedTargets makes the failed targets whose retry time has come
+// wanted again and due at once; the releases that failed them stay blocked.
+func (s *Store) RecoverFailedTargets(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE acquisition_targets
+		   SET state = 'wanted', retry_at = NULL, search_backoff_until = NULL,
+		       detail = 'failed ' || grab_failures || CASE WHEN grab_failures = 1 THEN ' time' ELSE ' times' END ||
+		                '; wanted again, its failed releases blocked — ' || detail,
+		       updated_at = now()
+		 WHERE state = 'failed' AND retry_at IS NOT NULL AND retry_at <= now() AND grab_failures < $1`, MaxGrabFailures)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // ApplyHolding records that katalog holds a file for this target.
@@ -473,7 +557,7 @@ func (s *Store) ApplySeriesHoldings(ctx context.Context, titleID, catalogID, pro
 			UPDATE acquisition_targets a`+releaseHeldSQL+`
 			  FROM titles t
 			 WHERE t.id = a.title_id AND a.title_id = $1 AND a.state = 'held'
-			   AND a.season_number IS NOT NULL
+			   AND a.season_number IS NOT NULL AND `+notJustHandedOver+`
 			   AND NOT EXISTS (SELECT 1 FROM unnest($2::int[], $3::int[]) AS h(season, episode)
 			                    WHERE h.season = a.season_number AND h.episode = a.episode_number)`,
 			titleID, seasons, episodes)
@@ -484,6 +568,11 @@ func (s *Store) ApplySeriesHoldings(ctx context.Context, titleID, catalogID, pro
 		return ch, nil
 	})
 }
+
+// notJustHandedOver keeps a reconcile from taking back a target acquire handed
+// over in the last half hour: the catalog answered that it holds it, and
+// katalog-api may not list it yet.
+const notJustHandedOver = `(a.handed_over_at IS NULL OR a.handed_over_at < now() - interval '30 minutes')`
 
 // holdSet holds a target from a holdings row h (item, via, playable) and the
 // profile in the parameter named. A target held before by the same file keeps
@@ -505,6 +594,7 @@ func holdSet(profileParam string) string {
 			       held_item_id = h.item, held_via = h.via, held_playable = h.playable,
 			       detail = CASE WHEN a.state = 'held' THEN a.detail ELSE 'in the library' END,
 			       state = 'held', grab_requested_at = NULL, grab_claimed_until = NULL,
+			       grab_failures = 0, retry_at = NULL,
 			       updated_at = now()`
 }
 
@@ -518,7 +608,8 @@ func (s *Store) ApplyMovieHolding(ctx context.Context, titleID, catalogID, profi
 			tag, err := tx.Exec(ctx, `
 				UPDATE acquisition_targets a`+releaseHeldSQL+`
 				  FROM titles t
-				 WHERE t.id = a.title_id AND a.title_id = $1 AND a.state = 'held' AND a.season_number IS NULL`, titleID)
+				 WHERE t.id = a.title_id AND a.title_id = $1 AND a.state = 'held' AND a.season_number IS NULL
+				   AND `+notJustHandedOver, titleID)
 			if err != nil {
 				return ch, err
 			}

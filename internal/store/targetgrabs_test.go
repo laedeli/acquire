@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -159,8 +158,10 @@ func TestTheSweepRotatesThroughTheBacklog(t *testing.T) {
 }
 
 // A grab holds the targets it covers from its reservation on: a second grab
-// for any of them is refused until the first is released, and binding it to
-// its client job moves them to grabbed.
+// for any of them is refused until the first is bound or released — there is
+// no timeout after which a reservation lapses, since its hand-over may have
+// reached the gateway — and binding it to its client job moves them to
+// grabbed.
 func TestATargetGrabHoldsItsTargets(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -171,46 +172,53 @@ func TestATargetGrabHoldsItsTargets(t *testing.T) {
 	}
 
 	g, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_1", TitleID: id, ReleaseTitle: "Show.S01.1080p", Covers: "S01", Via: "pick"},
-		eps[0], eps, 15*time.Minute)
+		eps[0], eps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(g.TargetIDs)
 	if want := []string{eps[0], eps[1], eps[3]}; strings.Join(g.TargetIDs, ",") != strings.Join(want, ",") || g.State != GrabPending {
 		t.Fatalf("reserved %v (%s), want the three wanted episodes, not the held one", g.TargetIDs, g.State)
 	}
-	if st := stateOf(t, s, eps[0]); st.State != TargetWanted || st.GrabID != "tg_1" {
+	if st := stateOf(t, s, eps[0]); st.State != TargetWanted || st.ReservedBy != "tg_1" || st.GrabID != "" {
 		t.Fatalf("a reserved target is still wanted until the hand-over: %+v", st)
 	}
 
-	_, err = s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_2", TitleID: id}, eps[1], eps[1:2], 15*time.Minute)
+	_, err = s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_2", TitleID: id}, eps[1], eps[1:2])
 	var ng *NotGrabbableError
 	if !errors.As(err, &ng) || !ng.Busy {
 		t.Fatalf("a second grab of a reserved target: %v", err)
 	}
-	_, err = s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_3", TitleID: id}, held, eps[2:3], 15*time.Minute)
+	_, err = s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_3", TitleID: id}, held, eps[2:3])
 	if !errors.As(err, &ng) || ng.State != TargetHeld || ng.Error() != "the library holds it already" {
 		t.Fatalf("a grab of a held target: %v", err)
 	}
-
-	// A pending reservation older than its TTL holds nothing: the hand-over
-	// it was for never finished.
+	// An hour on, the reservation still holds: whether its hand-over reached
+	// the gateway is for the job's events, or the stale-grab sweep, to say.
 	_, _ = s.pool.Exec(ctx, `UPDATE target_grabs SET created_at = now() - interval '1 hour' WHERE id = 'tg_1'`)
-	stale, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_4", TitleID: id}, eps[1], eps[1:2], 15*time.Minute)
-	if err != nil || len(stale.TargetIDs) != 1 {
-		t.Fatalf("a stale reservation still held its targets: %+v %v", stale, err)
+	if _, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_4", TitleID: id}, eps[1], eps[1:2]); !errors.As(err, &ng) || !ng.Busy {
+		t.Fatalf("an old reservation lapsed: %v", err)
 	}
-	if err := s.ReleaseTargetGrab(ctx, "tg_4"); err != nil {
+
+	// A reservation released gives its targets back as they were.
+	other, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_5", TitleID: id}, "", eps)
+	if err == nil || len(other.TargetIDs) != 0 {
+		t.Fatalf("nothing was left to reserve: %+v %v", other, err)
+	}
+	if err := s.ReleaseTargetGrab(ctx, "tg_1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetTargetGrab(ctx, "tg_4"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetTargetGrab(ctx, "tg_1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a released reservation's row is still there: %v", err)
 	}
-	if st := stateOf(t, s, eps[1]); st.GrabID != "" || st.State != TargetWanted {
+	if st := stateOf(t, s, eps[1]); st.ReservedBy != "" || st.State != TargetWanted {
 		t.Errorf("released: %+v", st)
 	}
 
-	bound, err := s.BindTargetGrab(ctx, TargetGrab{ID: "tg_1", Adapter: "nzbget", ClientJobID: "101", Protocol: "usenet",
+	g, err = s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_6", TitleID: id, ReleaseTitle: "Show.S01.1080p"}, eps[0], []string{eps[0], eps[3]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := s.BindTargetGrab(ctx, TargetGrab{ID: "tg_6", Adapter: "nzbget", ClientJobID: "101", Protocol: "usenet",
 		Source: "https://idx.test/get/1"}, "grabbed NZB S01 from example via nzbget")
 	if err != nil {
 		t.Fatal(err)
@@ -219,30 +227,182 @@ func TestATargetGrabHoldsItsTargets(t *testing.T) {
 		t.Fatalf("bound: %+v", bound)
 	}
 	for _, e := range []string{eps[0], eps[3]} {
-		if st := stateOf(t, s, e); st.State != TargetGrabbed || st.Detail != "grabbed NZB S01 from example via nzbget" {
+		if st := stateOf(t, s, e); st.State != TargetGrabbed || st.GrabID != "tg_6" || st.ReservedBy != "" ||
+			st.Detail != "grabbed NZB S01 from example via nzbget" {
 			t.Errorf("%s after binding: %+v", e, st)
 		}
 	}
-	// eps[1] was taken by the stale reservation meanwhile and released: it is
-	// no longer the grab's, so binding leaves it alone.
 	if st := stateOf(t, s, eps[1]); st.State != TargetWanted {
-		t.Errorf("a target the grab lost was moved: %+v", st)
+		t.Errorf("a target the grab did not reserve was moved: %+v", st)
+	}
+	// Binding again moves nothing: a grab is bound once.
+	if _, err := s.FreeTargetGrab(ctx, "tg_6", "cancelled"); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := s.BindTargetGrab(ctx, TargetGrab{ID: "tg_6", Adapter: "nzbget", ClientJobID: "101"}, "grabbed"); err != nil ||
+		again.State != GrabFailed || stateOf(t, s, eps[0]).State != TargetWanted {
+		t.Errorf("binding a failed grab: %+v %v", again, err)
 	}
 	byJob, err := s.FindTargetGrabByJob(ctx, "", "101")
-	if err != nil || byJob.ID != "tg_1" {
+	if err != nil || byJob.ID != "tg_6" {
 		t.Fatalf("by job: %+v %v", byJob, err)
 	}
-	files, _ := s.GrabFiles(ctx, "tg_1")
-	if len(files) != 3 || files[0].State != "expected" {
+	files, _ := s.GrabFiles(ctx, "tg_6")
+	if len(files) != 2 || files[0].State != "expected" {
 		t.Errorf("grab_targets rows: %+v", files)
 	}
+}
 
-	// The download finishing and failing move only the grab's own targets.
-	if n, _ := s.MoveGrabTargets(ctx, "tg_1", []string{TargetGrabbed}, TargetFailed, "download failed: par repair"); n != 2 {
-		t.Errorf("moved %d targets, want 2", n)
+// Moves of a grab's targets are conditional: only targets still the grab's
+// and in the states expected move, so a target a reconcile held meanwhile,
+// or a failed one a late event names, is left as it is.
+func TestGrabTargetMovesAreConditional(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 9, 3)
+	g, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_c", TitleID: id}, eps[0], eps)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if st := stateOf(t, s, eps[3]); st.State != TargetFailed || !Grabbable(st.State) {
-		t.Errorf("failed: %+v", st)
+	if _, err := s.BindTargetGrab(ctx, TargetGrab{ID: g.ID, Adapter: "nzbget", ClientJobID: "1"}, "grabbed"); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.HoldTarget(ctx, Hold{TargetID: eps[1], ItemID: "x"})
+	if n, _ := s.MoveGrabTargets(ctx, g.ID, []string{TargetGrabbed}, TargetDownloaded, "downloaded"); n != 2 {
+		t.Errorf("moved %d, want the two still grabbed", n)
+	}
+	if moved, _ := s.MoveGrabTarget(ctx, g.ID, eps[1], []string{TargetDownloaded}, TargetFailed, "x"); moved {
+		t.Error("a held target was moved")
+	}
+	if n, _ := s.FailGrabTargets(ctx, g.ID, eps, []string{TargetDownloaded}, "refused", true); n != 2 {
+		t.Errorf("failed %d, want 2", n)
+	}
+	if n, _ := s.MoveGrabTargets(ctx, g.ID, []string{TargetGrabbed}, TargetDownloaded, "a repeated completed event"); n != 0 {
+		t.Errorf("a repeated event moved %d failed targets back", n)
+	}
+	if st := stateOf(t, s, eps[1]); st.State != TargetHeld {
+		t.Errorf("held: %+v", st)
+	}
+}
+
+// A target its release failed is wanted again after a backoff — 6 hours,
+// doubling to 48 — up to five failures; after the fifth it stays failed and
+// says so. Held, it starts again from none.
+func TestFailureRecovery(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 10, 1)
+	waits := []time.Duration{6 * time.Hour, 12 * time.Hour, 24 * time.Hour, 48 * time.Hour}
+	for i := 0; i < MaxGrabFailures; i++ {
+		gid := fmt.Sprintf("tg_f%d", i)
+		if _, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: gid, TitleID: id}, eps[0], eps); err != nil {
+			t.Fatalf("attempt %d: %v", i+1, err)
+		}
+		if _, err := s.BindTargetGrab(ctx, TargetGrab{ID: gid, Adapter: "nzbget", ClientJobID: gid}, "grabbed"); err != nil {
+			t.Fatal(err)
+		}
+		if n, _ := s.FailGrabTargets(ctx, gid, eps, []string{TargetGrabbed}, "download failed: par repair", true); n != 1 {
+			t.Fatalf("attempt %d failed %d", i+1, n)
+		}
+		st := stateOf(t, s, eps[0])
+		if st.GrabFailures != i+1 {
+			t.Fatalf("attempt %d: failures %d", i+1, st.GrabFailures)
+		}
+		if i+1 == MaxGrabFailures {
+			if st.RetryAt != nil || !strings.HasPrefix(st.Detail, LeftForAHuman) {
+				t.Fatalf("after the fifth failure: %+v", st)
+			}
+			break
+		}
+		if st.RetryAt == nil || time.Until(*st.RetryAt) < waits[i]-time.Minute || time.Until(*st.RetryAt) > waits[i]+time.Minute {
+			t.Fatalf("attempt %d: retry at %v, want in %v", i+1, st.RetryAt, waits[i])
+		}
+		if n, _ := s.RecoverFailedTargets(ctx); n != 0 {
+			t.Fatal("recovered before its time")
+		}
+		_, _ = s.pool.Exec(ctx, `UPDATE acquisition_targets SET retry_at = now() - interval '1 second' WHERE id = $1`, eps[0])
+		if n, _ := s.RecoverFailedTargets(ctx); n != 1 {
+			t.Fatal("not recovered once its time came")
+		}
+		if st := stateOf(t, s, eps[0]); st.State != TargetWanted || st.NextSearchAt != nil ||
+			!strings.Contains(st.Detail, "wanted again, its failed releases blocked") {
+			t.Fatalf("recovered: %+v", st)
+		}
+	}
+	_, _ = s.pool.Exec(ctx, `UPDATE acquisition_targets SET retry_at = now() - interval '1 second' WHERE id = $1`, eps[0])
+	if n, _ := s.RecoverFailedTargets(ctx); n != 0 {
+		t.Error("a target left for a human was tried again")
+	}
+	_ = s.HoldTarget(ctx, Hold{TargetID: eps[0], ItemID: "x"})
+	if st := stateOf(t, s, eps[0]); st.GrabFailures != 0 || st.RetryAt != nil {
+		t.Errorf("held: %+v", st)
+	}
+}
+
+// A reconcile does not take back an episode acquire handed over minutes ago
+// and the catalog answered that it holds: katalog-api may not list it yet.
+func TestAReconcileRespectsAFreshHandOver(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 11, 2)
+	_ = s.HoldTarget(ctx, Hold{TargetID: eps[0], ItemID: "fresh", Source: "grab", HandedOver: true})
+	_ = s.HoldTarget(ctx, Hold{TargetID: eps[1], ItemID: "old", Source: "grab", HandedOver: true})
+	_, _ = s.pool.Exec(ctx, `UPDATE acquisition_targets SET handed_over_at = now() - interval '2 hours' WHERE id = $1`, eps[1])
+	ch, err := s.ApplySeriesHoldings(ctx, id, "", "default", nil)
+	if err != nil || ch.Released != 1 {
+		t.Fatalf("released %+v %v, want only the one handed over hours ago", ch, err)
+	}
+	if st := stateOf(t, s, eps[0]); st.State != TargetHeld || st.HeldItemID != "fresh" {
+		t.Errorf("a fresh hand-over was taken back: %+v", st)
+	}
+}
+
+// A grab with no word of it for two days, that nothing works on any more, is
+// stale; one whose download still reports, or whose import still runs, is not.
+// Freeing a grab gives back what it reserved and what was in flight with it.
+func TestStaleGrabsAndFreeingThem(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 12, 3)
+	for i, e := range eps {
+		gid := fmt.Sprintf("tg_s%d", i)
+		if _, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: gid, TitleID: id}, e, []string{e}); err != nil {
+			t.Fatal(err)
+		}
+		if i > 0 {
+			if _, err := s.BindTargetGrab(ctx, TargetGrab{ID: gid, Adapter: "nzbget", ClientJobID: gid}, "grabbed"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_, _ = s.pool.Exec(ctx, `UPDATE target_grabs SET updated_at = now() - interval '3 days'`)
+	// tg_s1's download reported an hour ago; tg_s2 has an import working.
+	_, _ = s.UpsertDownload(ctx, Download{Adapter: "nzbget", ClientJobID: "tg_s1", WantedID: "tg_s1", State: "downloading"})
+	_, _ = s.EnqueueImport(ctx, Import{Adapter: "nzbget", ClientJobID: "tg_s2", WantedID: "tg_s2"})
+	stale, err := s.StaleTargetGrabs(ctx, 48*time.Hour)
+	if err != nil || len(stale) != 1 || stale[0].ID != "tg_s0" || stale[0].State != GrabPending {
+		t.Fatalf("stale = %+v %v, want only the pending one", stale, err)
+	}
+	if n, _ := s.FreeTargetGrab(ctx, "tg_s0", "no word of it"); n != 1 {
+		t.Errorf("freed %d", n)
+	}
+	if st := stateOf(t, s, eps[0]); st.State != TargetWanted || st.ReservedBy != "" || st.Detail != "no word of it" {
+		t.Errorf("freed reservation: %+v", st)
+	}
+	if n, _ := s.FreeTargetGrab(ctx, "tg_s1", "cancelled"); n != 1 {
+		t.Errorf("freed %d", n)
+	}
+	if st := stateOf(t, s, eps[1]); st.State != TargetWanted {
+		t.Errorf("freed grab: %+v", st)
+	}
+	if g, _ := s.GetTargetGrab(ctx, "tg_s1"); g.State != GrabFailed {
+		t.Errorf("grab: %+v", g)
+	}
+	if err := s.UnbindGrabTarget(ctx, "tg_s2", eps[2]); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := s.GetTargetGrab(ctx, "tg_s2"); len(g.TargetIDs) != 0 {
+		t.Errorf("unbound: %+v", g)
 	}
 }
 
@@ -419,7 +579,7 @@ func TestGrabsInFlightUntilTheDownloadShows(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
 	id, eps := series(t, s, 7, 2)
-	g, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_a", TitleID: id}, eps[0], eps[:1], time.Minute)
+	g, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_a", TitleID: id}, eps[0], eps[:1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,5 +598,38 @@ func TestGrabsInFlightUntilTheDownloadShows(t *testing.T) {
 	}
 	if n, _ := s.ActiveDownloads(ctx); n != 1 {
 		t.Fatalf("a reported grab is counted twice: %d", n)
+	}
+}
+
+// Two grabs reserving the same target at the same moment, on two connections:
+// exactly one takes it. The claim is one conditional statement, so the second
+// sees the first's reservation once the row lock lets it through.
+func TestAReservationIsTakenOnce(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 8, 30)
+	for round, ep := range eps {
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		for i := 0; i < 2; i++ {
+			gid := fmt.Sprintf("tg_r%d_%d", round, i)
+			go func() {
+				<-start
+				_, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: gid, TitleID: id}, ep, []string{ep})
+				results <- err
+			}()
+		}
+		close(start)
+		won := 0
+		for i := 0; i < 2; i++ {
+			if err := <-results; err == nil {
+				won++
+			} else if ng := (*NotGrabbableError)(nil); !errors.As(err, &ng) {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		if won != 1 {
+			t.Fatalf("round %d: %d reservations took the same target", round, won)
+		}
 	}
 }
