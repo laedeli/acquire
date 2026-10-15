@@ -53,6 +53,19 @@ func TestManagedClientsDeclaration(t *testing.T) {
 	})
 }
 
+func TestCopyOnImportSettings(t *testing.T) {
+	t.Setenv("ACQUIRE_ARRIVALS_ROOT", "/var/lib/katalog/.work/incoming/")
+	t.Setenv("ACQUIRE_DOWNLOADS_RESERVE", "32212254720")
+	c := Load()
+	if c.ArrivalsRoot != "/var/lib/katalog/.work/incoming" || c.DownloadsReserveBytes != 30<<30 {
+		t.Errorf("arrivals %q, reserve %d", c.ArrivalsRoot, c.DownloadsReserveBytes)
+	}
+	t.Setenv("ACQUIRE_DOWNLOADS_RESERVE", "30Gi")
+	if got := Load().DownloadsReserveBytes; got != 0 {
+		t.Errorf("a reserve that is no byte count = %d, want 0", got)
+	}
+}
+
 func TestClusterDomainFromResolvConf(t *testing.T) {
 	cases := map[string]string{
 		// What Kubernetes writes into a pod.

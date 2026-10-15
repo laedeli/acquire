@@ -50,6 +50,16 @@ type Config struct {
 	InboxRoot     string // ACQUIRE_INBOX_ROOT (default /var/lib/katalog/packages/_inbox)
 	DownloadsRoot string // ACQUIRE_DOWNLOADS_ROOT (default /var/lib/katalog/packages/_downloads)
 
+	// Copy-on-import. ArrivalsRoot (ACQUIRE_ARRIVALS_ROOT) is the library's
+	// arrivals folder as acquire and the catalog both see it, writable for
+	// acquire: a finished download outside it is copied in before it is handed
+	// to the catalog. "" hands every download over where it lies, as before.
+	ArrivalsRoot string
+	// DownloadsReserveBytes (ACQUIRE_DOWNLOADS_RESERVE, bytes) is kept free on
+	// the volume the managed clients work on: no release is handed to one of
+	// them that would leave less.
+	DownloadsReserveBytes int64
+
 	// Endpoint policy for URLs an admin enters (internal/endpoint).
 	EndpointDeny          []string // ACQUIRE_ENDPOINT_DENY: comma list of hostnames or domain suffixes
 	EndpointAllowInternal bool     // ACQUIRE_ENDPOINT_ALLOW_INTERNAL: allow services in other namespaces
@@ -114,6 +124,9 @@ func Load() Config {
 		InboxRoot:     def("/var/lib/katalog/packages/_inbox", "ACQUIRE_INBOX_ROOT"),
 		DownloadsRoot: downloads,
 
+		ArrivalsRoot:          strings.TrimRight(env("ACQUIRE_ARRIVALS_ROOT"), "/"),
+		DownloadsReserveBytes: bytesOf(env("ACQUIRE_DOWNLOADS_RESERVE")),
+
 		EndpointDeny:          splitList(env("ACQUIRE_ENDPOINT_DENY")),
 		EndpointAllowInternal: env("ACQUIRE_ENDPOINT_ALLOW_INTERNAL") == "true",
 		PodNamespace:          podNamespace(),
@@ -176,6 +189,15 @@ func clusterDomainFrom(resolvConf string) string {
 		}
 	}
 	return ""
+}
+
+// bytesOf reads a byte count; anything else is 0.
+func bytesOf(v string) int64 {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 func splitList(v string) []string {

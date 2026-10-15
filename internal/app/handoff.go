@@ -83,7 +83,7 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 			return refused{err}
 		}
 		// Last gate before anything is written to disk. Fails closed.
-		if err := s.AdmitGrab(ctx, c, h.Size); err != nil {
+		if err := s.AdmitGrab(ctx, c, h.Size, protocol); err != nil {
 			return refused{err}
 		}
 		client, routed = c, true
@@ -179,10 +179,17 @@ type refused struct{ error }
 func (r refused) Unwrap() error { return r.error }
 
 // failGrab records a failed grab on the request, unless the grab was merely
-// refused, which says nothing about the request.
+// refused, which says nothing about the request: a release waiting for room
+// only says why on it, in its own state.
 func (s *Service) failGrab(ctx context.Context, wantedID string, err error) {
 	var r refused
 	if errors.As(err, &r) {
+		var room noRoom
+		if errors.As(err, &room) {
+			if w, gerr := s.st.GetWanted(ctx, wantedID); gerr == nil {
+				s.setStatus(ctx, wantedID, w.Status, clip(err.Error(), 300))
+			}
+		}
 		return
 	}
 	s.setStatus(ctx, wantedID, "failed", "grab failed: "+err.Error())

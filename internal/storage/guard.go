@@ -20,6 +20,8 @@ type Guard struct {
 	// HeadroomBytes must remain free AFTER the download completes, so a grab
 	// cannot be the thing that fills the disk.
 	HeadroomBytes int64
+	// FreeAt reads the free space at a path; nil reads the filesystem (statfs).
+	FreeAt func(path string) (int64, error)
 }
 
 // Free reports bytes available to an unprivileged writer.
@@ -30,9 +32,17 @@ func (g Guard) Free() (int64, error) {
 	if g.Path == "" {
 		return 0, fmt.Errorf("storage guard: no path configured")
 	}
+	if g.FreeAt != nil {
+		return g.FreeAt(g.Path)
+	}
+	return FreeAt(g.Path)
+}
+
+// FreeAt reports the bytes available to an unprivileged writer at path.
+func FreeAt(path string) (int64, error) {
 	var st syscall.Statfs_t
-	if err := syscall.Statfs(g.Path, &st); err != nil {
-		return 0, fmt.Errorf("statfs %s: %w", g.Path, err)
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, fmt.Errorf("statfs %s: %w", path, err)
 	}
 	return int64(st.Bavail) * int64(st.Bsize), nil
 }
@@ -50,16 +60,17 @@ func (g Guard) Admit(sizeBytes int64) error {
 	}
 	if g.FloorBytes > 0 && free < g.FloorBytes {
 		return fmt.Errorf("refusing grab: %s free is below the %s floor",
-			human(free), human(g.FloorBytes))
+			Human(free), Human(g.FloorBytes))
 	}
 	if need := sizeBytes + g.HeadroomBytes; sizeBytes > 0 && free < need {
 		return fmt.Errorf("refusing grab: needs %s (%s + %s headroom) but only %s free",
-			human(need), human(sizeBytes), human(g.HeadroomBytes), human(free))
+			Human(need), Human(sizeBytes), Human(g.HeadroomBytes), Human(free))
 	}
 	return nil
 }
 
-func human(b int64) string {
+// Human writes a byte count as an operator reads it.
+func Human(b int64) string {
 	switch {
 	case b >= 1<<40:
 		return fmt.Sprintf("%.1f TB", float64(b)/(1<<40))

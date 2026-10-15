@@ -61,6 +61,11 @@ type Service struct {
 	slots  chan struct{}
 	refs   *secretbox.Box
 	timing searchTiming
+
+	// Copy-on-import (imports.go): a wake-up for the worker, and how free space
+	// is read where a client downloads (storage.Guard by default; tests swap it).
+	importWake chan struct{}
+	freeSpace  func(path string) (int64, error)
 }
 
 func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, bus Bus, box *secretbox.Box) *Service {
@@ -73,7 +78,8 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, bus: bus,
 		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second),
 		ixc:   &indexer.Client{HTTP: policy.HTTPClient(2 * typedPerSource)},
-		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming}
+		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming,
+		importWake: make(chan struct{}, 1), freeSpace: freeSpaceAt}
 	if st != nil {
 		svc.sync = configsync.New(st, gw, box, 30*time.Second)
 	}
@@ -317,6 +323,12 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 		yearPtr = &y
 	}
 	req := katalog.IngestRequest{Path: video, Type: typ, Title: w.Title, Year: yearPtr}
+	if typ != "episode" && s.copiesIntoArrivals(video) {
+		// Not where the catalog takes files from: the import worker copies it
+		// into the arrivals first (imports.go).
+		s.queueImport(ctx, eventRef{adapter: ev.Adapter, jobID: ev.ClientID, files: ev.Files}, w.ID)
+		return nil
+	}
 	if typ == "episode" {
 		// katalog rejects an episode without coordinates, and it is right to:
 		// a NULL parent produces a playable orphan with no error anywhere.

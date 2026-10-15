@@ -62,6 +62,20 @@ type IngestResult struct {
 	Created bool   `json:"created"`
 }
 
+// IngestError is an answer of the ingest other than 200.
+type IngestError struct {
+	Code int
+	Body string
+}
+
+func (e *IngestError) Error() string { return fmt.Sprintf("ingest %d: %s", e.Code, e.Body) }
+
+// Refused reports whether the catalog turned the file down (a 4xx other than
+// 429), which asking again does not change; anything else is worth a retry.
+func (e *IngestError) Refused() bool {
+	return e.Code >= 400 && e.Code < 500 && e.Code != http.StatusTooManyRequests
+}
+
 func (c *Client) authHeader(ctx context.Context, req *http.Request) {
 	if c.Tokens != nil && c.Tokens.Enabled() {
 		if tok, err := c.Tokens.Token(ctx); err == nil && tok != "" {
@@ -90,7 +104,7 @@ func (c *Client) Ingest(ctx context.Context, in IngestRequest) (IngestResult, er
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return IngestResult{}, fmt.Errorf("ingest %d: %s", resp.StatusCode, string(b))
+		return IngestResult{}, &IngestError{Code: resp.StatusCode, Body: string(b)}
 	}
 	var out IngestResult
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {

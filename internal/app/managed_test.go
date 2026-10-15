@@ -26,7 +26,7 @@ func chartQB(password string) map[string]any {
 		"id": "qbittorrent", "type": "qbittorrent", "baseUrl": "http://qbittorrent:8080",
 		"auth": "basic", "username": "acquire", "secret": password,
 		"protocols": []string{"torrent"}, "category": "acquire",
-		"remotePath": "/downloads", "localPath": "/var/lib/katalog/.work/incoming/downloads/qbittorrent",
+		"remotePath": "/downloads/complete", "localPath": "/var/lib/acquire/downloads/qbittorrent/complete",
 	}
 }
 
@@ -35,7 +35,7 @@ func chartNZB(password string) map[string]any {
 		"id": "nzbget", "type": "nzbget", "baseUrl": "http://nzbget:6789",
 		"auth": "basic", "username": "acquire", "secret": password,
 		"protocols": []string{"usenet"}, "category": "acquire",
-		"remotePath": "/downloads", "localPath": "/var/lib/katalog/.work/incoming/downloads/nzbget",
+		"remotePath": "/downloads/complete", "localPath": "/var/lib/acquire/downloads/nzbget/complete",
 	}
 }
 
@@ -85,8 +85,8 @@ func TestDeclaredClientsAreValidated(t *testing.T) {
 		t.Fatalf("valid clients = %+v", out)
 	}
 	c := out[0].client
-	if !c.Managed || !c.Enabled || c.Category != "acquire" || c.RemotePath != "/downloads" ||
-		c.LocalPath != "/var/lib/katalog/.work/incoming/downloads/qbittorrent" || out[0].secret.Value != "pw" {
+	if !c.Managed || !c.Enabled || c.Category != "acquire" || c.RemotePath != "/downloads/complete" ||
+		c.LocalPath != "/var/lib/acquire/downloads/qbittorrent/complete" || out[0].secret.Value != "pw" {
 		t.Errorf("stored row = %+v", c)
 	}
 	if !reflect.DeepEqual(ids, map[string]bool{"qbittorrent": true, "nzbget": true, "qbittorrent-2": true}) {
@@ -242,7 +242,7 @@ func TestManagedClientsEndToEnd(t *testing.T) {
 	}
 	qb := get("qbittorrent")
 	if !qb.Managed || !qb.Enabled || qb.Auth != "basic" || qb.Username != "acquire" || len(qb.SecretCT) == 0 ||
-		qb.LocalPath != "/var/lib/katalog/.work/incoming/downloads/qbittorrent" {
+		qb.LocalPath != "/var/lib/acquire/downloads/qbittorrent/complete" {
 		t.Fatalf("stored = %+v", qb)
 	}
 	if !svc.storedSecretIs(qb, SecretInput{Present: true, Value: "first"}) {

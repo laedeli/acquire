@@ -85,6 +85,9 @@ func main() {
 	go svc.RunConfigSync(ctx)
 	// Search source caps are cached; refresh the ones older than a day.
 	go svc.RunSourceMaintenance(ctx)
+	// Finished downloads outside the library's arrivals are copied in, handed to
+	// the catalog and released in their clients (ACQUIRE_ARRIVALS_ROOT).
+	go svc.RunImports(ctx)
 
 	// The consumer starts at the latest offset, so downloads that began while
 	// acquire was down would be invisible. Ask the gateway what is in flight.
