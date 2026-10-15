@@ -1,9 +1,10 @@
 // Package events is acquire's Kafka wiring on the shared cluster (mTLS). It is
 // CONSUME-ONLY: download.client.completed/failed advance request status +
-// trigger ingest, and catalog.item.packaged marks fulfillment. It does NOT emit
-// catalog.item.discovered itself — katalog-manager's POST /api/ingest owns that
-// (the item creator emits discovered, exactly as the scanner does). Topic names
-// carry the tenant prefix (KAFKA_TOPIC_PREFIX).
+// trigger ingest, catalog.item.packaged marks fulfillment, and
+// catalog.item.discovered/packaged/removed keep what acquire knows the library
+// holds. It does NOT emit catalog.item.discovered itself — katalog-manager's
+// POST /api/ingest owns that (the item creator emits discovered, exactly as the
+// scanner does). Topic names carry the tenant prefix (KAFKA_TOPIC_PREFIX).
 package events
 
 import (
@@ -19,6 +20,8 @@ import (
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
+
+	"github.com/laedeli/acquire/internal/identity"
 )
 
 // Topics resolved from the tenant prefix.
@@ -29,6 +32,11 @@ type Topics struct {
 	Failed      string
 	Packaged    string
 	ScheduleDue string
+	// Discovered and Removed are read by a consumer group of their own
+	// (CatalogGroup): a topic that does not exist yet must not stop the
+	// download events, which share the main group.
+	Discovered string
+	Removed    string
 }
 
 func TopicsFor(prefix string) Topics {
@@ -43,11 +51,22 @@ func TopicsFor(prefix string) Topics {
 		Failed:      prefix + "download.client.failed",
 		Packaged:    prefix + "catalog.item.packaged",
 		ScheduleDue: prefix + "acquire.schedule.due",
+		Discovered:  prefix + "catalog.item.discovered",
+		Removed:     prefix + "catalog.item.removed",
 	}
 }
 
+// CatalogGroup is the consumer group that reads the catalog's discovered and
+// removed events: the main group's id, then -catalog.
+func CatalogGroup(group string) string { return group + "-catalog" }
+
 // ItemEvent is the catalog pipeline envelope (mirrors the scanner/worker shape).
 // Consumers require only itemId; producers emit the full shape.
+//
+// The identities are optional (ADR-0012): the item's own (a movie's tmdb or
+// imdb), and for an episode its series' and its coordinates, so a consumer can
+// tell what the library holds without asking. Without them an event is
+// matched by its item id alone.
 type ItemEvent struct {
 	EventID    string `json:"eventId"`
 	ItemID     string `json:"itemId"`
@@ -56,6 +75,11 @@ type ItemEvent struct {
 	Status     string `json:"status,omitempty"`
 	OccurredAt string `json:"occurredAt,omitempty"`
 	Source     string `json:"source,omitempty"`
+
+	ExternalIDs       identity.IDs `json:"externalIds,omitempty"`
+	SeriesExternalIDs identity.IDs `json:"seriesExternalIds,omitempty"`
+	SeasonNumber      *int         `json:"seasonNumber,omitempty"`
+	EpisodeNumber     *int         `json:"episodeNumber,omitempty"`
 }
 
 // DownloadEvent is the subset of the gateway's download.client.* payloads we
@@ -138,6 +162,9 @@ type Handlers struct {
 	OnCompleted func(ctx context.Context, ev DownloadEvent) error
 	OnFailed    func(ctx context.Context, ev DownloadEvent) error
 	OnPackaged  func(ctx context.Context, ev ItemEvent) error
+	// OnDiscovered and OnRemoved follow what the library holds.
+	OnDiscovered func(ctx context.Context, ev ItemEvent) error
+	OnRemoved    func(ctx context.Context, ev ItemEvent) error
 	// OnScheduleDue closes the loop: the clock emits, the outbox makes it
 	// durable, and this acts on it. Handling it here rather than inside the
 	// timer is what makes a sweep replayable instead of silently skipped when a
@@ -147,8 +174,16 @@ type Handlers struct {
 
 // Run consumes until ctx is cancelled. Per-message errors are logged by the
 // caller's handlers; a decode failure is skipped (poison-safe).
+//
+// The catalog's discovered and removed events are read by a reader of their
+// own, in a group of their own (CatalogGroup): a consumer group whose topics
+// include one that does not exist is assigned nothing at all, so a missing
+// catalog topic would otherwise stop the download events too.
 func (c *Consumer) Run(ctx context.Context, h Handlers) error {
 	dialer := &kafka.Dialer{Timeout: 10 * time.Second, DualStack: true, TLS: c.tlsCfg}
+	if h.OnDiscovered != nil || h.OnRemoved != nil {
+		go c.runCatalog(ctx, dialer, h)
+	}
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: c.brokers,
 		GroupID: c.group,
@@ -206,6 +241,39 @@ func (c *Consumer) Run(ctx context.Context, h Handlers) error {
 			if json.Unmarshal(msg.Value, &ev) == nil && h.OnPackaged != nil {
 				_ = h.OnPackaged(ctx, ev)
 			}
+		}
+	}
+}
+
+// runCatalog reads the catalog's discovered and removed events until ctx is
+// cancelled.
+func (c *Consumer) runCatalog(ctx context.Context, dialer *kafka.Dialer, h Handlers) {
+	r := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:     c.brokers,
+		GroupID:     CatalogGroup(c.group),
+		GroupTopics: []string{c.topics.Discovered, c.topics.Removed},
+		Dialer:      dialer,
+		StartOffset: kafka.LastOffset,
+	})
+	defer r.Close()
+	for {
+		msg, err := r.ReadMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			time.Sleep(time.Second)
+			continue
+		}
+		var ev ItemEvent
+		if json.Unmarshal(msg.Value, &ev) != nil {
+			continue
+		}
+		switch {
+		case msg.Topic == c.topics.Discovered && h.OnDiscovered != nil:
+			_ = h.OnDiscovered(ctx, ev)
+		case msg.Topic == c.topics.Removed && h.OnRemoved != nil:
+			_ = h.OnRemoved(ctx, ev)
 		}
 	}
 }
