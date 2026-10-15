@@ -47,7 +47,9 @@ func TestIngestByIdentityBody(t *testing.T) {
 
 // What a refusal says: a 409 names the item that holds the episode already;
 // the catalog from before the contract asks for the parent, which is it not
-// taking episodes by identity; a path outside the arrivals is a refusal.
+// taking episodes by identity; a path outside the arrivals is a refusal, and
+// so is everything the catalog with the contract refuses in the words of the
+// new fields.
 func TestIngestRefusals(t *testing.T) {
 	cases := []struct {
 		code                 int
@@ -57,8 +59,14 @@ func TestIngestRefusals(t *testing.T) {
 	}{
 		{409, `{"error":"/arrivals/a.mkv is a copy of the original of item x1 at /arrivals/b.mkv","itemId":"x1"}`, "x1", false, true},
 		{409, `{"error":"the library holds S04E07 as item x2","itemId":"x2"}`, "x2", false, true},
+		// The catalog from before the contract.
 		{400, `{"error":"an episode requires parentId, seasonNumber and episodeNumber; without them it would be ingested as an unlinked orphan"}`, "", true, true},
 		{422, `{"error":"unknown field series"}`, "", true, true},
+		// The catalog with it, refusing what it cannot read.
+		{400, `{"error":"an episode requires its series, by parentId or by its identity (series), and seasonNumber and episodeNumber; without them it would be ingested as an unlinked orphan"}`, "", false, true},
+		{400, `{"error":"an episode names its series one way: by its catalog id (parentId) or by its identity (series)"}`, "", false, true},
+		{400, `{"error":"series.imdb is tt and digits, not \"0133093\""}`, "", false, true},
+		{400, `{"error":"episodeEnd is the last episode the file covers, from episodeNumber on: 1 to 10, as one file covers 10 episodes at most"}`, "", false, true},
 		{400, `{"error":"path must be under the arrivals' root (ARRIVALS_ROOT)"}`, "", false, true},
 		{503, `busy`, "", false, false},
 	}
@@ -71,8 +79,32 @@ func TestIngestRefusals(t *testing.T) {
 	if m := (&IngestError{Code: 400, Body: `{"error":"no file"}`}).Message(); m != "no file" {
 		t.Errorf("message = %q", m)
 	}
+	if !(&IngestError{Code: 400, Body: `{"error":"identity.imdb is tt and digits, not \"x\""}`}).RefusesIdentity() {
+		t.Error("a refused identity of a movie")
+	}
 	if !(IngestRequest{Identity: &Identity{TMDB: "1"}}).ByIdentity() || (IngestRequest{Type: "movie"}).ByIdentity() {
 		t.Error("ByIdentity")
+	}
+}
+
+// Ids go in their source's form or not at all: one the catalog would refuse
+// would cost the whole hand-over.
+func TestNewIdentity(t *testing.T) {
+	if id := NewIdentity(1396, 81189, "tt0903747"); *id != (Identity{TMDB: "1396", TVDB: "81189", IMDB: "tt0903747"}) {
+		t.Errorf("all three: %+v", id)
+	}
+	if id := NewIdentity(0, 0, "0903747"); id == nil || id.IMDB != "tt0903747" {
+		t.Errorf("an IMDb id without its tt: %+v", id)
+	}
+	if id := NewIdentity(1396, 0, "TT0903747x"); *id != (Identity{TMDB: "1396"}) {
+		t.Errorf("an IMDb id in another form is left out: %+v", id)
+	}
+	if NewIdentity(0, 0, "") != nil {
+		t.Error("no identity is nil")
+	}
+	b, _ := json.Marshal(NewIdentity(1, 2, "tt3"))
+	if string(b) != `{"tmdb":"1","tvdb":"2","imdb":"tt3"}` {
+		t.Errorf("the strongest id goes first: %s", b)
 	}
 }
 
@@ -168,7 +200,7 @@ func TestHoldingsProbe(t *testing.T) {
 		if !errors.As(err, &he) || errors.Is(err, ErrHoldingsUnsupported) {
 			t.Errorf("HTTP %d: %v — a read side that is down or refusing is no answer either way", code, err)
 		}
-		if code == 403 && !strings.Contains(err.Error(), "zaentrum-addon") {
+		if code == 401 && !strings.Contains(err.Error(), "audience") {
 			t.Errorf("a refusal should say what the service account needs: %v", err)
 		}
 		srv.Close()

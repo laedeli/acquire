@@ -26,8 +26,9 @@ var (
 	ErrHoldingsUnsupported = errors.New("the catalog does not answer holdings by identity")
 )
 
-// HoldingsError is any other answer: the read side down, or refusing
-// acquire's service account.
+// HoldingsError is any other answer: the read side down (503 too while it may
+// not read the identities), refusing acquire's service account, or refusing
+// the request (400).
 type HoldingsError struct {
 	Code int
 	Body string
@@ -35,8 +36,10 @@ type HoldingsError struct {
 
 func (e *HoldingsError) Error() string {
 	switch e.Code {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Sprintf("katalog-api refused acquire's service account (HTTP %d) — it needs the zaentrum-addon role", e.Code)
+	case http.StatusUnauthorized:
+		return "katalog-api refused acquire's service account (HTTP 401): its token must carry the audience katalog-api accepts"
+	case http.StatusForbidden:
+		return "katalog-api refused acquire's service account (HTTP 403): holdings are never served to a request capped at an age"
 	}
 	if b := strings.TrimSpace(e.Body); b != "" {
 		return fmt.Sprintf("katalog-api holdings: HTTP %d: %s", e.Code, b)
@@ -59,9 +62,10 @@ type SeasonHoldings struct {
 	Episodes []EpisodeHolding `json:"episodes"`
 }
 
-// EpisodeHolding is one held episode: its item, whether it has a file of its
-// own, whether it is playable (packaged), and the item whose file covers it
-// when it is one of several episodes of one file.
+// EpisodeHolding is one held episode: its item, whether it has a file, whether
+// it is playable (packaged), and the item whose file covers it when it is one
+// of several episodes of one file — whose hasFile and playable it then
+// carries. Season 0 is answered too.
 type EpisodeHolding struct {
 	Episode   int    `json:"episode"`
 	ItemID    string `json:"itemId"`

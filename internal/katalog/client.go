@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,13 +44,56 @@ func New(managerURL, katalogURL string, tokens Tokener) *Client {
 	}
 }
 
-// Identity names a title by an identity it has outside any one library. One
-// is enough; the catalog finds the title by it, or for a series creates it
-// from it and the title given (ingest by identity, ADR-0012).
+// Identity names a title by the identities it has outside any one library.
+// One is enough. The catalog tries them in the order tmdb, tvdb, imdb, and
+// the first that finds a title decides (of a series held twice, the one made
+// first); a series none finds it makes from them and the title given (ingest
+// by identity, ADR-0012). Every id is a string in its source's form: TMDB and
+// TVDB ids digits, an IMDb id tt and digits.
 type Identity struct {
 	TMDB string `json:"tmdb,omitempty"`
 	TVDB string `json:"tvdb,omitempty"`
 	IMDB string `json:"imdb,omitempty"`
+}
+
+// MaxCovered is the most episodes one file may cover in a row: an ingest
+// whose episodeEnd reaches further is refused.
+const MaxCovered = 10
+
+var (
+	digitsRE = regexp.MustCompile(`^[0-9]{1,20}$`)
+	imdbRE   = regexp.MustCompile(`^tt[0-9]{1,20}$`)
+)
+
+// NewIdentity is the identity of the ids given that are in their source's
+// form — an IMDb id with or without its tt — leaving out the others, which
+// the catalog would refuse the whole hand-over for. nil when none is.
+func NewIdentity(tmdb, tvdb int64, imdb string) *Identity {
+	var id Identity
+	if tmdb > 0 {
+		id.TMDB = strconv.FormatInt(tmdb, 10)
+	}
+	if tvdb > 0 {
+		id.TVDB = strconv.FormatInt(tvdb, 10)
+	}
+	id.IMDB = IMDbID(imdb)
+	if id == (Identity{}) {
+		return nil
+	}
+	return &id
+}
+
+// IMDbID is an IMDb title id in the form the catalog takes it (tt and digits,
+// lower case), or "" when it is none.
+func IMDbID(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if digitsRE.MatchString(v) {
+		v = "tt" + v
+	}
+	if !imdbRE.MatchString(v) {
+		return ""
+	}
+	return v
 }
 
 // IngestRequest mirrors katalog-manager's POST /api/ingest body.
@@ -133,28 +178,31 @@ func (e *IngestError) Message() string {
 	return strings.TrimSpace(e.Body)
 }
 
-// identityFields are what the catalog's answer names when it is the fields of
-// ingest by identity it does not take: a catalog without the contract asks for
-// the parent instead (an episode requires parentId, …), one that validates its
-// body names the field it does not know.
-var identityFields = []string{"parentid", "series", "episodeend", "identity"}
-
 // Unsupported reports whether the refusal is the catalog not taking ingest by
-// identity: a 422, or a 400 that names those fields. Such a catalog takes the
-// file once it has the contract, so the hand-over waits instead of failing.
+// identity at all: a 422, or the 400 of the catalog from before the contract,
+// which ignores series and asks for the catalog id of the parent instead ("an
+// episode requires parentId, seasonNumber and episodeNumber"). Such a catalog
+// takes the file once it has the contract, so the hand-over waits instead of
+// failing.
+//
+// Not every 400 that names the new fields is one: the catalog with the
+// contract refuses a body it cannot read — an id in the wrong form, an
+// episodeEnd too far — in their words, and that is a refusal.
 func (e *IngestError) Unsupported() bool {
 	switch e.Code {
 	case http.StatusUnprocessableEntity:
 		return true
 	case http.StatusBadRequest:
-		msg := strings.ToLower(e.Message())
-		for _, f := range identityFields {
-			if strings.Contains(msg, f) {
-				return true
-			}
-		}
+		return strings.Contains(strings.ToLower(e.Message()), "requires parentid")
 	}
 	return false
+}
+
+// RefusesIdentity reports whether a 400 is about a title's own identity
+// (identity), which a movie can go without: it is handed over by title then,
+// as before the contract.
+func (e *IngestError) RefusesIdentity() bool {
+	return e.Code == http.StatusBadRequest && strings.Contains(strings.ToLower(e.Message()), "identity")
 }
 
 func (c *Client) authHeader(ctx context.Context, req *http.Request) {
@@ -262,6 +310,9 @@ func (c *Client) InLibrary(ctx context.Context, title string) (Availability, err
 
 // videoExts are the container extensions the pipeline can ingest.
 var videoExts = map[string]bool{".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".mov": true, ".ts": true, ".webm": true}
+
+// IsVideo reports whether a path names a file the pipeline can ingest.
+func IsVideo(path string) bool { return videoExts[strings.ToLower(filepath.Ext(path))] }
 
 // ResolveVideo turns a download's reported paths into the single video file to
 // ingest: if a path is a file with a video extension, use it; if it's a
