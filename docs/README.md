@@ -51,6 +51,7 @@ flowchart LR
 |---|---|
 | **Understand how it fits together** (seams, events, the whole loop) | [Architecture](./architecture.md) |
 | **Understand the request → play lifecycle** and the acquire service | [The acquire service](./acquire.md) |
+| **Fill missing episodes**: grabs bound to episodes, what the library holds, the backlog sweep | [Episodes and movies acquire tracks](./acquire.md#episodes-and-movies-acquire-tracks) |
 | **Understand the download plane** (the gateway + its clients) | [Download gateway & clients](./download-gateway.md) |
 | **Add search sources and set up NZB-first auto-grab** | [Search sources & NZB-first](./indexers-and-nzb.md) |
 | **Install the addon on a platform** | [Deploying the addon](./deploying.md) |
@@ -59,7 +60,7 @@ flowchart LR
 
 | Repo | What it is |
 |---|---|
-| [`laedeli/acquire`](https://github.com/laedeli/acquire) | The addon service — requests, native newznab/torznab search, the request→grab→ingest brain, the configuration of sources and clients, and the console the portal hosts. Image `ghcr.io/laedeli/acquire`. |
+| [`laedeli/acquire`](https://github.com/laedeli/acquire) | The addon service — requests, the episodes and movies it tracks, native newznab/torznab search, the grab→ingest brain, the configuration of sources and clients, and the console the portal hosts. Image `ghcr.io/laedeli/acquire`. |
 | [`laedeli/download-gateway`](https://github.com/laedeli/download-gateway) | A neutral facade that wraps any download client behind one HTTP API + a Kafka event stream. Image `ghcr.io/laedeli/download-gateway`. |
 
 The **`laedeli`** org is the platform's addon shop — a “little shop” (_Lädeli_,

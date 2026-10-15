@@ -62,6 +62,10 @@ where the file came from.”
   item and fires nothing (no duplicate, no re-pipeline).
 - `discovered` is the pipeline's front door — enrich → analyze → transcode →
   package all follow from it.
+- A title goes **by its identity** (ADR-0012 of the platform): an episode by its
+  series' TMDB, TVDB or IMDb id, its season and episode (and `episodeEnd` for
+  one file of several), the catalog finding the series or making it; a movie
+  with its own ids. acquire holds no catalog ids — they come back in the answer.
 
 This is the seam that lets an addon put content into the catalog **without**
 reaching into the catalog's internals. acquire owns one invariant here: it hands
@@ -112,14 +116,20 @@ sequenceDiagram
 
 | Topic | Producer | acquire |
 |---|---|---|
-| `download.client.started` / `.progress` | download-gateway | ignored |
-| `download.client.completed` | download-gateway | **consumed** → copy into the arrivals if needed, ingest |
+| `download.client.started` / `.progress` | download-gateway | **consumed** → live telemetry |
+| `download.client.completed` | download-gateway | **consumed** → copy into the arrivals if needed, ingest (an episode by identity) |
 | `download.client.failed` | download-gateway | **consumed** → mark failed |
-| `catalog.item.discovered` | katalog-manager (on ingest) | — (drives the pipeline) |
-| `catalog.item.packaged` | katalog-manager (pipeline) | **consumed** → mark fulfilled |
+| `catalog.item.discovered` | katalog-manager (on ingest, and the scanner) | **consumed** → the episode or movie its identities name is held |
+| `catalog.item.packaged` | katalog-manager (pipeline) | **consumed** → mark fulfilled; what the item holds is playable |
+| `catalog.item.removed` | katalog-manager | **consumed** → what the item held is wanted again |
 
 acquire's consumer starts at the **latest** offset (only new events; history is
-not replayed) and is poison-safe (undecodable messages are skipped).
+not replayed) and is poison-safe (undecodable messages are skipped). The
+catalog's `discovered` and `removed` are read in a consumer group of their own,
+so a catalog topic an instance lacks stops only those. What the library holds
+acquire also asks katalog-api by identity, on a schedule (`GET
+/api/v1/holdings`): the events keep it between runs, the reconcile keeps it
+right.
 
 ## Component map
 

@@ -51,6 +51,15 @@ flowchart TB
 - A running **zaentrum platform** with the ingest seam (katalog-manager
   `POST /api/ingest`) and the portal's addon install. Installing the chart
   needs the operator's addon charts (the `ZaentrumAddon` resource).
+- For **episodes**, the catalog's identity contracts (ADR-0012 of the
+  platform): **ingest by identity** in katalog-manager, which takes an episode
+  by its series' TMDB, TVDB or IMDb id, and **holdings by identity** in
+  katalog-api (`GET /api/v1/holdings`). Without them acquire still runs:
+  movies are handed over as before, by title; a finished episode download is
+  copied and kept, its episodes **waiting for the catalog**, and handed over
+  once the catalog takes it; and since nothing says what the library holds,
+  the missing tab lists nothing of a title and nothing is grabbed on its own
+  (see [what the library holds](./acquire.md#what-the-library-holds)).
 - The platform's **event streaming**: brokers over mTLS with the platform's
   client certificate, or plaintext brokers such as a bundled one. The chart
   follows whichever the platform has.
@@ -221,7 +230,7 @@ platform from them and nowhere else:
 | `zaentrum.hostname` | `ACQUIRE_PLATFORM_URL`, the platform's address `https://<hostname>` (`http` when the issuer is plain http on that host): where acquire sends a browser that asks it for a page, to `/portal/app/acquire` there. Empty sends it to `/portal/` on the host it asked |
 | `zaentrum.issuer` | `OIDC_ISSUER` on both; acquire's token endpoint `<issuer>/protocol/openid-connect/token` |
 | `zaentrum.issuerHostAliasIP` | a host alias resolving the issuer's host to that address, on both |
-| `zaentrum.events.brokers`, `zaentrum.events.topicPrefix` | `KAFKA_BROKERS` and `KAFKA_TOPIC_PREFIX` on both; acquire's consumer group is the prefix without its trailing dot, then `-acquire` |
+| `zaentrum.events.brokers`, `zaentrum.events.topicPrefix` | `KAFKA_BROKERS` and `KAFKA_TOPIC_PREFIX` on both; acquire's consumer group is the prefix without its trailing dot, then `-acquire`, and a second group, that id followed by `-catalog`, reads the catalog's `catalog.item.discovered` and `catalog.item.removed` |
 | `zaentrum.events.tlsSecret` | mounted at `/etc/kafka-cert`: acquire reads it as `KAFKA_CERT_DIR`, the gateway as `KAFKA_TLS_CERT`, `KAFKA_TLS_KEY` and `KAFKA_TLS_CA`. Empty means plaintext brokers: nothing is mounted, acquire gets an empty `KAFKA_CERT_DIR` and the gateway no TLS files |
 | `zaentrum.media.claimName` | mounted read-only into acquire at `/var/lib/katalog`; when the chart runs download clients, its arrivals `.work/incoming` writable on top, for the copies. No client mounts it |
 | `zaentrum.vpn.proxy` | the platform VPN's SOCKS5 proxy, `socks5h://host:port`, or empty without a VPN: qBittorrent goes through it with `vpn: true`, which needs it |
@@ -482,6 +491,19 @@ says what failed and when acquire tries next. A good copy is not written
 twice. A refusal by the catalog fails the request, as before. The work is kept
 in acquire's database (`imports`), so a restart picks it up where it stopped.
 
+An **episode grab** — a release grabbed for episodes acquire tracks, one, a
+file of several or a season pack — goes the same way, file by file: its copies
+land in `.work/incoming/acquire/<grab>/<client>-<job>/`, each file is handed
+over by identity for the episodes its name holds (the series' ids, the season,
+the episode, `episodeEnd` for a file of several), and files that hold none of
+the grab's episodes are left out, with a note on the grab. A download that
+lies in the arrivals already is handed over in place.
+Against a catalog that does not take ingest by identity yet, the episodes
+wait: the copy stays, the download is not released in its client, and the
+hand-over is tried again half an hour after the first refusal and up to six
+hours apart — so mind the downloads volume while it waits. See
+[from download to catalog](./acquire.md#from-download-to-catalog).
+
 ### Room on the downloads volume
 
 A local volume has no quota, and the disk is shared with other volumes, so
@@ -582,7 +604,7 @@ still on it.
 
 | Client | Type | Used for |
 |---|---|---|
-| `laedeli-acquire-svc` | confidential (client credentials) | acquire's own calls: the gateway (downloads and client configuration) and ingest |
+| `laedeli-acquire-svc` | confidential (client credentials) | acquire's own calls: the gateway (downloads and client configuration), ingest, and what the library holds (katalog-api's holdings) |
 
 That is the only client acquire has. The console signs in through the portal
 and calls acquire with the token of the portal's user, which acquire takes
@@ -590,6 +612,14 @@ from any client of the realm's issuer and judges by its realm roles:
 `zaentrum-user` may request, `zaentrum-admin` may grab, remove and
 **configure** — every configuration route is admin-only. With the chart, the
 service client's id and the roles are inputs (`oidc.*`).
+
+katalog-api takes the service client's token like any other bearer of the
+realm, when it carries the **audience katalog-api accepts**: give the client
+an audience mapper for the instance's audience if it has none. A token
+without it is refused (`401`), and acquire then keeps what it knew of the
+holdings and says on each title why it could not ask. katalog-api never serves
+holdings to a request capped at an age (`403`); the service client carries no
+cap.
 
 The gateway validates acquire's service token. Set on the gateway:
 
@@ -771,11 +801,25 @@ Right after install the checklist reads *needs setup*. Follow its
 2. **Search sources** — add each newznab or torznab endpoint with its API key
    and categories; acquire reads its caps on save. See
    [Search sources & NZB-first](./indexers-and-nzb.md).
-3. **Search and grab** — which protocol is searched first, the free-space floor
-   and how many downloads may run at once.
+3. **Search and grab** — which protocol is searched first, the free-space floor,
+   how many downloads may run at once, and whether **the backlog sweep** grabs
+   on its own (`search.autoGrab`). It is **off** by default: the sweep then
+   only searches, and missing episodes are grabbed from the missing tab — per
+   row, or for a selection. Turn it on once the missing tab shows what you
+   expect: the sweep then grabs within the floor and the downloads at once, and
+   never a title whose holdings are unknown.
+4. **What the library holds** — the missing tab's header says how many titles'
+   holdings are known. acquire asks the catalog on its own six hours apart, the
+   first time right after its first start, and after an import of titles; **ask
+   the catalog now** asks at once. A title of unknown holdings is missing
+   nothing until then.
 
 A manual search answers within 50 seconds. Whatever sits between the browser
 and acquire must allow at least a minute per request.
+
+acquire's schedules — the sweep, the reconcile — fire through the platform's
+event streaming, as its download events arrive through it: without brokers,
+nothing runs on a schedule, and the reconcile runs only when it is asked for.
 
 ## Verifying
 
@@ -789,6 +833,31 @@ and acquire must allow at least a minute per request.
 - `GET /api/health/system` has no failing `sources` or `clients` check.
 - A request → **find & grab** moves `pending → downloading` with a detail line
   naming the source and the client, then `packaging → fulfilled`, and plays.
+- The missing tab's header reads no titles of unknown holdings
+  (`GET /api/missing` answers `holdings.unknown: 0`), and its rows are
+  episodes the library really lacks. One of them → **grab** moves
+  `queued → grabbed → downloaded → held`, the row leaves the tab, and the
+  episode plays.
+
+## Upgrading to episode grabs
+
+This version adds migration `040` (target grabs, what the library holds, each
+search's outcome), applied on start like every other. Nothing else is asked
+of the deployment, but three things read differently after the upgrade:
+
+- The **missing** tab is empty until acquire has asked the catalog what the
+  library holds — right after the first start, through the
+  `holdings-reconcile` schedule, or on **ask the catalog now**. It used to
+  count every aired episode, those on disk too. Against a catalog without
+  holdings by identity it stays empty, and its header says why.
+- The **sweep** searches only titles whose holdings are known, and every
+  target it searched comes back after its next due time, so it works through
+  the whole backlog. It grabs only once **the backlog sweep** is switched on
+  in settings.
+- The catalog's `catalog.item.discovered` and `catalog.item.removed` events are
+  read in a second consumer group (`…-acquire-catalog`). Until those topics
+  exist on the brokers that group reads nothing; the reconcile's schedule
+  keeps the holdings right in the meantime, six hours apart.
 
 ## Upgrading from an earlier deployment
 

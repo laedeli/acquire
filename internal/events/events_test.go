@@ -8,11 +8,11 @@ import (
 // The catalog's discovered and removed events are read in a group of their
 // own, and an item event carries the identities ADR-0012 adds, optionally.
 func TestCatalogTopicsAndIdentities(t *testing.T) {
-	tp := TopicsFor("zaentrum-beta.")
-	if tp.Discovered != "zaentrum-beta.catalog.item.discovered" || tp.Removed != "zaentrum-beta.catalog.item.removed" {
+	tp := TopicsFor("zaentrum-example.")
+	if tp.Discovered != "zaentrum-example.catalog.item.discovered" || tp.Removed != "zaentrum-example.catalog.item.removed" {
 		t.Errorf("catalog topics: %+v", tp)
 	}
-	if CatalogGroup("zaentrum-beta-acquire") != "zaentrum-beta-acquire-catalog" {
+	if CatalogGroup("zaentrum-example-acquire") != "zaentrum-example-acquire-catalog" {
 		t.Error("catalog group")
 	}
 	var ev ItemEvent
