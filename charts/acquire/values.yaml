@@ -95,6 +95,10 @@ clients:
     # Kept free on the volume: NZBGet pauses below it, and acquire hands no
     # release to a client that would leave less. Empty: a tenth of size.
     reserve: ""
+    # The taints of the volume's node, which the pods working on it tolerate:
+    # acquire and both clients, and no other. A local volume pins them to that
+    # node; list its taints here when it has any (a node kept for GPU work, say).
+    tolerations: []
   qbittorrent:
     enabled: false
     # Through the platform VPN (zaentrum.vpn.proxy): torrents, peers, trackers

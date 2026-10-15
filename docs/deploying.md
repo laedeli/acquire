@@ -361,6 +361,7 @@ clients:
 | `clients.<client>.config.size`, `.storageClassName` | `1Gi`, the cluster default | the client's configuration claim |
 | `clients.downloads.size` | `300Gi` | the downloads claim both clients work on ([below](#the-downloads-volume)) |
 | `clients.downloads.storageClassName` | the cluster default | its storage class (a class for local volumes suits the clients best) |
+| `clients.downloads.tolerations` | none | the taints of the volume's node, which acquire and both clients tolerate (a node kept for GPU work, say) |
 | `clients.downloads.volumeName` | empty | a PV to bind by name; leave it empty under the operator, which refuses it |
 | `clients.downloads.reserve` | a tenth of the size | kept free on the volume ([room on it](#room-on-the-downloads-volume)) |
 
@@ -430,7 +431,8 @@ volume. acquire mounts the claim too, read-only, at
 **the two clients and acquire all run on that node**: if it is down, so is
 acquire. Pods on the volume set `fsGroupChangePolicy: OnRootMismatch`, so a
 platform that gives pods a group for their volumes does not re-own every file
-on each start.
+on each start. If that node is tainted, list its taints in `clients.downloads.tolerations`:
+those three pods tolerate them, and no other pod of the chart does.
 
 ### From download to library
 

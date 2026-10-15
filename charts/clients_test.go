@@ -716,3 +716,40 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// The pods that work on the downloads volume tolerate its node's taints, and
+// only they: a local volume pins acquire and both clients to that node, which
+// may be kept for other work (a GPU's, say). The operator accepts such a
+// toleration; without the value no pod of the chart has one.
+func TestChartDownloadsTolerations(t *testing.T) {
+	type tolerations struct {
+		Template struct {
+			Spec struct {
+				Tolerations []map[string]any `json:"tolerations"`
+			} `json:"spec"`
+		} `json:"template"`
+	}
+	objs := mustRender(t, "--set-json", `clients.downloads.tolerations=[{"key":"dedicated","operator":"Exists","effect":"NoSchedule"}]`)
+	for _, name := range []string{"acquire", "qbittorrent", "nzbget"} {
+		var d tolerations
+		decodeSpec(t, mustFind(t, objs, "Deployment", name), &d)
+		if got := d.Template.Spec.Tolerations; len(got) != 1 || got[0]["key"] != "dedicated" || got[0]["effect"] != "NoSchedule" {
+			t.Errorf("%s tolerates %v, want the downloads node's taint", name, got)
+		}
+	}
+	var gw tolerations
+	decodeSpec(t, mustFind(t, objs, "Deployment", "download-gateway"), &gw)
+	if len(gw.Template.Spec.Tolerations) != 0 {
+		t.Errorf("the download-gateway, which works on no volume, tolerates %v", gw.Template.Spec.Tolerations)
+	}
+	if got := violations(objs, platformGuard(t, values(t), chartMeta(t))); len(got) != 0 {
+		t.Errorf("the operator refuses: %v", got)
+	}
+	for _, name := range []string{"acquire", "qbittorrent", "nzbget", "download-gateway"} {
+		var d tolerations
+		decodeSpec(t, mustFind(t, mustRender(t), "Deployment", name), &d)
+		if len(d.Template.Spec.Tolerations) != 0 {
+			t.Errorf("%s tolerates %v without the value", name, d.Template.Spec.Tolerations)
+		}
+	}
+}

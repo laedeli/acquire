@@ -32,6 +32,12 @@ spec:
       {{- . | nindent 6 }}
       {{- end }}
       automountServiceAccountToken: false
+      {{- if $clients }}
+      {{- with .Values.clients.downloads.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
       securityContext:
         {{- if $clients }}
         {{- include "acquire.downloadsPodSecurityContext" . | nindent 8 }}

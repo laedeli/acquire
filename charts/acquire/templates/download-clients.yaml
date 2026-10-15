@@ -120,6 +120,10 @@ spec:
       {{- . | nindent 6 }}
       {{- end }}
       automountServiceAccountToken: false
+      {{- with $.Values.clients.downloads.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- include "acquire.downloadsPodSecurityContext" $ | nindent 8 }}
       initContainers:

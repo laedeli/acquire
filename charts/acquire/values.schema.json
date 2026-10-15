@@ -149,6 +149,13 @@
               "title": "Reserve",
               "description": "Kept free on the volume: NZBGet pauses below it, and acquire hands no release to a client that would leave less. Empty: a tenth of the size.",
               "pattern": "^$|^[0-9]+(Ki|Mi|Gi|Ti|k|M|G|T)?$"
+            },
+            "tolerations": {
+              "type": "array",
+              "title": "Tolerations",
+              "description": "The taints of the volume's node, which acquire and both clients tolerate (and no other pod of the chart): a local volume pins them to that node.",
+              "default": [],
+              "items": { "type": "object" }
             }
           }
         },
