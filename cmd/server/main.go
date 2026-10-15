@@ -129,7 +129,8 @@ func main() {
 	// row, so an operator's disable or interval survives a redeploy. The
 	// consumer acts on schedule.due (OnScheduleDue): the sweep searches the
 	// backlog (and grabs with search.autoGrab), the reconcile learns what the
-	// library holds.
+	// library holds, the grab recovery wants failed targets again after their
+	// wait and gives up grabs stuck in flight.
 	for _, sc := range []struct {
 		name  string
 		every time.Duration
@@ -137,6 +138,7 @@ func main() {
 		{"backlog-sweep", 30 * time.Minute},
 		{"retry-failed", 15 * time.Minute},
 		{"holdings-reconcile", 6 * time.Hour},
+		{"grab-recovery", time.Hour},
 		{"outbox-audit", 6 * time.Hour},
 	} {
 		if err := st.EnsureSchedule(ctx, sc.name, sc.every); err != nil {

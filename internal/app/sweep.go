@@ -38,6 +38,8 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 		return s.SweepBacklog(ctx, sweepBatch)
 	case "retry-failed":
 		return s.SweepRetries(ctx, retryBatch)
+	case "grab-recovery":
+		return s.RecoverGrabs(ctx)
 	case "holdings-reconcile":
 		// The reconcile asks the catalog about every tracked title; its worker
 		// does that, so the download events behind this one wait for nothing.

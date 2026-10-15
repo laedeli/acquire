@@ -29,9 +29,15 @@ import (
 //	wanted → grabbed → downloaded → held
 //
 // or ends failed, with the reason in its detail; waiting is a downloaded
-// target the catalog does not take yet (it has no ingest by identity). The
-// download's files go into the catalog by identity (targetimport.go); the
-// library's own word on what it holds comes from holdings.go.
+// target the catalog does not take yet (it has no ingest by identity). Only
+// its release fails a target — its download failed, the download held no
+// file for it, the catalog refused the file — and such a target is wanted
+// again after a wait, six hours doubling to two days, the releases that
+// failed it blocked, until it failed five times (grab-recovery). A grab that
+// cannot happen, a cancelled download and a grab nothing is heard of give the
+// targets back as wanted. The download's files go into the catalog by
+// identity (targetimport.go); the library's own word on what it holds comes
+// from holdings.go.
 
 const (
 	// targetGrabTick is how often the grab worker looks for queued grabs when
@@ -498,32 +504,42 @@ func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (st
 	return store.TargetGrab{}, false
 }
 
-// onTargetCompleted: the download of a target grab finished. Its targets move
-// to downloaded and the download is queued for the import worker, which
-// copies its files into the arrivals when they lie outside them and hands
-// each over by identity (targetimport.go). A repeat of the event queues
-// nothing twice.
-func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) error {
-	if g.State == store.GrabPending || g.ClientJobID == "" {
-		// Handed over, but the binding never landed: bind it now.
+// inFlightGrab binds a grab an event names whose bind never landed — the
+// add's answer was lost — to the event's job, and reports whether the event
+// moves anything: a grab with a client (bound now, or before) that is not done
+// (imported) nor given up (failed). A repeated or late event for a grab that
+// is done or given up moves nothing.
+func (s *Service) inFlightGrab(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) (store.TargetGrab, bool, error) {
+	if g.State == store.GrabPending {
 		g.Adapter, g.ClientJobID = ev.Adapter, ev.ClientID
 		bound, err := s.st.BindTargetGrab(ctx, g, "grabbed")
 		if err != nil {
-			return err
+			return g, false, err
 		}
 		g = bound
 	}
-	if g.State == store.GrabImported {
-		return nil
+	return g, g.State == store.GrabGrabbed || g.State == store.GrabDownloaded, nil
+}
+
+// onTargetCompleted: the download of a target grab finished. Its targets move
+// from grabbed to downloaded and the download is queued for the import worker,
+// which copies its files into the arrivals when they lie outside them and hands
+// each over by identity (targetimport.go). A repeat of the event queues
+// nothing twice, and a target that failed meanwhile stays failed, for its
+// recovery.
+func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) error {
+	g, moves, err := s.inFlightGrab(ctx, g, ev)
+	if err != nil || !moves {
+		return err
 	}
 	created, err := s.st.EnqueueImport(ctx, store.Import{
 		Adapter: ev.Adapter, ClientJobID: ev.ClientID, WantedID: g.ID, Files: ev.Files,
 	})
 	if err != nil {
+		// The store failing says nothing of the targets: they stay grabbed,
+		// for the event's repeat or the stale-grab sweep.
 		log.Printf("acquire: queue the import of %s: %v", g.ID, err)
-		_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed}, store.TargetFailed,
-			clip("the finished download could not be queued for import: "+err.Error(), 300))
-		return nil
+		return err
 	}
 	if !created && g.State == store.GrabDownloaded {
 		return nil
@@ -533,28 +549,118 @@ func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev 
 	if files := s.mapEventFiles(ctx, ev); len(files) > 0 && s.copiesIntoArrivals(files[0]) {
 		detail = "downloaded; copying into the library"
 	}
-	_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed, store.TargetFailed}, store.TargetDownloaded, detail)
+	_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed}, store.TargetDownloaded, detail)
 	s.wakeImports()
 	s.notify()
 	return nil
 }
 
-// onTargetFailed: the download of a target grab failed. Its targets fail with
-// the client's reason, and the release is blocked for each of them so that
-// the next grab picks another.
+// onTargetFailed: the download of a target grab failed. Its targets that are
+// still its own and grabbed fail by their release, with the client's reason:
+// the release is blocked for each of them so that the next grab picks
+// another, and they are wanted again after a wait (failure recovery). A grab
+// whose download finished already, or that was given up, moves nothing.
 func (s *Service) onTargetFailed(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) error {
+	g, moves, err := s.inFlightGrab(ctx, g, ev)
+	if err != nil || !moves || g.State != store.GrabGrabbed {
+		return err
+	}
 	detail := ev.Error
 	if detail == "" {
 		detail = "download failed"
 	}
 	_ = s.st.SetTargetGrabState(ctx, g.ID, store.GrabFailed, clip(detail, 300))
-	_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed, store.TargetWanted}, store.TargetFailed,
-		clip("download failed: "+detail, 300))
+	_, _ = s.st.FailGrabTargets(ctx, g.ID, g.TargetIDs, []string{store.TargetGrabbed}, clip("download failed: "+detail, 300), true)
 	for _, id := range g.TargetIDs {
 		_ = s.BlockFailedRelease(ctx, id, g.ReleaseTitle, g.Indexer, clip(detail, 200))
 	}
 	s.notify()
 	return nil
+}
+
+// cancelTargetGrab gives up the target grab of a download someone cancelled
+// at once, instead of on a gateway event that may never come: the grab fails
+// (cancelled), its targets are wanted again with the release blocked for them
+// — whoever cancelled the download did not want it — and a hand-over still
+// waiting for the catalog stops, its copies deleted.
+func (s *Service) cancelTargetGrab(ctx context.Context, adapter, jobID string) {
+	g, err := s.st.FindTargetGrabByJob(ctx, adapter, jobID)
+	if err != nil || (g.State != store.GrabPending && g.State != store.GrabGrabbed && g.State != store.GrabDownloaded) {
+		return
+	}
+	const why = "cancelled: its download was removed from the client; wanted again, that release blocked for it"
+	if _, err := s.st.FreeTargetGrab(ctx, g.ID, why); err != nil {
+		log.Printf("acquire: give up the cancelled grab %s: %v", g.ID, err)
+		return
+	}
+	for _, id := range g.TargetIDs {
+		_ = s.BlockFailedRelease(ctx, id, g.ReleaseTitle, g.Indexer, "its download was cancelled")
+	}
+	if im, err := s.st.GetImport(ctx, adapter, jobID); err == nil && im.State == store.ImportPending {
+		im.State, im.Detail, im.NextAt = store.ImportDone, "the grab was cancelled; nothing more handed over", time.Now()
+		_ = s.st.SaveImport(ctx, im)
+	}
+	s.dropCopies(g.ID, s.untakenCopies(ctx, g.ID))
+}
+
+// staleGrabAge is how long a grab in flight may go without a word of it — no
+// event of its download, nothing done with it — before the stale-grab sweep
+// asks the gateway whether it still knows it.
+const staleGrabAge = 48 * time.Hour
+
+// SweepStaleGrabs gives up the grabs in flight that nothing was heard of for
+// two days and the gateway does not know, by the grab's id or by its client
+// job: a hand-over that died before its job was bound, a job its client lost,
+// events that never came. Their targets are wanted again. A gateway that
+// cannot be asked gives nothing up: no grab is given up on a guess.
+func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
+	stale, err := s.st.StaleTargetGrabs(ctx, staleGrabAge)
+	if err != nil || len(stale) == 0 || !s.gw.Enabled() {
+		return 0, err
+	}
+	jobs, err := s.gw.List(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("stale grabs: the gateway cannot be asked which downloads it has: %w", err)
+	}
+	known := map[string]bool{}
+	for _, j := range jobs {
+		if j.WantedItemID != "" {
+			known[j.WantedItemID] = true
+		}
+		known[j.Adapter+"/"+j.ClientJobID] = true
+	}
+	freed := 0
+	for _, g := range stale {
+		if known[g.ID] || (g.ClientJobID != "" && known[g.Adapter+"/"+g.ClientJobID]) {
+			continue
+		}
+		const why = "nothing was heard of its download for two days and the gateway does not know it: given up, wanted again"
+		if _, err := s.st.FreeTargetGrab(ctx, g.ID, why); err != nil {
+			return freed, err
+		}
+		log.Printf("acquire: grab %s given up: %s", g, why)
+		freed++
+	}
+	if freed > 0 {
+		s.notify()
+	}
+	return freed, nil
+}
+
+// RecoverGrabs is the grab-recovery schedule: targets their release failed
+// are wanted again once their wait ran out (store.RecoverFailedTargets), and
+// grabs stuck in flight are given up (SweepStaleGrabs).
+func (s *Service) RecoverGrabs(ctx context.Context) error {
+	n, err := s.st.RecoverFailedTargets(ctx)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		log.Printf("acquire grab-recovery: %d failed target(s) wanted again, their failed releases blocked", n)
+		s.notify()
+	}
+	_, err = s.SweepStaleGrabs(ctx)
+	return err
 }
 
 // mapEventFiles is the event's files as acquire sees them.

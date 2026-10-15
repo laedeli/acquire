@@ -507,6 +507,7 @@ func (s *Service) ControlDownload(ctx context.Context, adapter, jobID, action st
 		if err := s.st.DeleteDownload(ctx, adapter, jobID); err != nil {
 			return err
 		}
+		s.cancelTargetGrab(ctx, adapter, jobID)
 		s.notify()
 		return nil
 	}
