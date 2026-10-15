@@ -151,7 +151,6 @@ func TestChartInputs(t *testing.T) {
 		}
 	}
 	wantEnv(t, "acquire", acquire, map[string]string{
-		"ACQUIRE_OIDC_CLIENT_ID":          "laedeli-acquire",
 		"ACQUIRE_SVC_CLIENT_ID":           "laedeli-acquire-svc",
 		"ACQUIRE_ADMIN_ROLE":              "zaentrum-admin",
 		"ACQUIRE_USER_ROLE":               "zaentrum-user",
@@ -164,6 +163,10 @@ func TestChartInputs(t *testing.T) {
 	})
 	// The gateway accepts acquire's service client, and only it.
 	wantEnv(t, "download-gateway", gateway, map[string]string{"ALLOWED_CLIENTS": "laedeli-acquire-svc"})
+	// The console signs in through the portal: acquire has no client of its own.
+	if envOf(acquire, "ACQUIRE_OIDC_CLIENT_ID") != nil {
+		t.Error("acquire: ACQUIRE_OIDC_CLIENT_ID is set; the console has no client of its own")
+	}
 
 	if want := "ghcr.io/laedeli/acquire:" + chartMeta(t).AppVersion; acquire.Image != want {
 		t.Errorf("acquire: image %s, want %s (the tag defaults to the chart's appVersion)", acquire.Image, want)
@@ -172,7 +175,8 @@ func TestChartInputs(t *testing.T) {
 
 // TestChartPlatformFacts: everything platform-specific comes from the zaentrum
 // block: issuer, split-horizon alias, brokers and their client certificate,
-// consumer group, media claim, pull secrets and the part-of label.
+// consumer group, media claim, pull secrets, the part-of label and the
+// platform's address, where the portal hosts the console.
 func TestChartPlatformFacts(t *testing.T) {
 	objs := mustRender(t)
 	vals := values(t)
@@ -185,12 +189,13 @@ func TestChartPlatformFacts(t *testing.T) {
 	gatewayDep := mustFind(t, objs, "Deployment", "download-gateway")
 
 	wantEnv(t, "acquire", containerOf(t, acquireDep), map[string]string{
-		"OIDC_ISSUER":        issuer,
-		"OIDC_TOKEN_URL":     issuer + "/protocol/openid-connect/token",
-		"KAFKA_BROKERS":      brokers,
-		"KAFKA_TOPIC_PREFIX": prefix,
-		"KAFKA_GROUP_ID":     "zaentrum-example-acquire",
-		"KAFKA_CERT_DIR":     "/etc/kafka-cert",
+		"OIDC_ISSUER":          issuer,
+		"OIDC_TOKEN_URL":       issuer + "/protocol/openid-connect/token",
+		"KAFKA_BROKERS":        brokers,
+		"KAFKA_TOPIC_PREFIX":   prefix,
+		"KAFKA_GROUP_ID":       "zaentrum-example-acquire",
+		"KAFKA_CERT_DIR":       "/etc/kafka-cert",
+		"ACQUIRE_PLATFORM_URL": "https://" + str(t, vals, "zaentrum.hostname"),
 	})
 	wantMount(t, acquireDep, "/etc/kafka-cert", "secret", tlsSecret)
 	wantMount(t, acquireDep, "/var/lib/katalog", "persistentVolumeClaim", str(t, vals, "zaentrum.media.claimName"))
@@ -230,6 +235,32 @@ func TestChartPlatformFacts(t *testing.T) {
 		if got := o.Metadata.Labels["app.kubernetes.io/part-of"]; got != partOf {
 			t.Errorf("%s: part-of label %q, want %q", o.ref(), got, partOf)
 		}
+	}
+}
+
+// TestChartPlatformURL: acquire sends a browser that asks it for a page to the
+// portal on the platform's host (zaentrum.hostname): over https, unless the
+// issuer is plain http on that very host, and to the portal's root on the host
+// it asked when the platform names no host.
+func TestChartPlatformURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  []string
+		want string
+	}{
+		{"an issuer on another host", nil, "https://zaentrum.example.org"},
+		{"an https issuer on the platform's host",
+			[]string{"--set", "zaentrum.issuer=https://zaentrum.example.org/auth/realms/zaentrum"}, "https://zaentrum.example.org"},
+		{"a plain http platform",
+			[]string{"--set", "zaentrum.issuer=http://zaentrum.example.org/auth/realms/zaentrum"}, "http://zaentrum.example.org"},
+		{"an http issuer elsewhere",
+			[]string{"--set", "zaentrum.issuer=http://sso.example.org/realms/example"}, "https://zaentrum.example.org"},
+		{"no hostname", []string{"--set", "zaentrum.hostname="}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			acquire := containerOf(t, mustFind(t, mustRender(t, tc.set...), "Deployment", "acquire"))
+			wantEnv(t, "acquire", acquire, map[string]string{"ACQUIRE_PLATFORM_URL": tc.want})
+		})
 	}
 }
 

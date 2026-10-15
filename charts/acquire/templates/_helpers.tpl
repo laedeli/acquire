@@ -136,6 +136,17 @@ app.kubernetes.io/part-of: {{ . | quote }}
 {{- required "zaentrum.issuer is required: the platform operator sets it" .Values.zaentrum.issuer -}}
 {{- end -}}
 
+{{/* acquire.platformURL — ACQUIRE_PLATFORM_URL: the platform's address, scheme
+     and host, from zaentrum.hostname. Its portal hosts the console, at
+     /portal/app/acquire. https, unless the issuer is plain http on that same
+     host (a platform without TLS); "" without a hostname. */}}
+{{- define "acquire.platformURL" -}}
+{{- with .Values.zaentrum.hostname -}}
+{{- $issuer := urlParse (include "acquire.issuer" $) -}}
+{{- if and (eq $issuer.scheme "http") (eq $issuer.host .) -}}http{{- else -}}https{{- end -}}://{{ . }}
+{{- end -}}
+{{- end -}}
+
 {{/* acquire.tokenURL — the service account's token endpoint, derived from the
      issuer the way the platform derives its own workers' one. */}}
 {{- define "acquire.tokenURL" -}}

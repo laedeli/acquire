@@ -8,7 +8,8 @@
 # portal registers the addon from. It consumes download.client.* and
 # catalog.item.packaged, and ingests finished downloads through katalog-manager.
 # Search sources and download clients are configuration it stores itself.
-# No Route or Ingress: the portal proxies the console and the API.
+# No Route or Ingress: the portal hosts the console in place and proxies its
+# bundle and the API. acquire has no page of its own.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -66,12 +67,14 @@ spec:
             # Auth: the platform realm.
             - name: OIDC_ISSUER
               value: {{ include "acquire.issuer" . | quote }}
-            - name: ACQUIRE_OIDC_CLIENT_ID
-              value: {{ .Values.oidc.clientId | quote }}
             - name: ACQUIRE_ADMIN_ROLE
               value: {{ .Values.oidc.adminRole | quote }}
             - name: ACQUIRE_USER_ROLE
               value: {{ .Values.oidc.userRole | quote }}
+            # The console is the portal's to show: a browser that asks acquire
+            # for a page is sent to acquire's app in the portal on this address.
+            - name: ACQUIRE_PLATFORM_URL
+              value: {{ include "acquire.platformURL" . | quote }}
             # acquire's own database.
             - name: PG_URL
               valueFrom:

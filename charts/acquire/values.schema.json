@@ -38,13 +38,6 @@
           "writeOnly": true,
           "minLength": 1
         },
-        "clientId": {
-          "type": "string",
-          "title": "Console client id",
-          "description": "Public (PKCE) client of the standalone console login.",
-          "default": "laedeli-acquire",
-          "minLength": 1
-        },
         "adminRole": {
           "type": "string",
           "title": "Admin role",

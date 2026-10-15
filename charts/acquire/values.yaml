@@ -17,6 +17,10 @@
 # ── platform facts (set by the operator) ────────────────────────────────────
 zaentrum:
   namespace: ""
+  # The platform's host. Its portal (/portal/) hosts acquire's console, and
+  # acquire sends a browser that asks it for a page to its app there
+  # (/portal/app/acquire on this host); "" sends it to /portal/ on the host it
+  # asked.
   hostname: ""
   # The OIDC issuer the platform services use. Required.
   issuer: ""
@@ -51,8 +55,8 @@ oidc:
   # accepts tokens from this client only.
   serviceClientId: laedeli-acquire-svc
   # serviceClientSecret: secret, required.
-  # Public (PKCE) client of the standalone console login.
-  clientId: laedeli-acquire
+  # The console has no client of its own: it opens in the portal, on the
+  # portal's sign-in, and calls acquire with the portal user's token.
   adminRole: zaentrum-admin
   userRole: zaentrum-user
 
