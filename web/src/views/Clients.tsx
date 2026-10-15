@@ -1,8 +1,11 @@
 // Clients: the download programs acquire hands releases to.
 //
-// They run outside the addon; acquire only stores where they are and how to
-// reach them, and pushes that to the gateway on every change. Credentials are
-// write-only here: the screen can say a secret is stored, never show it.
+// Most run outside the addon; acquire only stores where they are and how to
+// reach them, and pushes that to the gateway on every change. The ones the
+// addon runs itself are managed: its deployment configures them, so this
+// screen shows them and can test them, but does not edit or remove them.
+// Credentials are write-only here: the screen can say a secret is stored,
+// never show it.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Badge,
@@ -147,6 +150,12 @@ export function Clients({ api, admin }: { api: Api; admin: boolean }) {
           <Text variant="muted" as="span">
             {c.type}
           </Text>
+          {c.managed && (
+            <>
+              {' '}
+              <Badge tone="blue">managed</Badge>
+            </>
+          )}
           <div className="acq__sub">{c.baseUrl}</div>
         </div>
       ),
@@ -204,32 +213,44 @@ export function Clients({ api, admin }: { api: Api; admin: boolean }) {
       key: 'updatedAt',
       header: '',
       align: 'right',
-      render: (c) => (
-        <div className="acq__actions">
-          <Switch
-            size="sm"
-            checked={c.enabled}
-            disabled={busy === c.id}
-            onChange={() => void toggle(c)}
-            aria-label={c.enabled ? `disable ${c.id}` : `enable ${c.id}`}
-          />
-          <Button size="sm" variant="ghost" leading={<Plug size={14} />} onClick={() => void test(c)}>
-            test
-          </Button>
-          <Button size="sm" variant="ghost" leading={<Pencil size={14} />} onClick={() => setEditing(c)}>
-            edit
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            loading={busy === c.id}
-            leading={<Trash2 size={14} />}
-            onClick={() => void remove(c)}
-          >
-            remove
-          </Button>
-        </div>
-      ),
+      render: (c) =>
+        c.managed ? (
+          // Configured by the addon's deployment (its clients values): nothing
+          // to change here.
+          <div className="acq__actions">
+            <Text variant="muted" as="span">
+              set by the addon
+            </Text>
+            <Button size="sm" variant="ghost" leading={<Plug size={14} />} onClick={() => void test(c)}>
+              test
+            </Button>
+          </div>
+        ) : (
+          <div className="acq__actions">
+            <Switch
+              size="sm"
+              checked={c.enabled}
+              disabled={busy === c.id}
+              onChange={() => void toggle(c)}
+              aria-label={c.enabled ? `disable ${c.id}` : `enable ${c.id}`}
+            />
+            <Button size="sm" variant="ghost" leading={<Plug size={14} />} onClick={() => void test(c)}>
+              test
+            </Button>
+            <Button size="sm" variant="ghost" leading={<Pencil size={14} />} onClick={() => setEditing(c)}>
+              edit
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={busy === c.id}
+              leading={<Trash2 size={14} />}
+              onClick={() => void remove(c)}
+            >
+              remove
+            </Button>
+          </div>
+        ),
     },
   ]
 
@@ -250,7 +271,8 @@ export function Clients({ api, admin }: { api: Api; admin: boolean }) {
       </div>
       <Text variant="muted" as="p">
         a grab goes to the enabled client that handles its protocol, lowest priority first. the
-        clients themselves run outside acquire.
+        clients themselves run outside acquire, except the managed ones the addon runs: those are
+        set in its values.
       </Text>
       {error && <Text variant="muted">{error}</Text>}
       {note && <Text variant="muted">{note}</Text>}

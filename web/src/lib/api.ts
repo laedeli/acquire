@@ -134,6 +134,8 @@ export interface DownloadClient {
   localPath: string
   priority: number
   enabled: boolean
+  /** Run by the addon itself and configured by its deployment: read-only here. */
+  managed: boolean
   revision: number
   createdAt: string
   updatedAt: string
