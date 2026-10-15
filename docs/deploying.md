@@ -503,11 +503,15 @@ land in `.work/incoming/acquire/<grab>/<client>-<job>/`, each file is handed
 over by identity for the episodes its name holds (the series' ids, the season,
 the episode, `episodeEnd` for a file of several), and files that hold none of
 the grab's episodes are left out, with a note on the grab. A download that
-lies in the arrivals already is handed over in place.
-Against a catalog that does not take ingest by identity yet, the episodes
-wait: the copy stays, the download is not released in its client, and the
-hand-over is tried again half an hour after the first refusal and up to six
-hours apart — so mind the downloads volume while it waits. See
+lies in the arrivals already is handed over in place, and its client keeps it:
+its files are the library's. A copy the catalog did not take is deleted. The
+download is released in its client only when the library has all the grab
+holds; a refused file, or an episode the download holds no file for, keeps it
+in the client for you to look at, and the grab's detail says why — so mind the
+downloads volume. Against a catalog that does not take ingest by identity yet,
+the episodes wait: the copy stays, the download is not released in its client,
+and the hand-over is tried again half an hour after the first refusal and up to
+six hours apart. See
 [from download to catalog](./acquire.md#from-download-to-catalog).
 
 ### Room on the downloads volume
@@ -823,9 +827,10 @@ Right after install the checklist reads *needs setup*. Follow its
 A manual search answers within 50 seconds. Whatever sits between the browser
 and acquire must allow at least a minute per request.
 
-acquire's schedules — the sweep, the reconcile — fire through the platform's
-event streaming, as its download events arrive through it: without brokers,
-nothing runs on a schedule, and the reconcile runs only when it is asked for.
+acquire's schedules — the sweep, the reconcile, the grab recovery — fire
+through the platform's event streaming, as its download events arrive through
+it: without brokers, nothing runs on a schedule, the reconcile runs only when it
+is asked for, and a failed episode waits for a grab from the missing tab.
 
 ## Verifying
 
@@ -847,13 +852,15 @@ nothing runs on a schedule, and the reconcile runs only when it is asked for.
 
 ## Upgrading to episode grabs
 
-This version (chart 0.4.0) adds migration `040` (target grabs, what the
-library holds, each search's outcome), applied on start like every other. It
-asks two things of the platform: the catalog's ingest and holdings by identity
-(zaentrum's ADR-0012; without them episodes wait and holdings stay unknown,
-see [What the library holds](./acquire.md#what-the-library-holds)), and a
-service token with the audience katalog-api accepts (see
-[Identity](#identity)). Three things read differently after the upgrade:
+This version (chart 0.4.0) adds migrations `040` (target grabs, what the
+library holds, each search's outcome) and `041` (grab reservations, hand-overs
+the reconcile respects, failure recovery), applied on start like every other,
+and a schedule, `grab-recovery` (hourly), registered on start like the others.
+It asks two things of the platform: the catalog's ingest and holdings by
+identity (zaentrum's ADR-0012; without them episodes wait and holdings stay
+unknown, see [What the library holds](./acquire.md#what-the-library-holds)),
+and a service token with the audience katalog-api accepts (see
+[Identity](#identity)). These things read differently after the upgrade:
 
 - The **missing** tab is empty until acquire has asked the catalog what the
   library holds — right after the first start, through the
@@ -863,7 +870,18 @@ service token with the audience katalog-api accepts (see
 - The **sweep** searches only titles whose holdings are known, and every
   target it searched comes back after its next due time, so it works through
   the whole backlog. It grabs only once **the backlog sweep** is switched on
-  in settings.
+  in settings, and then — like **grab** in the missing tab — only a release of
+  the episode alone or of one run of at most ten missing episodes in a row; a
+  longer range or a season pack is grabbed when someone picks it.
+- A **failed** episode is tried again on its own: only its release fails it
+  (its download failed, the download had no file for it, the catalog refused
+  it), and it is wanted again after six hours, doubling to two days, up to five
+  times, the releases that failed it blocked; then it waits for someone to
+  grab it from the missing tab. A grab that could not happen — the gateway or a
+  source unavailable — fails nothing.
+- A **managed client's download** is released only when the library has all
+  of it. One the library did not get all of stays in its client; its grab
+  says why.
 - The catalog's `catalog.item.discovered` and `catalog.item.removed` events are
   read in a second consumer group, `<KAFKA_GROUP_ID>-catalog`. A broker with
   ACLs must let that group read; until those topics exist on the brokers that

@@ -65,16 +65,36 @@ library's own word on what it holds comes from the catalog
 
 A **target grab** is one release handed to a download client for every
 target it covers. What it covers is read from the release's name: one episode
-(`S04E07`, `4x07`), a file of several in a row (`S04E07E08`, `S04E07-E08`,
-`S04E07-08`), or whole seasons, a **season pack** (`S01`, `S01-S03`,
-`Season 2`) — of a pack, the aired episodes of its seasons. Of what it covers,
-the grab takes the targets that are wanted or failed; held ones, and ones
-another grab is under way for, are left to that. It is reserved first, so no
-second grab takes the same targets meanwhile, then handed over through the same
+(`S04E07`, `S04.E07`, `S04-E07`, `S04 EP07`, `4x07`, `Season 4 Episode 7`),
+episodes of one season (`S04E07E08`, `S04E07-E08`, `S04E07-08`, `4x07x08` —
+a run; `S01E01E03` holds episodes 1 and 3 only, which is no run), or whole
+seasons, a **season pack** (`S01`, `S01-S03`, `S01.S02.S03`, `Season 2`) — of
+a pack, the aired episodes of its seasons. A name of a daily show (a date) says
+nothing. Of what it covers, the grab takes the targets that are wanted or
+failed; held ones, and ones another grab is under way for, are left to that.
+
+It is **reserved** first — one conditional update per target, so of two grabs
+racing for a target exactly one takes it — then handed over through the same
 hand-over a request's grab uses (the release file fetched by acquire, the
-grab's id `tg_…` given to the gateway as the wanted item id), then bound to
-the client's job. A hand-over that does not happen gives the targets back as
-they were.
+grab's id `tg_…` given to the gateway as the wanted item id), then bound to the
+client's job. Once the add is sent, it and what records it run to their end
+even if whoever asked goes away. A hand-over that does not happen fails no
+target:
+
+- **the source or the gateway cannot be had for now** — out of reach, failing
+  (5xx), busy (429), timing out, refusing the key, an error page where the
+  release file should be: the reservation goes, the targets stay wanted and
+  are due again on a later sweep (half an hour), and a sweep stops its run
+  when it is the gateway;
+- **the release cannot be had** — its file gone from the source (404, 410),
+  larger than acquire fetches, a link the endpoint policy refuses, or the
+  client rejecting it: it is blocked for the targets, and the next release is
+  taken;
+- **the add's answer was lost** — sent, but the connection dropped or the
+  answer could not be read, so the gateway may have it: nothing is undone. The
+  reservation stays, saying so, the sweep leaves the targets alone, and the
+  download's first event binds the grab — or, when none comes, the stale-grab
+  sweep gives it up ([when a grab fails](#when-a-grab-fails)).
 
 Grabs come from four places:
 
@@ -90,11 +110,18 @@ Grabs come from four places:
   it holds; the one picked is grabbed for every wanted target it covers;
 - the **search** tab: a release whose name holds episodes of a tracked series
   is grabbed for that series' targets. One of a series acquire does not track,
-  or of several, is refused rather than filed as a movie request.
+  or of several, is refused rather than filed as a movie request — and so is
+  one that names a tracked series (and its year, when it names one) but no
+  episode.
 
-An automatic grab — the sweep's, and the missing tab's **grab** — never takes
-a season pack for one episode: a pack spends a season's disk and bandwidth on
-what may be one missing episode. It is grabbed when someone picks it.
+An automatic grab — the sweep's, and the missing tab's **grab** — takes a
+release only when it holds the episode alone, or one run of at most ten
+episodes in a row, every one of them missing: tracked, aired, monitored,
+wanted or failed, not reserved by another grab, not left for someone to look
+at. Anything more — a longer range (`S01E01-E12`), episodes that are not one
+run, a season pack, several seasons — spends disk and bandwidth on what may
+not be missing, or cannot go over as one file. It is grabbed when someone picks
+it.
 
 ### A target's states
 
@@ -102,13 +129,16 @@ what may be one missing episode. It is grabbed when someone picks it.
 stateDiagram-v2
     [*] --> wanted
     wanted --> grabbed: grab handed to a client
-    failed --> grabbed: grabbed again
+    failed --> grabbed: grabbed again from the missing tab
+    failed --> wanted: its wait ran out (grab-recovery), up to five times
     grabbed --> downloaded: download completed
     grabbed --> failed: download failed
+    grabbed --> wanted: download cancelled, or nothing heard of it for two days
     downloaded --> held: handed over (or the library holds it already)
     downloaded --> waiting: the catalog does not take it by identity yet
     waiting --> held: handed over on a later try
     downloaded --> failed: no file for it, or the catalog refused it
+    downloaded --> wanted: a season pack without its file, or a file the catalog held already
     held --> wanted: the library lost it
     wanted --> held: the library holds it (reconcile, events)
 ```
@@ -123,11 +153,41 @@ stateDiagram-v2
   stays, the client keeps the download, and the hand-over is tried again.
 - **held** — the library holds it: the item, the item whose file it is held
   through when another episode's file covers it, and whether it plays.
-- **failed** — the release could not be fetched or handed to a client, the
-  download failed (the release is then blocked for the target, so the next
-  grab picks another), the download holds no file for it, or the catalog
-  refused the file. The detail line says which. A failed target is still
-  missing and can be grabbed again from the missing tab; the sweep leaves it.
+- **failed** — its release failed it: the download failed, the download holds
+  no file for it, or the catalog refused the file. The detail line says which.
+  The release is blocked for it, so the next grab picks another, and it is
+  wanted again after a wait ([when a grab fails](#when-a-grab-fails)). A
+  failed target is still missing and can be grabbed again from the missing
+  tab at any time; the sweep leaves it until its wait ran out.
+
+### When a grab fails
+
+Only its release fails a target. Such a target is **wanted again** after six
+hours, twelve after a second failure, then a day and two days, the releases
+that failed it blocked for it (for two weeks): the next grab takes another.
+After the fifth failure in a row it stays failed, and its detail says so
+(`failed 5 times, not tried again on its own: …`), for someone to look at; a
+grab from the missing tab still takes it, and holding it ends the count.
+
+Nothing else fails a target. A grab that cannot happen leaves it wanted
+([a grab bound to targets](#a-grab-bound-to-targets)). **Cancelling** a target
+grab's download in the downloads tab gives the grab up at once: its targets
+are wanted again with the release blocked for them, and a hand-over still
+waiting for the catalog stops, its copy deleted. A grab in flight that
+**nothing is heard of for two days** — no event of its download, no import
+working on it — and that the gateway does not know, by the grab's id or by its
+client job, is given up and its targets are wanted again: a hand-over that died
+before its job was bound, a job its client lost. A gateway that cannot be asked
+gives nothing up.
+
+The download's events move only targets that are still the grab's and in the
+state the event expects: a completed event moves grabbed targets to downloaded,
+a failed one fails grabbed targets. One for a grab that is done or given up —
+a repeat, a late event — moves nothing, so a failed target stays failed for its
+recovery.
+
+The `grab-recovery` schedule, hourly, does both: it makes the failed targets
+whose wait ran out wanted again, and gives up the stale grabs.
 
 ### From download to catalog
 
@@ -144,7 +204,12 @@ Then, file by file:
    names no episode is the release itself, and goes for what the release's
    name holds. A file that holds no target of the grab — an episode held
    already, or not wanted — is left out, and the grab's detail line names it
-   with why. A target no file holds fails.
+   with why; so is a file whose name lists episodes that are not one run
+   (`S01E01E03`), which one file cannot go over for. A target no file holds
+   fails by its release — except of a season pack, which only lets it go: it
+   is wanted again, the pack blocked for it, nothing failed. When files of
+   such a pack's download name no episode, one of them may be it: the client
+   keeps the download.
 2. **By identity.** Each file goes to `POST /api/ingest` as an episode of its
    series, named by every identity acquire holds of it — TMDB first, then TVDB
    and IMDb, since the catalog tries them in that order and the first that
@@ -159,30 +224,47 @@ Then, file by file:
 
    A movie target goes with its own identity (`identity: {tmdb, imdb}`), and by
    title alone when the catalog refuses it. An id that is not in its source's
-   form is left out. A file of more than ten episodes in a row is not handed
-   over — the catalog takes at most ten in one file — and its episodes fail,
-   saying so.
+   form is left out. A file of more than ten episodes in a row — only ever a
+   pick — is not handed over, since the catalog takes at most ten in one file:
+   its episodes fail by their release, saying so.
 3. **The answer.** The first episode of a file is held by the item the catalog
    answers. The episodes the file covers after it are held through that item's
    file until the holdings name each one's own item: the answer's `covered`
    leaves out an episode the library held already, so it names no episode in
    order, and a reconcile of the series is asked for. The holder's packaged
    event — the only one a file of several gets — makes them all playable, and
-   the holder's removal takes them all.
-4. **Held already.** A `409` naming an item — the library holds the episode
-   already as another item, or the identity contradicts what the catalog holds
-   of the path — holds the target by that item instead of failing it, and a
-   reconcile of the series checks it.
+   the holder's removal takes them all. A reconcile in the half hour after a
+   hand-over does not want its episodes again for not being listed:
+   katalog-api may not list them yet.
+4. **Held already.** A `409` naming an item says the file was not taken in:
+   the library holds what it is already. The episode it names — the file's
+   first, by which the catalog refuses a file of several — or the movie is held
+   by that item, with nothing recorded of the quality of a file acquire did not
+   bring, and a reconcile of the series checks it. Every other episode of that
+   file is not in the library by it: it is wanted again, with the release
+   blocked for it, so the same release is not grabbed for it once more.
 5. **A catalog without the contract.** The catalog from before ingest by
    identity answers an episode with `400` asking for its parent's catalog id;
    that, or a `422`, leaves the targets **waiting**. The copy stays, the
    download is not released in its client, and the hand-over is tried again
    half an hour after the first refusal and up to six hours apart. Any other
    refusal — a path outside the arrivals, an id in the wrong form — fails the
-   targets with the catalog's reason.
+   targets by their release, with the catalog's reason.
 
-Once every target of the grab has its answer, the download is released in its
-client as a request's is.
+The import moves only targets that are still the grab's and in flight: one a
+reconcile held meanwhile stays held. A copy the catalog did not take — refused,
+or held already — is deleted from the arrivals; only a hand-over waiting for
+the catalog keeps its copy.
+
+The download is **released** in its client — for the clients the deployment
+runs, as a request's is — only when every target the grab still holds is held,
+its file handed over and taken or held already, and nothing of it went over in
+place: a file handed over where it lies (no `ACQUIRE_ARRIVALS_ROOT`, or a
+download inside the arrivals) is the library's own, and its client keeps it.
+Otherwise — a file refused, a target without a file, a file of several the
+catalog held only the first episode of, a pack without a file for an episode
+and with files that name none — the grab fails saying why, each target says
+so, and the client keeps the download for someone to look at.
 
 ### What the library holds
 
@@ -194,12 +276,19 @@ a copy of the catalog:
   library holds of it — by its TMDB id, then its TVDB id, then its IMDb id, one
   per request — and makes its targets match: an episode the answer lists is
   held (with its item, the item whose file covers it, and whether it plays), a
-  held one it does not list is wanted again. A `404` for a title is "nothing of
-  it is held". A probe of the listing first tells a catalog that has no
-  holdings endpoint (`404`, `405` or `501` there) from one that holds nothing:
-  against the former, every title's holdings become unknown. A read side that
-  is down, or refuses acquire's service account, keeps what was known and says
-  why on each title.
+  held one it does not list is wanted again. A series the catalog holds twice
+  is answered as one, with the episodes of every copy: an episode both hold is
+  held by the copy that plays, else one with a file of its own. A `404` for a
+  title is "nothing of it is held" — unless the catalog holds a title of its
+  name (and year, when both have one) **without any identity**, which no
+  lookup by identity can find: then its holdings are unknown, saying so, until
+  that item carries an identity. That is read from the listing, once per
+  reconcile, when a lookup first finds nothing. A probe of the listing first
+  tells a catalog that has no holdings endpoint (`404`, `405` or `501` there,
+  or something that is not a page) from one that holds nothing: against the
+  former, every title's holdings become unknown. A read side that is down, or
+  refuses acquire's service account, keeps what was known and says why on
+  each title.
 - **When.** On the `holdings-reconcile` schedule (every six hours, the first
   run right after the first start), after titles are imported or their
   episodes derived, after a hand-over the catalog answered "held already" or
@@ -230,8 +319,9 @@ library holds gets its one target.
 On its schedules (`backlog-sweep` every 30 minutes, `retry-failed` every 15
 for targets whose searches keep finding nothing), the sweep takes ten targets:
 wanted, aired, monitored with their title, of titles whose holdings are known,
-due — the ones never searched first, then the ones searched longest ago. It
-searches each with its typed search and records the outcome on the target:
+not reserved by a grab under way, due — the ones never searched first, then the
+ones searched longest ago. It searches each with its typed search and records
+the outcome on the target:
 
 | Outcome | Next search |
 |---|---|
@@ -249,7 +339,10 @@ found releases for — never one whose title's holdings are unknown, and only
 while a download slot is free (the downloads in flight the gateway reports,
 and the grabs handed over it has not reported yet, against the downloads at
 once of the search and grab settings). The first grab refused for room, a slot
-or a client stops grabbing for the rest of that run.
+or a client stops grabbing for the rest of that run; the gateway not taking
+adds — out of reach, failing, its answer lost — stops the run: the rest would
+be searched, spending the sources' allowance, for grabs that cannot be handed
+over.
 
 acquire reacts to these consumed events:
 
@@ -260,9 +353,11 @@ acquire reacts to these consumed events:
   A target grab's download is always queued for the import worker
   ([from download to catalog](#from-download-to-catalog)). Idempotent: a
   repeat (e.g. after a gateway restart) is ignored once the request or the
-  grab has moved past the download, and queues nothing twice.
+  grab has moved past the download, and queues nothing twice; one for a grab
+  that failed or was given up moves nothing.
 - `download.client.failed` → `failed` (with the client's error); a target
-  grab's targets fail, and the release is blocked for them.
+  grab's targets that are still grabbed fail by their release: blocked for
+  them, wanted again after a wait ([when a grab fails](#when-a-grab-fails)).
 - `catalog.item.packaged` → look up the request by item id → `fulfilled`; the
   targets the item holds are held and playable
   ([what the library holds](#what-the-library-holds)).
@@ -314,7 +409,7 @@ dev (every caller is treated as admin).
 | `DELETE` | `/api/wanted/{id}` | **admin** | remove a request |
 | `GET` | `/api/downloads` | any signed-in | live + recently finished downloads |
 | `GET` | `/api/clients` | any signed-in | per-client health + aggregate speed |
-| `POST` | `/api/downloads/{adapter}/{id}/{action}` | **admin** | `pause` \| `resume` \| `cancel` |
+| `POST` | `/api/downloads/{adapter}/{id}/{action}` | **admin** | `pause` \| `resume` \| `cancel` (a target grab's download: the grab is given up at once, its targets wanted again) |
 | `GET` | `/api/setup` | **admin** | the setup checklist: sources, clients, grab policy |
 | `GET` | `/api/health/system` | public | diagnostic checks (database, outbox, storage, sources, clients, clock); always 200 |
 | `GET` | `/embed/…` | public | the console's bundle: `assets/remoteEntry.js`, its chunks and `assets/console.css` |
@@ -462,7 +557,8 @@ cached caps, health) and what each spent per UTC day.
 releases in their clients — every target grab's download, copied or not: the
 files as the client reported them, the state (`pending`, `imported`, `done`,
 `failed`), attempts, the last detail, the copy handed over and when to look
-again. A target grab's download waiting for the catalog stays `pending`.
+again. A target grab's download waiting for the catalog stays `pending`; one
+the library did not get all of is `failed`, kept in its client.
 
 **`download_clients`** — the download clients (secret sealed), with a generation
 from one sequence that is the revision pushed to the gateway, and whether the
@@ -475,10 +571,14 @@ and who changed which configuration when (never the values).
 — the WANT model: what acquire tracks, by TMDB id with the TVDB and IMDb ids
 searches need, and one target per episode or movie with its state and detail,
 its last search (`search_outcome`, `search_detail`, `last_search_at`, and
-`search_backoff_until` as its next due time), the grab that covers it, a grab
-asked for in the console (`grab_requested_at`), and what the library holds of
-it (`held_item_id`, `held_via` for an episode held through another's file,
-`held_playable`, the release and its score). A title's `holdings_at` is when
+`search_backoff_until` as its next due time), the grab that covers it
+(`grab_id`) and the one it is reserved for while that grab's release is handed
+over (`reserved_by`), how often its release failed it and when it is wanted
+again (`grab_failures`, `retry_at`), when acquire last handed a file for it
+over that the catalog took (`handed_over_at`), a grab asked for in the console
+(`grab_requested_at`), and what the library holds of it (`held_item_id`,
+`held_via` for an episode held through another's file, `held_playable`, the
+release and its score). A title's `holdings_at` is when
 its holdings were last learned, NULL while they are unknown, with
 `holdings_error` saying why.
 
@@ -488,7 +588,9 @@ the targets it was bound to, the client job, its state (`pending`, `grabbed`,
 from (`via`: sweep, missing, pick, search) and the release that won, with its
 link redacted (`source`) and the full one sealed (`source_ct`).
 **`grab_targets`** records each target's file of a finished grab: the path
-handed over, the episode run it covers and the item the catalog answered.
+handed over, the episode run it covers, the item the catalog answered, and
+what became of it (`imported`, `held` by an item of the library's own,
+`waiting`, `missing`, `failed`).
 
 **`downloads`** — one row per client job (`adapter` + `client_job_id`): state,
 the client's native state, bytes, speed, ETA, seeders/health, timestamps. This is
