@@ -64,8 +64,9 @@ where the file came from.”
   package all follow from it.
 
 This is the seam that lets an addon put content into the catalog **without**
-reaching into the catalog's internals. acquire owns one invariant here: it ingests
-the finished download's video file *in place* (no staging copy), and lets the
+reaching into the catalog's internals. acquire owns one invariant here: it hands
+over a file that is already in the library's arrivals — the finished download
+itself when it lies there, else acquire's verified copy of it — and lets the
 pipeline take it from `discovered` onward.
 
 ## Event-driven by design
@@ -112,7 +113,7 @@ sequenceDiagram
 | Topic | Producer | acquire |
 |---|---|---|
 | `download.client.started` / `.progress` | download-gateway | ignored |
-| `download.client.completed` | download-gateway | **consumed** → ingest |
+| `download.client.completed` | download-gateway | **consumed** → copy into the arrivals if needed, ingest |
 | `download.client.failed` | download-gateway | **consumed** → mark failed |
 | `catalog.item.discovered` | katalog-manager (on ingest) | — (drives the pipeline) |
 | `catalog.item.packaged` | katalog-manager (pipeline) | **consumed** → mark fulfilled |
@@ -122,11 +123,13 @@ not replayed) and is poison-safe (undecodable messages are skipped).
 
 ## Component map
 
-The addon is two workloads. Search sources and download clients are external
-endpoints: acquire stores where they are — keys and passwords encrypted with
-`ACQUIRE_CONFIG_KEY` — and edits them in its console. The portal shows the
-component group and acquire's setup checklist, and never sees a configuration
-value.
+The addon is two workloads, and optionally the two download clients the chart
+can run (qBittorrent and NZBGet). Search sources and other download clients
+are external endpoints: acquire stores where they are — keys and passwords
+encrypted with `ACQUIRE_CONFIG_KEY` — and edits them in its console; the
+clients the chart runs it stores as managed, from the deployment's
+declaration. The portal shows the component group and acquire's setup
+checklist, and never sees a configuration value.
 
 ```mermaid
 flowchart TB
@@ -134,6 +137,7 @@ flowchart TB
         direction TB
         ACQ["acquire (primary)<br/><i>requests · search · grab decisions · console<br/>configuration: sources, clients, grab policy</i>"]
         GW["download-gateway (required)<br/><i>runs the pushed download clients + events</i>"]
+        MDC["qbittorrent · nzbget (optional)<br/><i>download clients the chart runs, managed</i>"]
     end
     subgraph external["external endpoints — configured in acquire, not deployed"]
         SRC["search sources<br/><i>newznab · torznab</i>"]
@@ -153,6 +157,7 @@ flowchart TB
     ACQ -->|"search · fetch release files"| SRC
     ACQ -->|"push clients · add downloads"| GW
     GW --> DC
+    GW --> MDC
     GW -->|"download.client.*"| BUS
     BUS -->|"completed / failed"| ACQ
     ACQ -->|"POST /api/ingest"| KMG
@@ -164,6 +169,7 @@ flowchart TB
 |---|---|---|
 | `acquire` (primary) | `acquire` | `acquire.schedule.due`, `acquire.schedule.saga.due` |
 | `download-gateway` (required) | first label of `DOWNLOAD_GATEWAY_URL`'s host | `download.client.started`, `.progress`, `.completed`, `.failed` |
+| each managed client (optional) | first label of its address's host: `qbittorrent`, `nzbget` | — |
 
 The manifest also declares the setup checklist: `GET /api/setup` answers
 `ready`, `needs-setup` or `degraded` for **sources** and **clients** (required)

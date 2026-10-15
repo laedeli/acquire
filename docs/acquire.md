@@ -28,29 +28,45 @@ stateDiagram-v2
 - **downloading** — a source was handed to a download client. The detail line
   records how, e.g. `grabbed NZB from <source> via nzbget` or `grabbed via qbittorrent`.
 - **packaging** — the download finished; acquire resolved the video file and
-  ingested it (`ingested; pipeline running`).
+  ingested it (`ingested; pipeline running`) — copied into the library's
+  arrivals first when the download lies outside them (`downloaded; copying into
+  the library` meanwhile, still *downloading*).
 - **fulfilled** — the pipeline packaged the item; it now plays in chino.
 - **failed** — any of: grab error, no releases (naming the sources that did not
   answer), download failed, no video file in the completed download, or ingest
   error. The detail line carries the reason. `pending` and `failed` requests are
   re-grabbable. A grab that is merely **refused** — no download client for the
   protocol, not enough free space, too many downloads at once, a source out of
-  downloads for the day — leaves the request as it was.
+  downloads for the day — leaves the request as it was; one that waits for room
+  on the downloads volume says so in its detail line.
 
 acquire reacts to these consumed events:
 
 - `download.client.started` / `.progress` → record live telemetry (state, bytes,
   speed, ETA, seeders/health) and stream it to the console.
 - `download.client.completed` → resolve the video file → `POST /api/ingest` →
-  `packaging`. Idempotent: a repeat (e.g. after a gateway restart) is ignored
-  once the request has moved past the download.
+  `packaging`, or, for a download outside the arrivals, queue its copy (below).
+  Idempotent: a repeat (e.g. after a gateway restart) is ignored once the
+  request has moved past the download, and queues nothing twice.
 - `download.client.failed` → `failed` (with the client's error).
 - `catalog.item.packaged` → look up the request by item id → `fulfilled`.
 
 **Resolving the video file** from a completed download: acquire walks the download
-folder on the shared media NFS and picks the **largest** file with a video
-extension (`.mkv .mp4 .m4v .avi .mov .ts .webm`). It ingests that file *in place*
-— no staging copy.
+folder as it sees it and picks the **largest** file with a video extension
+(`.mkv .mp4 .m4v .avi .mov .ts .webm`). A file inside the library's arrivals it
+ingests *in place*. With `ACQUIRE_ARRIVALS_ROOT` set, a file outside them — the
+download clients the chart runs work on a volume of their own — is **copied in
+first**: a worker takes one import at a time, copies the video and the
+subtitle files the catalog pairs with it into
+`<arrivals>/acquire/<request>/<client>-<job>/` (one sequential pass per file
+into a temporary dot name, synced, checked by size and a SHA-256 of both ends,
+renamed into place), and hands the copy over through the same
+`POST /api/ingest`. A failed copy or hand-over leaves the download where it is
+and is tried again, a minute after the first failure and up to an hour apart.
+For the clients the deployment runs, acquire then releases the download in
+the client, through the client's own API — an NZB right after its verified
+copy, a torrent once qBittorrent stopped it at its seeding goal, removed with
+its data. acquire never moves or deletes a client's files itself.
 
 ## HTTP API
 
@@ -98,13 +114,16 @@ own data, edited by admins only:
 | `PUT` · `DELETE` | `/api/indexers/{id}` | replace · remove a source |
 | `POST` | `/api/indexers/test` · `/api/indexers/{id}/test` | try an unsaved · a saved source |
 | `GET` · `POST` | `/api/download-clients` | list (with live gateway state) · add download clients |
-| `PUT` · `DELETE` | `/api/download-clients/{id}` | replace · remove a client (`409` while downloads are in flight) |
+| `PUT` · `DELETE` | `/api/download-clients/{id}` | replace · remove a client (`409` while downloads are in flight, and for a managed client) |
 | `GET` | `/api/download-clients/types` | the client types the gateway runs |
 | `POST` | `/api/download-clients/test` | reach a client through the gateway without saving it |
 | `GET` · `PUT` | `/api/settings/search` | the search and grab policy |
 
 Writes send the revision they were based on in `If-Match` and get `409` when it
-is stale; invalid content gets `422 {"fieldErrors":[…]}`. Secrets — source API
+is stale; invalid content gets `422 {"fieldErrors":[…]}`. A **managed** client
+(`"managed": true`) is one the deployment runs and declares in
+`ACQUIRE_MANAGED_CLIENTS`; acquire writes it at start from that declaration, and
+the API refuses to replace or remove it (`409`), though it can be tested. Secrets — source API
 keys, client passwords and tokens — are write-only: omit to keep, a string to
 replace, `{"clear":true}` to remove; reads say only whether one is set. Every
 write is recorded in `settings_audit` without its values. See
@@ -141,7 +160,8 @@ Tabs:
 - **search sources** — add, edit, test, enable and remove newznab/torznab
   sources; their caps, today's usage against their limits, and their health.
 - **clients** — the download clients: add, edit, test, enable and remove, with
-  the gateway's live state and whether it runs the stored revision.
+  the gateway's live state and whether it runs the stored revision. The ones
+  the addon runs itself carry a **managed** badge and can only be tested.
 - **settings** — search and grab (protocol preference, free-space floor,
   downloads at once) and the quality profile.
 
@@ -176,8 +196,14 @@ fallback when a restarted gateway no longer knows it.
 **`indexers`** and **`indexer_usage`** — the search sources (API key sealed,
 cached caps, health) and what each spent per UTC day.
 
+**`imports`** — the finished downloads acquire copies into the arrivals and then
+releases in their clients: the files as the client reported them, the state
+(`pending`, `imported`, `done`, `failed`), attempts, the last detail, the copy
+handed over and when to look again.
+
 **`download_clients`** — the download clients (secret sealed), with a generation
-from one sequence that is the revision pushed to the gateway.
+from one sequence that is the revision pushed to the gateway, and whether the
+deployment manages the client (`managed`).
 
 **`acquire_settings`** and **`settings_audit`** — the search and grab policy,
 and who changed which configuration when (never the values).
@@ -219,9 +245,18 @@ progress message.
 | `KAFKA_GROUP_ID` | `acquire` | consumer group |
 | `ACQUIRE_INBOX_ROOT` | `/var/lib/katalog/packages/_inbox` | staging folder on the media storage |
 | `ACQUIRE_DOWNLOADS_ROOT` | `/var/lib/katalog/packages/_downloads` | where downloads are visible to acquire when a client names no folder of its own |
+| `ACQUIRE_ARRIVALS_ROOT` | unset | the library's arrivals as acquire and the catalog see it, writable: finished downloads outside it are copied in before the hand-over; unset hands every download over in place |
+| `ACQUIRE_DOWNLOADS_RESERVE` | `0` | bytes kept free on the volume the managed clients work on: a release for one of them waits until that volume holds twice its size for an NZB, its size for a torrent, plus this |
+| `ACQUIRE_MANAGED_CLIENTS` | unset | the download clients the deployment runs: a JSON list in the shape the console writes a client in (`id`, `type`, `baseUrl`, `auth`, `username`, `secret`, `protocols`, `category`, `remotePath`, `localPath`), stored as managed clients at start; set but empty declares none |
 
 Search sources and download clients are not environment settings: they are
-added in the console. `INDEXER_URL` / `INDEXER_API_KEY` are no longer read.
+added in the console. `INDEXER_URL` / `INDEXER_API_KEY` are no longer read. The
+exception is the download clients the deployment runs itself: the addon chart
+declares them in `ACQUIRE_MANAGED_CLIENTS`, from its Secret, and at start, before
+its first push to the gateway, acquire creates them, brings them in line with
+the declaration, takes over a client of the same id and type once no download
+is in flight on it, and removes — or, while downloads are in flight, disables —
+the managed clients no longer declared. Unset leaves the stored clients alone.
 
 acquire calls the gateway and katalog-manager with a **service-account** token
 (client-credentials), refreshed shortly before expiry, so those calls are

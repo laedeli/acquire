@@ -6,10 +6,12 @@
 acquire talks only to the gateway; the gateway talks to the clients, tracks
 every job until it finishes, and publishes the lifecycle as events.
 
-The download clients are **external endpoints**. Neither the gateway nor
-acquire deploys or bundles them. acquire stores which clients exist and how to
-reach them, and pushes that to the gateway; the gateway holds it in memory and
-runs them.
+The download clients are **endpoints** to the gateway. acquire stores which
+clients exist and how to reach them, and pushes that to the gateway; the
+gateway holds it in memory and runs them. Most are programs you run elsewhere;
+the addon chart can run qBittorrent and NZBGet itself, and declares them to
+acquire as managed clients (see
+[Deploying](./deploying.md#download-clients-and-the-vpn)).
 
 ```mermaid
 flowchart LR
@@ -46,7 +48,10 @@ client dialog is built from it.
 ## Where clients come from
 
 **acquire (the normal case).** Clients are edited in acquire's console under
-**clients** and stored in acquire's database, secrets encrypted. acquire pushes
+**clients** and stored in acquire's database, secrets encrypted — or, for the
+ones the deployment runs, declared by it (`ACQUIRE_MANAGED_CLIENTS`) and
+stored at start as managed clients, which the console shows but does not
+edit. acquire pushes
 the full set of enabled clients:
 
 - at start,
@@ -100,7 +105,13 @@ would then live in the client's history, logs and API. See
 [Search sources & NZB-first](./indexers-and-nzb.md#keys-never-leave-acquire).
 
 When a download completes, acquire maps the reported file paths from the
-client's folder to the same folder as acquire sees it, then ingests the video.
+client's folder to the same folder as acquire sees it, then ingests the video —
+copying it into the library's arrivals first when it lies outside them. The
+gateway stops following a job once it completes, so for the clients the
+deployment runs acquire asks the client itself what is left to do: it removes
+a torrent with its data once it stopped at its seeding goal, and releases an
+NZB download right after its copy (see
+[Deploying](./deploying.md#from-download-to-library)).
 
 ## HTTP API
 
