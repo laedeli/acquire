@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/laedeli/acquire/internal/config"
@@ -66,6 +67,14 @@ type Service struct {
 	// is read where a client downloads (storage.Guard by default; tests swap it).
 	importWake chan struct{}
 	freeSpace  func(path string) (int64, error)
+
+	// The grab queue's worker (targetgrab.go) and the holdings reconcile
+	// (holdings.go): their wake-ups, and the titles a reconcile is asked for.
+	grabWake     chan struct{}
+	holdingsWake chan struct{}
+	holdingsMu   sync.Mutex
+	holdingsAll  bool
+	holdingsIDs  map[string]bool
 }
 
 func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, bus Bus, box *secretbox.Box) *Service {
@@ -79,7 +88,8 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second),
 		ixc:   &indexer.Client{HTTP: policy.HTTPClient(2 * typedPerSource)},
 		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming,
-		importWake: make(chan struct{}, 1), freeSpace: freeSpaceAt}
+		importWake: make(chan struct{}, 1), freeSpace: freeSpaceAt,
+		grabWake: make(chan struct{}, 1), holdingsWake: make(chan struct{}, 1), holdingsIDs: map[string]bool{}}
 	if st != nil {
 		svc.sync = configsync.New(st, gw, box, 30*time.Second)
 	}
@@ -276,12 +286,17 @@ type DiscoverHit struct {
 
 // ── event-side (reactions, called by events.Consumer) ───────────────────────
 
-// OnCompleted: the download finished. Resolve the video file, ingest it into the
-// catalog (item + primary asset + discovered → pipeline), and mark packaging.
+// OnCompleted: the download finished. A target grab's download goes to the
+// import worker, which hands its files over by identity (onTargetCompleted).
+// A request's: resolve the video file, ingest it into the catalog (item +
+// primary asset + discovered → pipeline), and mark packaging.
 func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) error {
 	// Record the terminal download state first — this is true whether or not the
 	// job belongs to a request we know about.
 	_ = s.saveDownload(ctx, ev, "completed")
+	if g, ok := s.targetGrabOf(ctx, ev); ok {
+		return s.onTargetCompleted(ctx, g, ev)
+	}
 	wantedID := ev.WantedID
 	if wantedID == "" {
 		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
@@ -313,34 +328,30 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 		s.setStatus(ctx, w.ID, "failed", "no video file in the completed download")
 		return nil
 	}
-	typ := "movie"
 	if w.MediaType == "series" || w.MediaType == "episode" {
-		typ = "episode"
+		// katalog rejects an episode without coordinates, and it is right to:
+		// a NULL parent produces a playable orphan with no error anywhere. A
+		// request names a series, not its episodes, so its download cannot
+		// say WHICH episodes it holds. Episodes are grabbed as targets — from
+		// the series' missing episodes, per episode or in bulk — whose grabs
+		// hand each file over by identity; a series request's download fails
+		// loudly here rather than send an ingest that would be refused.
+		s.setStatus(ctx, w.ID, "failed",
+			"a series request cannot be handed over: grab its episodes from the missing tab, where each file goes to the catalog by identity")
+		return nil
 	}
-	var yearPtr *int32
-	if w.Year != 0 {
-		y := int32(w.Year)
-		yearPtr = &y
-	}
-	req := katalog.IngestRequest{Path: video, Type: typ, Title: w.Title, Year: yearPtr}
-	if typ != "episode" && s.copiesIntoArrivals(video) {
+	if s.copiesIntoArrivals(video) {
 		// Not where the catalog takes files from: the import worker copies it
 		// into the arrivals first (imports.go).
 		s.queueImport(ctx, eventRef{adapter: ev.Adapter, jobID: ev.ClientID, files: ev.Files}, w.ID)
 		return nil
 	}
-	if typ == "episode" {
-		// katalog rejects an episode without coordinates, and it is right to:
-		// a NULL parent produces a playable orphan with no error anywhere.
-		// Until the request model carries them (P6), a single-file series
-		// download cannot say WHICH episode it is — so fail loudly here rather
-		// than send an ingest we know will be refused, or worse, one that would
-		// have created an orphan on an older katalog.
-		s.setStatus(ctx, w.ID, "failed",
-			"series downloads need episode coordinates before ingest (parent, season, episode)")
+	res, err := s.ingestMovie(ctx, movieIngest(video, w))
+	if holder := ingestHolder(err); holder != "" {
+		_ = s.st.SetItemID(ctx, w.ID, holder)
+		s.setStatus(ctx, w.ID, "fulfilled", "the library holds it already, as item "+holder)
 		return nil
 	}
-	res, err := s.kc.Ingest(ctx, req)
 	if err != nil {
 		s.setStatus(ctx, w.ID, "failed", "ingest failed: "+err.Error())
 		return nil
@@ -350,9 +361,46 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 	return nil
 }
 
+// movieIngest is a request's movie as the catalog takes it: by its path,
+// title and year, and its TMDB identity when the request has one.
+func movieIngest(path string, w store.Wanted) katalog.IngestRequest {
+	req := katalog.IngestRequest{Path: path, Type: "movie", Title: w.Title}
+	if w.Year != 0 {
+		y := int32(w.Year)
+		req.Year = &y
+	}
+	req.Identity = katalog.NewIdentity(w.TMDBID, 0, "")
+	return req
+}
+
+// ingestMovie hands a movie over with its identity, and — when the catalog
+// does not take ingest by identity yet, or refuses the identity — as before,
+// by title alone.
+func (s *Service) ingestMovie(ctx context.Context, req katalog.IngestRequest) (katalog.IngestResult, error) {
+	res, err := s.kc.Ingest(ctx, req)
+	var ie *katalog.IngestError
+	if err != nil && req.Identity != nil && errors.As(err, &ie) && (ie.Unsupported() || ie.RefusesIdentity()) {
+		req.Identity = nil
+		return s.kc.Ingest(ctx, req)
+	}
+	return res, err
+}
+
+// ingestHolder is the item a 409 says holds the file's title already, or "".
+func ingestHolder(err error) string {
+	var ie *katalog.IngestError
+	if errors.As(err, &ie) {
+		return ie.Holder()
+	}
+	return ""
+}
+
 // OnFailed: the download failed.
 func (s *Service) OnFailed(ctx context.Context, ev events.DownloadEvent) error {
 	_ = s.saveDownload(ctx, ev, "failed")
+	if g, ok := s.targetGrabOf(ctx, ev); ok {
+		return s.onTargetFailed(ctx, g, ev)
+	}
 	wantedID := ev.WantedID
 	if wantedID == "" {
 		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
@@ -370,11 +418,13 @@ func (s *Service) OnFailed(ctx context.Context, ev events.DownloadEvent) error {
 	return nil
 }
 
-// OnPackaged: the pipeline finished packaging the item → the request is served.
+// OnPackaged: the pipeline finished packaging the item → the request is
+// served, and the targets it holds are held and playable (holdings.go).
 func (s *Service) OnPackaged(ctx context.Context, ev events.ItemEvent) error {
 	if ev.ItemID == "" {
 		return nil
 	}
+	s.holdingFromEvent(ctx, ev, true)
 	w, err := s.st.FindWantedByItemID(ctx, ev.ItemID)
 	if err != nil {
 		return nil // not one of ours
@@ -497,6 +547,8 @@ func (s *Service) Handlers() events.Handlers {
 		OnCompleted:   s.OnCompleted,
 		OnFailed:      s.OnFailed,
 		OnPackaged:    s.OnPackaged,
+		OnDiscovered:  s.OnDiscovered,
+		OnRemoved:     s.OnRemoved,
 		OnScheduleDue: s.OnScheduleDue,
 	}
 }

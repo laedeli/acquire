@@ -148,6 +148,11 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 	if err != nil {
 		return handedOff{}, err
 	}
+	if store.IsTargetGrab(h.WantedID) {
+		// A grab bound to targets keeps where it came from on its own row
+		// (target_grabs, written by grabRelease); grabs belongs to requests.
+		return handedOff{Client: client, JobID: res.ClientJobID, Protocol: protocol}, nil
+	}
 
 	g := store.Grab{
 		WantedID: h.WantedID, Adapter: client.ID, ClientJobID: res.ClientJobID,

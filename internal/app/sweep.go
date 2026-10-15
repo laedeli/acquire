@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log"
 	"time"
 
@@ -38,6 +38,11 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 		return s.SweepBacklog(ctx, sweepBatch)
 	case "retry-failed":
 		return s.SweepRetries(ctx, retryBatch)
+	case "holdings-reconcile":
+		// The reconcile asks the catalog about every tracked title; its worker
+		// does that, so the download events behind this one wait for nothing.
+		s.RequestReconcile()
+		return nil
 	case "outbox-audit":
 		n, err := s.st.OutboxDepth(ctx)
 		if err == nil && n > 0 {
@@ -48,68 +53,127 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 	return nil
 }
 
-// SweepBacklog searches for a bounded slice of what we want and do not have.
+// SweepBacklog searches a bounded slice of the backlog: wanted, aired,
+// monitored targets of titles whose holdings are known, never searched first,
+// then the ones searched longest ago.
 //
-// It does NOT grab. Searching is cheap and reversible; grabbing spends disk and
-// bandwidth and is not. Until the request model and the target model are
-// bridged (P6), the sweep reports what it would take and records the search
-// outcome, so the backlog stops being invisible without anything irreversible
-// happening on a timer.
+// Every search records its outcome on its target — found, none or error —
+// with when it is due again, so the next sweep takes the next slice instead of
+// the same one (store.DueTargets).
+//
+// It grabs only when search.autoGrab allows it. Searching is cheap and
+// reversible; grabbing spends disk and bandwidth and is not. With autoGrab
+// off — the default — the sweep only searches and records what it would
+// take. With it on, it grabs the best release an automatic grab may take
+// (never a season pack for one episode), bound to every wanted target that
+// release covers, and only while a download slot is free; a target whose
+// title's holdings are unknown is never grabbed.
 func (s *Service) SweepBacklog(ctx context.Context, limit int) error {
 	due, err := s.st.DueTargets(ctx, limit)
 	if err != nil {
 		return err
 	}
-	if len(due) == 0 {
-		return nil
-	}
-	var found, empty, failed int
-	for _, t := range due {
-		cands, err := s.SearchTarget(ctx, t.ID)
-		if err != nil {
-			failed++
-			// A search that errors is a failure to LOOK, not evidence of
-			// absence, so it backs off rather than marking anything.
-			_ = s.st.BackoffSearch(ctx, t.ID, backoffBase, backoffCeiling)
-			continue
-		}
-		usable := 0
-		for _, c := range cands {
-			if !c.Rejected {
-				usable++
-			}
-		}
-		if usable == 0 {
-			empty++
-			// Nothing usable is also not proof of absence — a typed query to an
-			// indexer without id support returns zero with no error — so this
-			// backs off too and will be asked again later.
-			_ = s.st.BackoffSearch(ctx, t.ID, backoffBase, backoffCeiling)
-			continue
-		}
-		found++
-		_ = s.st.RecordHistory(ctx, store.HistoryEntry{
-			Kind: "searched", Subject: t.ID, Title: cands[0].Title,
-			Indexer: cands[0].Indexer, Protocol: cands[0].Protocol,
-			SizeMb: cands[0].Size / (1024 * 1024), Score: cands[0].Score,
-			Reason: fmt.Sprintf("%d candidate(s), best via %s", usable, cands[0].MatchedVia),
-		})
-	}
-	log.Printf("acquire sweep: %d target(s) — %d with candidates, %d empty, %d errored",
-		len(due), found, empty, failed)
-	return nil
+	return s.sweep(ctx, "sweep", due)
 }
 
-// SweepRetries re-examines targets whose backoff has expired. Blocking the
-// release that failed is what makes the retry pick something else — ranking is
-// deterministic, so without it the identical release is chosen again.
+// SweepRetries re-examines targets whose searches found nothing or failed and
+// whose backoff has expired.
 func (s *Service) SweepRetries(ctx context.Context, limit int) error {
 	due, err := s.st.RetryableTargets(ctx, limit)
 	if err != nil || len(due) == 0 {
 		return err
 	}
-	log.Printf("acquire retry: %d target(s) eligible", len(due))
-	return s.SweepBacklog(ctx, limit)
+	return s.sweep(ctx, "retry", due)
+}
+
+// sweep searches each target and, with autoGrab, grabs.
+func (s *Service) sweep(ctx context.Context, what string, due []store.Target) error {
+	if len(due) == 0 {
+		return nil
+	}
+	grabbing := s.grabPolicy(ctx).AutoGrab
+	var found, empty, failed, grabbed int
+	var stopped string
+	for _, t := range due {
+		if ctx.Err() != nil {
+			break
+		}
+		cands, err := s.SearchTarget(ctx, t.ID)
+		usable := s.recordSearch(ctx, t, cands, err)
+		switch {
+		case err != nil:
+			failed++
+			continue
+		case len(usable) == 0:
+			empty++
+			continue
+		}
+		found++
+		if !grabbing {
+			continue
+		}
+		title, ok := s.autoGrabAllowed(ctx, t)
+		if !ok {
+			continue
+		}
+		if full, why := s.slotsFull(ctx); full {
+			// Nothing more starts this run. What was found is found again on
+			// the next sweep rather than in twelve hours.
+			grabbing, stopped = false, why
+			s.foundButWaiting(ctx, t, why)
+			continue
+		}
+		_, err = s.grabBest(ctx, title, t, usable, "sweep")
+		var capErr atCapacity
+		var r refused
+		switch {
+		case err == nil:
+			grabbed++
+		case errors.As(err, &capErr), errors.As(err, &r):
+			// No slot, no room, no client: none of the rest would fare
+			// better this run.
+			grabbing, stopped = false, err.Error()
+			s.foundButWaiting(ctx, t, err.Error())
+		default:
+			s.targetGrabFailed(ctx, t, err)
+		}
+	}
+	line := "acquire %s: %d target(s) — %d with candidates, %d empty, %d errored, %d grabbed"
+	args := []any{what, len(due), found, empty, failed, grabbed}
+	if stopped != "" {
+		line += "; stopped grabbing: %s"
+		args = append(args, stopped)
+	}
+	log.Printf(line, args...)
+	if grabbed > 0 {
+		s.notify()
+	}
+	return nil
+}
+
+// autoGrabAllowed reports whether the sweep may grab a target it found
+// releases for, and its title: only a wanted target, monitored with its
+// title, of a title whose holdings are known. The setting itself the caller
+// checked.
+func (s *Service) autoGrabAllowed(ctx context.Context, t store.Target) (store.Title, bool) {
+	title, err := s.st.TitleByID(ctx, t.TitleID)
+	switch {
+	case err != nil:
+		return store.Title{}, false
+	case !title.HoldingsKnown():
+		// Nothing says it is not on disk: never grabbed automatically.
+		return title, false
+	case !title.Monitored || !t.Monitored || t.State != store.TargetWanted:
+		return title, false
+	}
+	return title, true
+}
+
+// foundButWaiting records that a target's releases were found but not grabbed
+// for now, and makes it due again on the next sweep.
+func (s *Service) foundButWaiting(ctx context.Context, t store.Target, why string) {
+	_ = s.st.RecordSearch(ctx, t.ID, store.SearchRecord{Outcome: store.SearchFound, Again: backoffBase,
+		Detail: clip("found; not grabbed yet: "+why, 300)})
 }
 
 // BlockFailedRelease is called when a download fails. It is the difference

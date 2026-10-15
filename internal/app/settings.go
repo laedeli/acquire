@@ -25,6 +25,10 @@ type SearchSettings struct {
 	StorageFloorGB int64 `json:"storageFloorGb"`
 	// MaxConcurrentGrabs bounds downloads in flight.
 	MaxConcurrentGrabs int `json:"maxConcurrentGrabs"`
+	// AutoGrab lets the backlog sweep grab the best acceptable release of
+	// what it finds missing, within the floor and the cap above. Off, the
+	// sweep only searches. Never for a title whose holdings are unknown.
+	AutoGrab bool `json:"autoGrab"`
 }
 
 // SearchSettingsDoc is the stored policy with the revision an editor sends

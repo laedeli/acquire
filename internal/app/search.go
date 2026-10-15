@@ -82,6 +82,11 @@ type Candidate struct {
 	MatchedVia string `json:"matchedVia,omitempty"`
 	IndexerID  int64  `json:"indexerId,omitempty"`
 	GUID       string `json:"guid,omitempty"`
+	// Covers names the episodes a release holds (S04E07, S04E07-E08, S01) and
+	// Pack marks whole seasons, for a target's search: a grab of it is bound
+	// to every wanted target it holds.
+	Covers string `json:"covers,omitempty"`
+	Pack   bool   `json:"pack,omitempty"`
 	// Release is an opaque, sealed reference to the release's real link. A grab
 	// sends it back. Source, which the console shows, is that link with its
 	// credentials removed: a source's API key never reaches a browser.
@@ -494,16 +499,45 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 
 	profile, _ := s.ScoringProfile(ctx, title.ProfileID)
 	routes := s.clientRoutes(ctx)
+	// A release whose download failed for this target is not offered as the
+	// best again: ranking is deterministic, so without this a grab after a
+	// failure picks the identical release.
+	blocked, err := s.st.BlockedFor(ctx, targetID)
+	if err != nil {
+		log.Printf("acquire: blocklist of %s unreadable, not applied: %v", targetID, err)
+	}
 	out := make([]Candidate, 0, len(results))
 	for _, r := range results {
 		c := s.candidate(r.Release, profile, routes)
 		// How it was found and what identified it, so the console can show
 		// an id match as certain rather than merely plausible.
 		c.Stage, c.MatchedVia = r.Stage, r.Match.Via
+		if t.Kind != "movie" {
+			cov := release.ParseCoverage(c.Title)
+			c.Covers, c.Pack = cov.String(), cov.Pack()
+		}
+		if why, ok := blocked[c.Title]; ok {
+			c.Rejected, c.Reason = true, clip("blocked for this target: "+why+" · "+c.Reason, 300)
+		}
 		out = append(out, c)
 	}
 	sortCandidates(out)
 	return out, nil
+}
+
+// autoCandidates are the releases an automatic grab of a target may take,
+// best first: the ones the profile accepts and, for an episode, not a season
+// pack. A pack spends a season's worth of disk and bandwidth on what may be
+// one missing episode; it is grabbed only when someone picks it.
+func autoCandidates(t store.Target, ranked []Candidate) []Candidate {
+	var out []Candidate
+	for _, c := range acceptable(ranked) {
+		if t.Kind != "movie" && c.Pack {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // TargetSearchable reports whether a typed search is even possible, so the
@@ -546,6 +580,7 @@ func (s *Service) candidate(r release.Release, profile release.Profile, routes m
 		IndexerID: r.IndexerID, GUID: r.GUID,
 		Release: s.sealRef(releaseRef{
 			IndexerID: r.IndexerID, Indexer: r.Indexer, Protocol: r.Protocol, GUID: r.GUID, Link: link,
+			Title: r.Title,
 		}),
 		link: link,
 	}
@@ -565,13 +600,15 @@ func sortCandidates(out []Candidate) {
 
 // ── grabbing a search result ───────────────────────────────────────────────
 
-// releaseRef is what a Candidate's Release reference seals.
+// releaseRef is what a Candidate's Release reference seals. Title is the
+// release's name, which decides the episodes a grab of it covers.
 type releaseRef struct {
 	IndexerID int64  `json:"i"`
 	Indexer   string `json:"n"`
 	Protocol  string `json:"p"`
 	GUID      string `json:"g,omitempty"`
 	Link      string `json:"l"`
+	Title     string `json:"t,omitempty"`
 	Expires   int64  `json:"e"`
 }
 
@@ -619,6 +656,9 @@ func (s *Service) resolveCandidate(c *Candidate) error {
 		return err
 	}
 	c.link, c.Protocol, c.IndexerID, c.Indexer, c.GUID = ref.Link, ref.Protocol, ref.IndexerID, ref.Indexer, ref.GUID
+	if ref.Title != "" {
+		c.Title = ref.Title
+	}
 	return nil
 }
 
@@ -665,10 +705,27 @@ func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidat
 // GrabAdHoc grabs a release found in the manual search that no request covers
 // yet: it records the wanted item first, so the download still lands in the
 // catalog and the console can follow it like any other request.
+//
+// A release that names episodes or seasons is no movie: it is grabbed for the
+// tracked series its name names, bound to the targets it holds, as a pick
+// from a target's own search would be. One that names no tracked series, or
+// several, is refused rather than filed as a movie request — which used to
+// hand an episode to the catalog as a movie named after its show.
 func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub string) error {
 	// Check the reference before creating a request that could not be grabbed.
 	probe := c
 	if err := s.resolveCandidate(&probe); err != nil {
+		return err
+	}
+	if release.ParseCoverage(probe.Title).Found {
+		series, err := s.trackedSeriesNamed(ctx, probe.Title)
+		if err != nil {
+			return err
+		}
+		if probe.Reason == "" {
+			probe.Reason = "picked in the search"
+		}
+		_, err = s.grabRelease(ctx, series, store.Target{}, probe, "search")
 		return err
 	}
 	if title == "" {
@@ -682,6 +739,44 @@ func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub 
 		return err
 	}
 	return s.GrabCandidate(ctx, w.ID, c)
+}
+
+// trackedSeriesNamed finds the one tracked series a release name names, by its
+// title or an alias, as a typed search verifies a release.
+func (s *Service) trackedSeriesNamed(ctx context.Context, name string) (store.Title, error) {
+	all, err := s.st.TitlesOfKind(ctx, "series", false)
+	if err != nil {
+		return store.Title{}, err
+	}
+	aliases, err := s.st.AllAliases(ctx)
+	if err != nil {
+		return store.Title{}, err
+	}
+	var hits []store.Title
+	for _, t := range all {
+		if indexer.Verify(t.Title, aliases[t.ID], name, nil, nil, false).OK {
+			hits = append(hits, t)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return store.Title{}, fmt.Errorf("%s holds episodes of a series acquire does not track — "+
+			"it is not filed as a movie; track the series and grab it from its missing episodes", name)
+	case 1:
+		return hits[0], nil
+	}
+	// "Show" and "Show Origins" both match "Show.Origins.S01E01": the longest
+	// title is the one the name means, when one is longer than all others.
+	sort.Slice(hits, func(i, j int) bool { return len(hits[i].Title) > len(hits[j].Title) })
+	if len(hits[0].Title) > len(hits[1].Title) {
+		return hits[0], nil
+	}
+	names := make([]string, 0, len(hits))
+	for _, t := range hits {
+		names = append(names, t.Title)
+	}
+	return store.Title{}, fmt.Errorf("%s matches several tracked series (%s) — grab it from the right one's missing episodes",
+		name, strings.Join(names, ", "))
 }
 
 // spendGrab counts a release file download against the source that offered

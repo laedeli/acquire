@@ -51,15 +51,31 @@ func (s *Service) AdmitGrab(ctx context.Context, c store.DownloadClient, sizeByt
 	if err := g.Admit(sizeBytes); err != nil {
 		return err
 	}
-	active, err := s.st.ActiveDownloads(ctx)
-	if err != nil {
-		// Cannot count in-flight work: refuse rather than guess.
-		return fmt.Errorf("refusing grab: cannot count active downloads: %w", err)
-	}
-	if max := pol.MaxConcurrentGrabs; active >= max {
-		return fmt.Errorf("refusing grab: %d download(s) already in flight (cap %d)", active, max)
+	if full, why := s.slotsFull(ctx); full {
+		return atCapacity{msg: "refusing grab: " + why}
 	}
 	return nil
+}
+
+// atCapacity is a grab turned away because as many downloads as the policy
+// allows are in flight (or they cannot be counted). It passes once one ends.
+type atCapacity struct{ msg string }
+
+func (e atCapacity) Error() string { return e.msg }
+
+// slotsFull reports whether no further download may start now, and why. It
+// counts what the downloads table shows and the grabs handed over that the
+// gateway has not reported yet (store.ActiveDownloads). A count that cannot be
+// read is full: refuse rather than guess.
+func (s *Service) slotsFull(ctx context.Context) (bool, string) {
+	active, err := s.st.ActiveDownloads(ctx)
+	if err != nil {
+		return true, fmt.Sprintf("cannot count active downloads: %v", err)
+	}
+	if max := s.grabPolicy(ctx).MaxConcurrentGrabs; active >= max {
+		return true, fmt.Sprintf("%d download(s) already in flight (cap %d)", active, max)
+	}
+	return false, ""
 }
 
 // onDownloadsVolume reports whether a client works on the deployment's

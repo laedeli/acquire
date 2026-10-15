@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -175,6 +176,14 @@ type fakeGateway struct {
 	adds        []map[string]any
 	puts        []gateway.ConfigPut
 	unknownOnce bool
+	// seq gives each add a job id of its own (101, 102, …) instead of 101.
+	seq bool
+}
+
+func (g *fakeGateway) added() []map[string]any {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]map[string]any(nil), g.adds...)
 }
 
 func (g *fakeGateway) server(t *testing.T) *httptest.Server {
@@ -190,8 +199,12 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 				http.Error(w, `{"error":"no such client"}`, http.StatusNotFound)
 				return
 			}
+			job := "101"
+			if g.seq {
+				job = strconv.Itoa(100 + len(g.adds))
+			}
 			w.WriteHeader(http.StatusAccepted)
-			_, _ = w.Write([]byte(`{"adapter":"nzbget","client_job_id":"101"}`))
+			_, _ = w.Write([]byte(`{"adapter":"nzbget","client_job_id":"` + job + `"}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/config/clients":
 			var body gateway.ConfigPut
 			_ = json.NewDecoder(r.Body).Decode(&body)

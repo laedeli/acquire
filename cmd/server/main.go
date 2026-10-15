@@ -86,14 +86,20 @@ func main() {
 	// Search source caps are cached; refresh the ones older than a day.
 	go svc.RunSourceMaintenance(ctx)
 	// Finished downloads outside the library's arrivals are copied in, handed to
-	// the catalog and released in their clients (ACQUIRE_ARRIVALS_ROOT).
+	// the catalog and released in their clients (ACQUIRE_ARRIVALS_ROOT); a
+	// target grab's files go over by identity, file by file.
 	go svc.RunImports(ctx)
+	// Grabs asked for in the console's missing tab, one at a time.
+	go svc.RunTargetGrabs(ctx)
+	// What the library holds, asked of katalog-api on the holdings-reconcile
+	// schedule and whenever titles are imported or derived.
+	go svc.RunHoldings(ctx)
 
 	// The consumer starts at the latest offset, so downloads that began while
 	// acquire was down would be invisible. Ask the gateway what is in flight.
 	go svc.Reconcile(ctx)
 
-	// Kafka consumer (download.client.* + catalog.item.packaged → svc reactions).
+	// Kafka consumer (download.client.* + catalog.item.* → svc reactions).
 	if cons, err := events.NewConsumer(cfg.KafkaBrokers, cfg.KafkaCertDir, cfg.KafkaTopicPrefix, cfg.KafkaGroupID); err != nil {
 		log.Printf("acquire: kafka consumer init failed (status reactions disabled): %v", err)
 	} else if cons != nil {
@@ -119,16 +125,18 @@ func main() {
 		defer func() { _ = prod.Close() }()
 	}
 	go relay.New(st, prod, 2*time.Second).Run(ctx)
-	// Register the recurring jobs later phases hang off. EnsureSchedule never
-	// disturbs an existing row, so an operator's disable or interval survives a
-	// redeploy. Nothing consumes schedule.due yet — this establishes the
-	// cadence and the alerting surface before the work exists.
+	// Register the recurring jobs. EnsureSchedule never disturbs an existing
+	// row, so an operator's disable or interval survives a redeploy. The
+	// consumer acts on schedule.due (OnScheduleDue): the sweep searches the
+	// backlog (and grabs with search.autoGrab), the reconcile learns what the
+	// library holds.
 	for _, sc := range []struct {
 		name  string
 		every time.Duration
 	}{
 		{"backlog-sweep", 30 * time.Minute},
 		{"retry-failed", 15 * time.Minute},
+		{"holdings-reconcile", 6 * time.Hour},
 		{"outbox-audit", 6 * time.Hour},
 	} {
 		if err := st.EnsureSchedule(ctx, sc.name, sc.every); err != nil {

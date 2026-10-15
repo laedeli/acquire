@@ -98,9 +98,12 @@ func (s *Service) wakeImports() {
 	}
 }
 
-// RunImports works through due imports, one at a time, until ctx ends.
+// RunImports works through due imports, one at a time, until ctx ends. A
+// target grab's download is always one (handed over in place when it lies in
+// the arrivals already, or when there are none); a request's only when it is
+// copied.
 func (s *Service) RunImports(ctx context.Context) {
-	if s.st == nil || s.cfg.ArrivalsRoot == "" {
+	if s.st == nil {
 		return
 	}
 	t := time.NewTicker(importTick)
@@ -130,10 +133,12 @@ func (s *Service) importNext(ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	switch im.State {
-	case store.ImportPending:
+	switch {
+	case im.State == store.ImportPending && store.IsTargetGrab(im.WantedID):
+		s.runTargetImport(ctx, im)
+	case im.State == store.ImportPending:
 		s.runImport(ctx, im)
-	case store.ImportImported:
+	case im.State == store.ImportImported:
 		s.releaseImport(ctx, im)
 	}
 	return true
@@ -171,6 +176,12 @@ func (s *Service) runImport(ctx context.Context, im store.Import) {
 		retry("the request could not be read", err)
 		return
 	}
+	if s.cfg.ArrivalsRoot == "" {
+		// Queued for a copy while the arrivals were set; there is nowhere to
+		// copy it to until they are again.
+		retry("the copy waits", errors.New("ACQUIRE_ARRIVALS_ROOT is not set"))
+		return
+	}
 	c, err := s.st.GetDownloadClient(ctx, im.Adapter)
 	if err != nil {
 		retry("the download client could not be read", err)
@@ -199,14 +210,24 @@ func (s *Service) runImport(ctx context.Context, im store.Import) {
 		im.Arrival = dst
 	}
 
-	req := katalog.IngestRequest{Path: dst, Type: "movie", Title: w.Title}
-	if w.Year != 0 {
-		y := int32(w.Year)
-		req.Year = &y
-	}
-	res, err := s.kc.Ingest(ctx, req)
+	res, err := s.ingestMovie(ctx, movieIngest(dst, w))
 	var refusal *katalog.IngestError
 	switch {
+	case errors.As(err, &refusal) && refusal.Holder() != "":
+		// The library holds the movie already: the request is served.
+		res.ItemID = refusal.Holder()
+		_ = s.st.SetItemID(ctx, w.ID, res.ItemID)
+		s.setStatus(ctx, w.ID, "fulfilled", "the library holds it already, as item "+res.ItemID)
+		im.Attempts = 0
+		if !releases(c) {
+			finish(store.ImportDone, "held already; the client keeps the download")
+			return
+		}
+		finish(store.ImportImported, "held already; the client still holds the download")
+		if c.Type == "nzbget" {
+			s.releaseImport(ctx, im)
+		}
+		return
 	case errors.As(err, &refusal) && refusal.Refused():
 		finish(store.ImportFailed, "the catalog refused the copy: "+err.Error())
 		s.setStatus(ctx, w.ID, "failed", "ingest failed: "+err.Error())

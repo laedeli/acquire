@@ -41,6 +41,14 @@ func (s *Service) ImportIntent(ctx context.Context, src importer.Source, dryRun 
 	res.Unresolvable = rep.Unresolvable
 	res.Skipped = rep.MissingTMDBID
 
+	var imported []string
+	defer func() {
+		// What the library holds of them is the catalog's to say, and until
+		// it has, none of them is missing (holdings.go).
+		if len(imported) > 0 {
+			s.RequestReconcile(imported...)
+		}
+	}()
 	for _, t := range titles {
 		if t.TMDBID == 0 {
 			continue // already reported in Skipped; a row needs an identity
@@ -63,9 +71,21 @@ func (s *Service) ImportIntent(ctx context.Context, src importer.Source, dryRun 
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t.Title, err))
 			continue
 		}
+		imported = append(imported, id)
 		if len(t.Aliases) > 0 {
 			if err := s.st.ReplaceAliases(ctx, id, t.Aliases, "incumbent"); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s aliases: %v", t.Title, err))
+			}
+		}
+		// A movie is its one target. One that is not out yet gets none: it
+		// would be searched for releases that cannot exist (a later import,
+		// or the library holding it, makes it).
+		if t.Kind == "movie" && (t.Status == "" || t.Status == "released") {
+			if err := s.st.UpsertTarget(ctx, store.Target{
+				ID: store.TargetID(id, nil, nil), TitleID: id, Kind: "movie",
+				Monitored: t.Monitored, State: store.TargetWanted,
+			}); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s target: %v", t.Title, err))
 			}
 		}
 	}
@@ -94,6 +114,14 @@ func (s *Service) DeriveInventory(ctx context.Context, tm *tmdb.Client, limit in
 	if err != nil {
 		return res, err
 	}
+	var derived []string
+	defer func() {
+		// New targets of a series are of unknown holdings until the catalog
+		// says what it holds of them.
+		if len(derived) > 0 {
+			s.RequestReconcile(derived...)
+		}
+	}()
 	now := time.Now()
 	for i, t := range titles {
 		if limit > 0 && i >= limit {
@@ -105,6 +133,9 @@ func (s *Service) DeriveInventory(ctx context.Context, tm *tmdb.Client, limit in
 			continue
 		}
 		res.Series++
+		if !dryRun {
+			derived = append(derived, t.ID)
+		}
 		res.Episodes += len(inv.Episodes)
 		for _, e := range inv.Episodes {
 			if e.Aired(now) {
