@@ -178,6 +178,16 @@ type fakeGateway struct {
 	unknownOnce bool
 	// seq gives each add a job id of its own (101, 102, …) instead of 101.
 	seq bool
+	// addStatus answers an add with that status (and addBody) and no job; addDrop takes the
+	// add and closes the connection without an answer; addHold, while set,
+	// holds the answer until it is closed.
+	addStatus int
+	addBody   string
+	addDrop   bool
+	addHold   chan struct{}
+	// jobs is what GET /api/v1/downloads lists; cancels what was cancelled.
+	jobs    []gateway.Job
+	cancels []string
 }
 
 func (g *fakeGateway) added() []map[string]any {
@@ -198,6 +208,27 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 			if g.unknownOnce && len(g.puts) == 0 {
 				http.Error(w, `{"error":"no such client"}`, http.StatusNotFound)
 				return
+			}
+			if g.addStatus != 0 {
+				body := g.addBody
+				if body == "" {
+					body = `{"error":"answered ` + strconv.Itoa(g.addStatus) + `"}`
+				}
+				http.Error(w, body, g.addStatus)
+				return
+			}
+			if g.addDrop {
+				if hj, ok := w.(http.Hijacker); ok {
+					if conn, _, err := hj.Hijack(); err == nil {
+						_ = conn.Close()
+					}
+				}
+				return
+			}
+			if hold := g.addHold; hold != nil {
+				g.mu.Unlock()
+				<-hold
+				g.mu.Lock()
 			}
 			job := "101"
 			if g.seq {
@@ -224,6 +255,15 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(gateway.ConfigState{Revision: rev})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/clients/status":
 			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/downloads":
+			jobs := g.jobs
+			if jobs == nil {
+				jobs = []gateway.Job{}
+			}
+			_ = json.NewEncoder(w).Encode(jobs)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/downloads/"):
+			g.cancels = append(g.cancels, strings.TrimPrefix(r.URL.Path, "/api/v1/downloads/"))
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}

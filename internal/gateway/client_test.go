@@ -51,6 +51,55 @@ func TestAddReportsUnknownClient(t *testing.T) {
 	}
 }
 
+// What an add that did not succeed says: nothing sent, an answer that took
+// nothing (the client refusing the release itself, or out of reach), or an
+// answer lost after the gateway may have taken it.
+func TestAddSaysWhatBecameOfIt(t *testing.T) {
+	answer := func(code int, body string) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	add := func(url string) error {
+		_, err := New(url, nil).Add(context.Background(), AddRequest{Adapter: "nzbget", Source: "magnet:?xt=x"})
+		return err
+	}
+	var ae *AddError
+	if err := add(answer(502, `{"error":"nzbget append rejected the source (id=0)"}`).URL); !errors.As(err, &ae) || !ae.Rejected() || ae.Temporary() {
+		t.Errorf("the client refused the release: %v", err)
+	}
+	if err := add(answer(502, `{"error":"nzbget: dial tcp: connection refused"}`).URL); !errors.As(err, &ae) || ae.Rejected() || !ae.Temporary() {
+		t.Errorf("the client out of reach: %v", err)
+	}
+	if err := add(answer(400, `{"error":"client (or adapter) and source or payload_b64 are required"}`).URL); !errors.As(err, &ae) || ae.Temporary() || ae.Rejected() {
+		t.Errorf("a bad request: %v", err)
+	}
+	if err := add(answer(202, `{"adapter":"nzbget"`).URL); !errors.Is(err, ErrAnswerLost) {
+		t.Errorf("an answer that cannot be read: %v", err)
+	}
+	if err := add(answer(202, `{"adapter":"nzbget"}`).URL); !errors.Is(err, ErrAnswerLost) {
+		t.Errorf("an answer without the client's job: %v", err)
+	}
+	dropped := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(dropped.Close)
+	if err := add(dropped.URL); !errors.Is(err, ErrAnswerLost) {
+		t.Errorf("a connection dropped after the add was sent: %v", err)
+	}
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	if err := add(gone.URL); !errors.Is(err, ErrUnreachable) || errors.Is(err, ErrAnswerLost) {
+		t.Errorf("a gateway that is not there: %v", err)
+	}
+}
+
 func TestConfigAPIAbsentIsDistinguishable(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()

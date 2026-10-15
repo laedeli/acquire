@@ -93,12 +93,15 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 	}
 	grabbing := s.grabPolicy(ctx).AutoGrab
 	var found, empty, failed, grabbed int
-	var stopped string
+	var stopped, halted string
 	for _, t := range due {
 		if ctx.Err() != nil {
 			break
 		}
 		cands, err := s.SearchTarget(ctx, t.ID)
+		if ctx.Err() != nil {
+			break // a search cut short says nothing of its target
+		}
 		usable := s.recordSearch(ctx, t, cands, err)
 		switch {
 		case err != nil:
@@ -137,12 +140,23 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 		default:
 			s.targetGrabFailed(ctx, t, err)
 		}
+		if err != nil && gatewayDown(err) {
+			// The gateway is not taking adds: the rest of the slice would be
+			// searched — spending the sources' allowance — for grabs that
+			// cannot be handed over. It waits for the next run.
+			halted = err.Error()
+			break
+		}
 	}
 	line := "acquire %s: %d target(s) — %d with candidates, %d empty, %d errored, %d grabbed"
 	args := []any{what, len(due), found, empty, failed, grabbed}
 	if stopped != "" {
 		line += "; stopped grabbing: %s"
 		args = append(args, stopped)
+	}
+	if halted != "" {
+		line += "; stopped: the gateway does not take grabs now: %s"
+		args = append(args, halted)
 	}
 	log.Printf(line, args...)
 	if grabbed > 0 {

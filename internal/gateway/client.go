@@ -6,11 +6,13 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -145,6 +147,55 @@ var ErrGatewayBusy = errors.New("the download gateway is busy with other large a
 // runs without the settings that enable it.
 var ErrNoConfigAPI = errors.New("the download gateway does not offer the configuration API")
 
+// ErrUnreachable means an add never reached the gateway — it could not be
+// connected to — so nothing was added and the same add may be tried later.
+var ErrUnreachable = errors.New("the download gateway cannot be reached")
+
+// ErrAnswerLost means an add was sent but no answer came back that says what
+// became of it — the connection dropped, the wait ran out, the answer could
+// not be read. The gateway may have handed the release to its client: an add
+// whose answer was lost must not be undone, nor sent again.
+var ErrAnswerLost = errors.New("the download gateway's answer to the add was lost")
+
+// AddError is an add the gateway answered without taking it.
+type AddError struct {
+	Status int
+	Body   string
+}
+
+func (e *AddError) Error() string {
+	return fmt.Sprintf("gateway add %d: %s", e.Status, strings.TrimSpace(e.Body))
+}
+
+// Rejected reports whether the download client refused the release itself —
+// a file it cannot read, a source it will not take, as the gateway's adapters
+// say ("… rejected the source") — rather than being out of reach. Another
+// release may do.
+func (e *AddError) Rejected() bool {
+	return e.Status == http.StatusBadGateway && strings.Contains(strings.ToLower(e.Body), "rejected")
+}
+
+// Temporary reports whether the same add may be taken later: the gateway, or
+// the client behind it, down, failing or busy.
+func (e *AddError) Temporary() bool {
+	return !e.Rejected() && (e.Status >= 500 || e.Status == http.StatusTooManyRequests || e.Status == http.StatusRequestTimeout)
+}
+
+// notSent reports whether a request's error came before anything of it was
+// sent: no connection could be made.
+func notSent(err error) bool {
+	var op *net.OpError
+	if errors.As(err, &op) && (op.Op == "dial" || op.Op == "proxyconnect") {
+		return true
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return true
+	}
+	var cert *tls.CertificateVerificationError
+	return errors.As(err, &cert)
+}
+
 // AddResult is the gateway's 202 response.
 type AddResult struct {
 	Adapter     string `json:"adapter"`
@@ -152,6 +203,10 @@ type AddResult struct {
 }
 
 // Add hands a source to a download client and returns the client job id.
+//
+// What an add that did not succeed says: ErrUnreachable (nothing was sent),
+// ErrUnknownClient, ErrGatewayBusy and *AddError (the gateway answered and
+// took nothing), or ErrAnswerLost (the gateway may have taken it).
 func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	if !c.Enabled() {
 		return AddResult{}, fmt.Errorf("download gateway not configured")
@@ -169,7 +224,10 @@ func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	}
 	resp, err := c.addHTTP(len(body)).Do(hreq)
 	if err != nil {
-		return AddResult{}, err
+		if notSent(err) {
+			return AddResult{}, fmt.Errorf("%w: %v", ErrUnreachable, err)
+		}
+		return AddResult{}, fmt.Errorf("%w: %v", ErrAnswerLost, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
@@ -181,11 +239,14 @@ func (c *Client) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	}
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return AddResult{}, fmt.Errorf("gateway add %d: %s", resp.StatusCode, string(b))
+		return AddResult{}, &AddError{Status: resp.StatusCode, Body: string(b)}
 	}
 	var out AddResult
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return AddResult{}, err
+		return AddResult{}, fmt.Errorf("%w: its answer could not be read: %v", ErrAnswerLost, err)
+	}
+	if out.ClientJobID == "" {
+		return AddResult{}, fmt.Errorf("%w: it answered %d without the client's job", ErrAnswerLost, resp.StatusCode)
 	}
 	return out, nil
 }

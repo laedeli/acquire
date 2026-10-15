@@ -710,7 +710,9 @@ func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidat
 // tracked series its name names, bound to the targets it holds, as a pick
 // from a target's own search would be. One that names no tracked series, or
 // several, is refused rather than filed as a movie request — which used to
-// hand an episode to the catalog as a movie named after its show.
+// hand an episode to the catalog as a movie named after its show. So is one
+// that names no episode but a tracked series (its year too, when it gives
+// one): what it holds cannot be told.
 func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub string) error {
 	// Check the reference before creating a request that could not be grabbed.
 	probe := c
@@ -728,6 +730,17 @@ func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub 
 		_, err = s.grabRelease(ctx, series, store.Target{}, probe, "search")
 		return err
 	}
+	hits, err := s.seriesMatching(ctx, probe.Title)
+	if err != nil {
+		return err
+	}
+	year := release.Parse(probe.Title).Year
+	for _, t := range hits {
+		if year == 0 || t.Year == 0 || year == t.Year {
+			return fmt.Errorf("%s names no episode or season of %s, a series acquire tracks — it is not filed as a movie; "+
+				"grab it from the series' missing episodes, whose releases name what they hold", probe.Title, t.Title)
+		}
+	}
 	if title == "" {
 		title = release.Parse(c.Title).Title
 	}
@@ -744,19 +757,9 @@ func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub 
 // trackedSeriesNamed finds the one tracked series a release name names, by its
 // title or an alias, as a typed search verifies a release.
 func (s *Service) trackedSeriesNamed(ctx context.Context, name string) (store.Title, error) {
-	all, err := s.st.TitlesOfKind(ctx, "series", false)
+	hits, err := s.seriesMatching(ctx, name)
 	if err != nil {
 		return store.Title{}, err
-	}
-	aliases, err := s.st.AllAliases(ctx)
-	if err != nil {
-		return store.Title{}, err
-	}
-	var hits []store.Title
-	for _, t := range all {
-		if indexer.Verify(t.Title, aliases[t.ID], name, nil, nil, false).OK {
-			hits = append(hits, t)
-		}
 	}
 	switch len(hits) {
 	case 0:
@@ -777,6 +780,26 @@ func (s *Service) trackedSeriesNamed(ctx context.Context, name string) (store.Ti
 	}
 	return store.Title{}, fmt.Errorf("%s matches several tracked series (%s) — grab it from the right one's missing episodes",
 		name, strings.Join(names, ", "))
+}
+
+// seriesMatching are the tracked series a release name names, by title or an
+// alias.
+func (s *Service) seriesMatching(ctx context.Context, name string) ([]store.Title, error) {
+	all, err := s.st.TitlesOfKind(ctx, "series", false)
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := s.st.AllAliases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var hits []store.Title
+	for _, t := range all {
+		if indexer.Verify(t.Title, aliases[t.ID], name, nil, nil, false).OK {
+			hits = append(hits, t)
+		}
+	}
+	return hits, nil
 }
 
 // spendGrab counts a release file download against the source that offered

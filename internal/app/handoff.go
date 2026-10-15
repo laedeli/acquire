@@ -136,18 +136,27 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 	} else {
 		req.Source = link
 	}
-	res, err := s.gw.Add(ctx, req)
+	if err := ctx.Err(); err != nil {
+		// The caller went away before anything reached the gateway.
+		return handedOff{}, unavailable{error: err}
+	}
+	// From the add on, nothing the caller does cuts it short: once the gateway
+	// may have the release, what follows is the only record of its job.
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), addTimeout)
+	defer cancel()
+	res, err := s.gw.Add(actx, req)
 	if errors.Is(err, gateway.ErrUnknownClient) && s.sync != nil {
 		// The gateway restarted and has not been told its clients yet. Tell it
 		// once and try once more; a second refusal is a real error.
 		log.Printf("acquire: gateway does not know client %s; pushing configuration and retrying", client.ID)
-		if _, perr := s.sync.Push(ctx); perr == nil {
-			res, err = s.gw.Add(ctx, req)
+		if _, perr := s.sync.Push(actx); perr == nil {
+			res, err = s.gw.Add(actx, req)
 		}
 	}
 	if err != nil {
-		return handedOff{}, err
+		return handedOff{}, addFailed(err)
 	}
+	ctx = actx
 	if store.IsTargetGrab(h.WantedID) {
 		// A grab bound to targets keeps where it came from on its own row
 		// (target_grabs, written by grabRelease); grabs belongs to requests.
@@ -182,6 +191,63 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 type refused struct{ error }
 
 func (r refused) Unwrap() error { return r.error }
+
+// What else a hand-over that did not happen says, for a grab bound to
+// targets (targetgrab.go) — a request's grab fails on any of them, as before.
+//
+// unavailable: the source or the gateway could not be had for now — down,
+// failing, busy, timing out, refusing acquire's credential, or the caller
+// gone before anything was sent. It says nothing about the release or what it
+// is for: the targets stay wanted and are searched again after a while.
+type unavailable struct {
+	error
+	// gateway is set when it is the gateway, or the client behind it: no
+	// other release fares better then.
+	gateway bool
+}
+
+func (e unavailable) Unwrap() error { return e.error }
+
+// badRelease: the release itself cannot be had — its file is gone from the
+// source, too large, a link the policy refuses, or the client refused it. It
+// is blocked for the targets, and the next release is taken.
+type badRelease struct{ error }
+
+func (e badRelease) Unwrap() error { return e.error }
+
+// answerLost: the add was sent but its answer did not come back, so the
+// gateway may have handed the release to its client. Nothing is undone: the
+// job's events bind the grab, or the stale-grab sweep gives it up.
+type answerLost struct{ error }
+
+func (e answerLost) Unwrap() error { return e.error }
+
+// gatewayRefused: the gateway answered and took nothing for a reason of its
+// configuration — it does not know the client, the client is being removed,
+// the add was malformed. Nothing about the release or its targets.
+type gatewayRefused struct{ error }
+
+func (e gatewayRefused) Unwrap() error { return e.error }
+
+// addTimeout bounds one add and what records it, run on a context of its own
+// once begun: longer than the gateway client's own wait for a large payload.
+const addTimeout = 5 * time.Minute
+
+// addFailed says what an add the gateway did not take means.
+func addFailed(err error) error {
+	var ae *gateway.AddError
+	switch {
+	case errors.Is(err, gateway.ErrAnswerLost):
+		return answerLost{err}
+	case errors.Is(err, gateway.ErrUnreachable), errors.Is(err, gateway.ErrGatewayBusy):
+		return unavailable{error: err, gateway: true}
+	case errors.As(err, &ae) && ae.Rejected():
+		return badRelease{err}
+	case errors.As(err, &ae) && ae.Temporary():
+		return unavailable{error: err, gateway: true}
+	}
+	return gatewayRefused{err}
+}
 
 // failGrab records a failed grab on the request, unless the grab was merely
 // refused, which says nothing about the request: a release waiting for room
@@ -257,15 +323,20 @@ type fetched struct {
 // protocol "" means the link's kind is unknown (a manual grab): the first bytes
 // decide, and a link that is not a release file comes back with Kind "" so it
 // can be handed over as a hoster link instead of being read to the cap.
+//
+// What a fetch that failed says: badRelease for the release itself (gone from
+// the source, too large, a link the policy refuses), unavailable for the
+// source (out of reach, failing, rate-limiting, refusing the key, or an error
+// page where the file should be).
 func (s *Service) fetchRelease(ctx context.Context, link, protocol, title string) (fetched, error) {
 	if _, err := s.policy.Check(link); err != nil {
-		return fetched{}, fmt.Errorf("release link refused: %w", err)
+		return fetched{}, badRelease{fmt.Errorf("release link refused: %w", err)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
-		return fetched{}, errors.New("release link is not a valid URL")
+		return fetched{}, badRelease{errors.New("release link is not a valid URL")}
 	}
 	req.Header.Set("User-Agent", "acquire")
 	resp, err := s.fetch.Do(req)
@@ -274,16 +345,22 @@ func (s *Service) fetchRelease(ctx context.Context, link, protocol, title string
 		return fetched{Kind: "torrent", Magnet: mr.Magnet}, nil
 	}
 	if err != nil {
-		return fetched{}, fmt.Errorf("fetching the release: %w", endpoint.RedactError(err))
+		return fetched{}, unavailable{error: fmt.Errorf("fetching the release: %w", endpoint.RedactError(err))}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fetched{}, fmt.Errorf("the source answered HTTP %d for the release file", resp.StatusCode)
+		err := fmt.Errorf("the source answered HTTP %d for the release file", resp.StatusCode)
+		switch c := resp.StatusCode; {
+		case c == http.StatusTooManyRequests, c == http.StatusRequestTimeout, c >= 500,
+			c == http.StatusUnauthorized, c == http.StatusForbidden:
+			return fetched{}, unavailable{error: err}
+		}
+		return fetched{}, badRelease{err}
 	}
 
 	head, err := endpoint.ReadCapped(io.LimitReader(resp.Body, sniffBytes), sniffBytes)
 	if err != nil {
-		return fetched{}, fmt.Errorf("reading the release: %w", endpoint.RedactError(err))
+		return fetched{}, unavailable{error: fmt.Errorf("reading the release: %w", endpoint.RedactError(err))}
 	}
 	kind := sniffRelease(head)
 	if protocol == "" && kind == "" {
@@ -295,8 +372,8 @@ func (s *Service) fetchRelease(ctx context.Context, link, protocol, title string
 	}
 	if kind != want {
 		// Typically an HTML or JSON error page served with 200 — an exhausted
-		// API limit looks exactly like this.
-		return fetched{}, fmt.Errorf("the release link did not return %s", describeKind(want))
+		// API limit looks exactly like this: the source's, not the release's.
+		return fetched{}, unavailable{error: fmt.Errorf("the release link did not return %s", describeKind(want))}
 	}
 	limit := int64(maxNZBBytes)
 	if want == "torrent" {
@@ -304,10 +381,10 @@ func (s *Service) fetchRelease(ctx context.Context, link, protocol, title string
 	}
 	rest, err := endpoint.ReadCapped(resp.Body, limit-int64(len(head)))
 	if errors.Is(err, endpoint.ErrTooLarge) {
-		return fetched{}, fmt.Errorf("the %s is larger than %d MiB", describeKind(want), limit>>20)
+		return fetched{}, badRelease{fmt.Errorf("the %s is larger than %d MiB", describeKind(want), limit>>20)}
 	}
 	if err != nil {
-		return fetched{}, fmt.Errorf("reading the release: %w", endpoint.RedactError(err))
+		return fetched{}, unavailable{error: fmt.Errorf("reading the release: %w", endpoint.RedactError(err))}
 	}
 	body := append(head, rest...)
 	return fetched{Kind: want, Body: body, Name: payloadName(resp, link, title, want)}, nil

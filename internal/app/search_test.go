@@ -39,6 +39,8 @@ type fakeSource struct {
 	titles   []string
 	queries  []string
 	srv      *httptest.Server
+	// gone are release ids whose file the source answers 404 for.
+	gone map[string]bool
 }
 
 func newFakeSource(t *testing.T, protocol, key string, titles ...string) *fakeSource {
@@ -68,7 +70,7 @@ func (f *fakeSource) offer(titles ...string) {
 
 func (f *fakeSource) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	mode, delay, titles := f.mode, f.delay, f.titles
+	mode, delay, titles, gone := f.mode, f.delay, f.titles, f.gone
 	q := r.URL.Query()
 	f.queries = append(f.queries, q.Get("t"))
 	f.mu.Unlock()
@@ -97,6 +99,10 @@ func (f *fakeSource) serve(w http.ResponseWriter, r *http.Request) {
 		  <movie-search available="yes" supportedParams="q,imdbid"/></searching>
 		  <categories><category id="2000" name="Movies"><subcat id="2040" name="Movies/HD"/></category></categories></caps>`))
 	case "get":
+		if gone[q.Get("id")] {
+			http.NotFound(w, r)
+			return
+		}
 		if f.protocol == "torrent" {
 			_, _ = w.Write([]byte(sampleTorrent))
 			return

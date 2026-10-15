@@ -633,3 +633,33 @@ func TestAReservationIsTakenOnce(t *testing.T) {
 		}
 	}
 }
+
+// A target reserved for a hand-over is not due for the sweep — searching it
+// would spend a source's allowance on a grab that cannot be taken — and the
+// library holding it ends its reservation, so it is not left reserved for a
+// grab that will never bind it.
+func TestAReservationKeepsTheSweepAwayUntilItEnds(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 13, 2)
+	knownHoldings(t, s, id)
+	if _, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_r1", TitleID: id}, eps[0], eps); err != nil {
+		t.Fatal(err)
+	}
+	if due, err := s.DueTargets(ctx, 10); err != nil || len(due) != 0 {
+		t.Fatalf("reserved targets are due: %+v %v", due, err)
+	}
+	if _, err := s.ApplySeriesHoldings(ctx, id, "", "default", []HeldEpisode{{Season: 1, Episode: 2, ItemID: "x2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if st := stateOf(t, s, eps[1]); st.State != TargetHeld || st.ReservedBy != "" {
+		t.Fatalf("held, but still reserved: %+v", st)
+	}
+	bound, err := s.BindTargetGrab(ctx, TargetGrab{ID: "tg_r1", Adapter: "nzbget", ClientJobID: "1"}, "grabbed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := stateOf(t, s, eps[1]); st.State != TargetHeld || st.GrabID == bound.ID {
+		t.Errorf("the grab bound a target the library holds: %+v", st)
+	}
+}

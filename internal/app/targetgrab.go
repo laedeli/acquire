@@ -120,11 +120,17 @@ func (s *Service) covering(ctx context.Context, title store.Title, anchor store.
 	return out, cov, nil
 }
 
+// answerLostDetail is what a target reserved by an add whose answer was lost
+// says until the download's events, or the stale-grab sweep, settle it.
+const answerLostDetail = "handed to the gateway, but its answer was lost: waiting for the download's events"
+
 // grabRelease hands one release to a download client for the targets of a
 // title it covers, bound to them: reserved first (so no second grab takes
 // them meanwhile), handed over, then bound to the client's job. A hand-over
-// that does not happen gives the targets back as they were. anchor is the
-// target the grab is for, or empty for a release found by name.
+// that does not happen gives the targets back as they were (handOverFailed).
+// Once the add is sent it and its bookkeeping run to their end even if the
+// caller goes away. anchor is the target the grab is for, or empty for a
+// release found by name.
 func (s *Service) grabRelease(ctx context.Context, title store.Title, anchor store.Target, c Candidate, via string) (store.TargetGrab, error) {
 	targets, cov, err := s.covering(ctx, title, anchor, c.Title)
 	if err != nil {
@@ -163,12 +169,12 @@ func (s *Service) grabRelease(ctx context.Context, title store.Title, anchor sto
 		ReleaseTitle: c.Title, Indexer: c.Indexer, IndexerID: c.IndexerID, ReleaseGUID: c.GUID,
 		Size: c.Size, Seeders: seeders, Reason: c.Reason,
 	})
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	// What follows records what became of the hand-over: the gateway may have
+	// the release, whether or not the caller still waits.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	if err != nil {
-		if rerr := s.st.ReleaseTargetGrab(wctx, g.ID); rerr != nil {
-			log.Printf("acquire: release the reservation %s: %v", g.ID, rerr)
-		}
+		s.handOverFailed(wctx, g, c, err)
 		return store.TargetGrab{}, err
 	}
 
@@ -202,6 +208,33 @@ func (s *Service) grabRelease(ctx context.Context, title store.Title, anchor sto
 	return bound, nil
 }
 
+// handOverFailed settles a reservation whose release did not reach a client.
+// An add whose answer was lost keeps it: the gateway may have the release,
+// and its events bind the grab (onTargetCompleted) or the stale-grab sweep
+// gives it up. Anything else gives the targets back as they were — a release
+// that cannot be had blocked for them first, so the next grab takes another.
+func (s *Service) handOverFailed(ctx context.Context, g store.TargetGrab, c Candidate, err error) {
+	var lost answerLost
+	if errors.As(err, &lost) {
+		why := clip(answerLostDetail+" ("+lost.Error()+")", 300)
+		_ = s.st.SetTargetGrabState(ctx, g.ID, store.GrabPending, why)
+		for _, id := range g.TargetIDs {
+			_ = s.st.SetTargetDetail(ctx, id, why)
+		}
+		log.Printf("acquire: grab %s: %v; its reservation stays for the download's events", g.ID, err)
+		return
+	}
+	var bad badRelease
+	if errors.As(err, &bad) {
+		for _, id := range g.TargetIDs {
+			_ = s.BlockFailedRelease(ctx, id, c.Title, c.Indexer, clip(bad.Error(), 200))
+		}
+	}
+	if rerr := s.st.ReleaseTargetGrab(ctx, g.ID); rerr != nil {
+		log.Printf("acquire: release the reservation %s: %v", g.ID, rerr)
+	}
+}
+
 // GrabTarget searches one target with its typed search and grabs the best
 // release an automatic grab may take (autoCandidates), bound to every target
 // that release covers. The search's outcome is recorded on the target either
@@ -215,6 +248,10 @@ func (s *Service) GrabTarget(ctx context.Context, targetID, via string) (store.T
 		return store.TargetGrab{}, &store.NotGrabbableError{TargetID: t.ID, State: t.State, Detail: t.Detail}
 	}
 	cands, err := s.SearchTarget(ctx, targetID)
+	if cerr := ctx.Err(); cerr != nil {
+		// Cut short — a shutdown, a caller gone: no word on the target.
+		return store.TargetGrab{}, unavailable{error: cerr}
+	}
 	usable := s.recordSearch(ctx, t, cands, err)
 	if err != nil {
 		return store.TargetGrab{}, searchFailed{err}
@@ -239,12 +276,14 @@ type notCovered struct{ error }
 func (e notCovered) Unwrap() error { return e.error }
 
 // grabBest grabs the first of the ranked releases that can be grabbed: a
-// source out of release downloads for today passes to the next.
+// source out of release downloads for today, and a release that cannot be had
+// (blocked for its targets now), pass to the next.
 func (s *Service) grabBest(ctx context.Context, title store.Title, t store.Target, ranked []Candidate, via string) (store.TargetGrab, error) {
 	var lastErr error
 	for _, c := range ranked {
 		g, err := s.grabRelease(ctx, title, t, c, via)
-		if errors.Is(err, errGrabLimit) {
+		var bad badRelease
+		if errors.Is(err, errGrabLimit) || errors.As(err, &bad) {
 			lastErr = err
 			continue
 		}
@@ -269,34 +308,53 @@ func (s *Service) GrabTargetCandidate(ctx context.Context, targetID string, c Ca
 	}
 	g, err := s.grabRelease(ctx, title, t, c, "pick")
 	if err != nil {
-		s.targetGrabFailed(ctx, t, err)
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		s.targetGrabFailed(wctx, t, err)
 	}
 	return g, err
 }
 
-// targetGrabFailed records why a grab of a target did not happen. A search
-// that could not be done, nothing to grab, and a refusal (no client, no room,
-// no slot) only say so: they say nothing about the target. Anything else — the
-// release file could not be fetched, the gateway refused it — fails it.
+// targetGrabFailed records why a grab of a target did not happen. Nothing
+// that keeps a grab from happening fails its target: what fails a target is
+// its release's download or hand-over, never the grab's way there. A search
+// that could not be done, nothing to grab, a refusal (no client, no room, no
+// slot, the gateway's configuration) and the store failing say so on it; a
+// source or gateway that cannot be had for now makes it due again on a later
+// sweep; a release that cannot be had is blocked for it already
+// (handOverFailed); an add whose answer was lost says so already.
 func (s *Service) targetGrabFailed(ctx context.Context, t store.Target, err error) {
 	var ng *store.NotGrabbableError
-	var r refused
 	var sf searchFailed
-	var nc notCovered
+	var un unavailable
+	var bad badRelease
+	var lost answerLost
 	switch {
-	case err == nil, errors.As(err, &ng), errors.Is(err, errStaleRelease):
+	case err == nil, errors.As(err, &ng), errors.Is(err, errStaleRelease), errors.As(err, &lost):
 		return
 	case errors.As(err, &sf):
 		_ = s.st.SetTargetDetail(ctx, t.ID, clip("search failed: "+sf.Error(), 300))
 	case errors.Is(err, errNoReleases):
 		_ = s.st.SetTargetDetail(ctx, t.ID, clip("searched: "+err.Error(), 300))
-	case errors.As(err, &r), errors.As(err, &nc):
-		_ = s.st.SetTargetDetail(ctx, t.ID, clip("not grabbed: "+err.Error(), 300))
+	case errors.As(err, &un):
+		s.foundButWaiting(ctx, t, un.Error())
+		_ = s.st.SetTargetDetail(ctx, t.ID, clip("not grabbed for now: "+un.Error()+"; searched again later", 300))
+	case errors.As(err, &bad):
+		_ = s.st.SetTargetDetail(ctx, t.ID, clip("not grabbed: "+bad.Error()+"; that release is blocked for it", 300))
 	default:
-		_, _ = s.st.SetTargetState(ctx, t.ID, []string{store.TargetWanted, store.TargetFailed},
-			store.TargetFailed, clip("grab failed: "+err.Error(), 300))
+		_ = s.st.SetTargetDetail(ctx, t.ID, clip("not grabbed: "+err.Error(), 300))
 	}
 	s.notify()
+}
+
+// gatewayDown reports whether a grab's error is the gateway not taking adds
+// — out of reach, failing, its answer lost, refusing them: no other grab
+// would reach a client now.
+func gatewayDown(err error) bool {
+	var un unavailable
+	var lost answerLost
+	var gr gatewayRefused
+	return (errors.As(err, &un) && un.gateway) || errors.As(err, &lost) || errors.As(err, &gr)
 }
 
 // recordSearch records a target search's outcome — found, none or error —
@@ -392,16 +450,25 @@ func (s *Service) targetGrabNext(ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
 	if full, why := s.slotsFull(ctx); full {
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
 		_ = s.st.DeferTargetGrabRequest(wctx, id, slotWait, clip("queued: "+why+"; tried again when a slot is free", 300))
 		return true
 	}
 	_, err = s.GrabTarget(ctx, id, "missing")
+	// Recorded whether or not ctx ended meanwhile, and after the grab, which
+	// may take longer than any wait set before it.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
 	var capErr atCapacity
-	if errors.As(err, &capErr) {
+	switch {
+	case errors.As(err, &capErr):
 		_ = s.st.DeferTargetGrabRequest(wctx, id, slotWait, clip("queued: "+capErr.Error(), 300))
+		return true
+	case err != nil && ctx.Err() != nil:
+		// Cut short by a shutdown: it stays queued, for whoever runs next.
+		_ = s.st.DeferTargetGrabRequest(wctx, id, 0, "queued for a search and grab")
 		return true
 	}
 	_ = s.st.FinishTargetGrabRequest(wctx, id)

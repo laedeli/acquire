@@ -404,7 +404,7 @@ func (s *Store) InvalidateHeldScores(ctx context.Context, profileID string) (int
 // sweepableSQL is what the backlog sweep may look at: wanted (not failed, not
 // in flight), aired, monitored with its title, of a title whose holdings are
 // known, and due — its next search time has come.
-const sweepableSQL = `a.state = 'wanted' AND a.monitored AND t.monitored AND t.holdings_at IS NOT NULL AND ` + airedSQL
+const sweepableSQL = `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND t.holdings_at IS NOT NULL AND ` + airedSQL
 
 // DueTargets returns the targets the backlog sweep searches next: wanted,
 // aired, monitored, of a title whose holdings are known, and due.
@@ -594,7 +594,7 @@ func holdSet(profileParam string) string {
 			       held_item_id = h.item, held_via = h.via, held_playable = h.playable,
 			       detail = CASE WHEN a.state = 'held' THEN a.detail ELSE 'in the library' END,
 			       state = 'held', grab_requested_at = NULL, grab_claimed_until = NULL,
-			       grab_failures = 0, retry_at = NULL,
+			       grab_failures = 0, retry_at = NULL, reserved_by = '',
 			       updated_at = now()`
 }
 
