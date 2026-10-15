@@ -91,6 +91,13 @@ func TestUnknownHoldingsAreNeitherMissingNorDue(t *testing.T) {
 	if ti.HoldingsKnown() || ti.HoldingsError != "the catalog does not answer holdings" {
 		t.Errorf("title: %+v", ti)
 	}
+	if h, err := s.HoldingsSummary(ctx); err != nil || h.Known != 0 || h.Unknown != 2 || h.Reason != "the catalog does not answer holdings" {
+		t.Errorf("summary: %+v %v", h, err)
+	}
+	knownHoldings(t, s, known)
+	if h, _ := s.HoldingsSummary(ctx); h.Known != 1 || h.Unknown != 1 || h.Reason != "" || h.LastAt == nil {
+		t.Errorf("summary with one known: %+v", h)
+	}
 }
 
 // Every search records its outcome and a next due time, so the sweep works

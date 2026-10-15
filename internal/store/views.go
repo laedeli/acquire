@@ -219,6 +219,30 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 	return c, err
 }
 
+// HoldingsSummary is what acquire knows of the library's holdings, for the
+// Missing view: how many monitored titles' holdings are known and unknown,
+// why the unknown ones are (the reason most of them give), and when a title's
+// holdings were last learned.
+type HoldingsSummary struct {
+	Known   int        `json:"known"`
+	Unknown int        `json:"unknown"`
+	Reason  string     `json:"reason,omitempty"`
+	LastAt  *time.Time `json:"lastAt"`
+}
+
+func (s *Store) HoldingsSummary(ctx context.Context) (HoldingsSummary, error) {
+	var h HoldingsSummary
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE holdings_at IS NOT NULL),
+		       count(*) FILTER (WHERE holdings_at IS NULL),
+		       COALESCE((SELECT holdings_error FROM titles
+		                  WHERE monitored AND holdings_at IS NULL AND holdings_error <> ''
+		                  GROUP BY holdings_error ORDER BY count(*) DESC, holdings_error LIMIT 1), ''),
+		       max(holdings_at)
+		  FROM titles WHERE monitored`).Scan(&h.Known, &h.Unknown, &h.Reason, &h.LastAt)
+	return h, err
+}
+
 // HistoryEntry is one thing that happened. History has no foreign key on
 // purpose — it must outlive its subject.
 type HistoryEntry struct {

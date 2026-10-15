@@ -228,6 +228,12 @@ func (s *Server) Handler() http.Handler {
 		r.Get("/api/counts", s.counts)
 		r.Get("/api/history", s.history)
 		r.Get("/api/targets/{id}/search", s.searchTarget) // admin — TYPED search
+		// Grabs bound to targets (targetsapi.go): a search and grab queued per
+		// target or for a selection, a pick among a target's results, and the
+		// holdings reconcile, asked now.
+		r.Post("/api/targets/grab", s.grabTargets)             // admin
+		r.Post("/api/targets/{id}/pick", s.pickTarget)         // admin
+		r.Post("/api/holdings/reconcile", s.reconcileHoldings) // admin
 
 		// Configuration, admin-only (configapi.go). The platform links its setup
 		// checklist into the console tabs that edit these.
@@ -784,16 +790,24 @@ func (s *Server) calendar(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"episodes": out})
 }
 
-// missing is the backlog: monitored, aired, still wanted. Rows in search backoff
-// are INCLUDED and flagged rather than hidden — a backlog view that omits
-// everything currently failing is the least useful version of itself.
+// missing is the backlog: monitored, aired, not held, of titles whose holdings
+// acquire knows — with what is under way for each. Rows in search backoff are
+// INCLUDED and flagged rather than hidden — a backlog view that omits
+// everything currently failing is the least useful version of itself. It says
+// how many titles' holdings are unknown, and why, since those titles are left
+// out, and whether the sweep grabs on its own (search.autoGrab).
 func (s *Server) missing(w http.ResponseWriter, r *http.Request) {
 	out, err := s.st.Missing(r.Context(), intParam(r, "limit", 500, 1, 5000))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"missing": out})
+	holdings, err := s.st.HoldingsSummary(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"missing": out, "holdings": holdings, "autoGrab": s.svc.SweepGrabs(r.Context())})
 }
 
 func (s *Server) counts(w http.ResponseWriter, r *http.Request) {

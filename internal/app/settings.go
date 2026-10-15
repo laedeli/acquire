@@ -92,6 +92,10 @@ func (s *Service) grabPolicy(ctx context.Context) SearchSettings {
 	return doc.SearchSettings
 }
 
+// SweepGrabs reports whether the backlog sweep grabs on its own
+// (search.autoGrab).
+func (s *Service) SweepGrabs(ctx context.Context) bool { return s.grabPolicy(ctx).AutoGrab }
+
 // SaveSearchSettings validates and stores the policy.
 func (s *Service) SaveSearchSettings(ctx context.Context, in SearchSettings, ifRevision int64, actor string) (SearchSettingsDoc, error) {
 	if fe := validateSearchSettings(in); len(fe) > 0 {
