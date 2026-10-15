@@ -14,6 +14,7 @@ import (
 
 	"github.com/laedeli/acquire/internal/endpoint"
 	"github.com/laedeli/acquire/internal/indexer"
+	"github.com/laedeli/acquire/internal/katalog"
 	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/store"
 )
@@ -525,19 +526,73 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 	return out, nil
 }
 
-// autoCandidates are the releases an automatic grab of a target may take,
-// best first: the ones the profile accepts and, for an episode, not a season
-// pack. A pack spends a season's worth of disk and bandwidth on what may be
-// one missing episode; it is grabbed only when someone picks it.
-func autoCandidates(t store.Target, ranked []Candidate) []Candidate {
+// autoCandidates are the releases an automatic grab of a target may take —
+// the sweep's, and the Missing tab's search and grab — best first: the ones
+// the profile accepts that hold the target alone, or one run of at most
+// katalog.MaxCovered episodes in a row (the most one file goes over for),
+// every one of them missing: a target acquire tracks, aired, monitored,
+// wanted or failed, not reserved by another grab, not left for someone to
+// look at. Anything more — a longer range, episodes that are not one run, a
+// season pack, several seasons — spends disk and bandwidth on what may not
+// be missing, or cannot go over as one file: it is grabbed only when someone
+// picks it.
+func (s *Service) autoCandidates(ctx context.Context, t store.Target, ranked []Candidate) []Candidate {
+	ok := acceptable(ranked)
+	if t.Kind == "movie" {
+		return ok
+	}
+	var missing map[[2]int]bool // read for the first release of several episodes
 	var out []Candidate
-	for _, c := range acceptable(ranked) {
-		if t.Kind != "movie" && c.Pack {
+	for _, c := range ok {
+		cov := release.ParseCoverage(c.Title)
+		switch {
+		case !cov.Found:
+			// It names nothing: it is grabbed for this target alone (covering).
+		case cov.Pack(), !cov.Run(), len(cov.Episodes) > katalog.MaxCovered:
 			continue
+		case t.SeasonNumber == nil || t.EpisodeNumber == nil || !cov.Covers(*t.SeasonNumber, *t.EpisodeNumber):
+			continue
+		case len(cov.Episodes) > 1:
+			if missing == nil {
+				missing = s.missingEpisodes(ctx, t.TitleID)
+			}
+			all := true
+			for _, e := range cov.Episodes {
+				all = all && (e == *t.EpisodeNumber || missing[[2]int{cov.Season, e}])
+			}
+			if !all {
+				continue
+			}
 		}
 		out = append(out, c)
 	}
 	return out
+}
+
+// missingEpisodes are the episodes of a title an automatic grab may bind
+// besides the one it is for. None when they cannot be read: then only a
+// release of that one episode is taken.
+func (s *Service) missingEpisodes(ctx context.Context, titleID string) map[[2]int]bool {
+	out := map[[2]int]bool{}
+	all, err := s.st.TitleTargets(ctx, titleID)
+	if err != nil {
+		return out
+	}
+	now := time.Now()
+	for _, x := range all {
+		if x.SeasonNumber == nil || x.EpisodeNumber == nil || !x.Monitored || !aired(x, now) ||
+			!store.Grabbable(x.State) || x.ReservedBy != "" || leftForAHuman(x) {
+			continue
+		}
+		out[[2]int{*x.SeasonNumber, *x.EpisodeNumber}] = true
+	}
+	return out
+}
+
+// leftForAHuman reports whether a target failed as often as it is tried on
+// its own, and waits for someone to look at it.
+func leftForAHuman(t store.Target) bool {
+	return t.State == store.TargetFailed && t.RetryAt == nil && t.GrabFailures >= store.MaxGrabFailures
 }
 
 // TargetSearchable reports whether a typed search is even possible, so the

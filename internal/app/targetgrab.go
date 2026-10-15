@@ -368,7 +368,7 @@ func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Cand
 			Detail: clip(err.Error(), 300), Base: backoffBase, Max: backoffCeiling})
 		return nil
 	}
-	usable := autoCandidates(t, cands)
+	usable := s.autoCandidates(ctx, t, cands)
 	if len(usable) == 0 {
 		// Nothing usable is also not proof of absence — a typed query to an
 		// indexer without id support returns zero with no error — so this

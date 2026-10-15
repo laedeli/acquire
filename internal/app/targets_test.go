@@ -39,6 +39,8 @@ type identityCatalog struct {
 	// held are episodes (S01E06) the library holds already with a file of
 	// their own: a file of several covering one leaves it out of covered.
 	held map[string]bool
+	// onIngest, when set, runs before the catalog answers a hand-over.
+	onIngest func(req katalog.IngestRequest)
 }
 
 func (f *identityCatalog) set(mode string) {
@@ -70,7 +72,15 @@ func (f *identityCatalog) server(t *testing.T) *httptest.Server {
 			w.WriteHeader(code)
 			_, _ = w.Write([]byte(body))
 		}
+		if f.onIngest != nil {
+			f.mu.Unlock()
+			f.onIngest(req)
+			f.mu.Lock()
+		}
 		switch f.mode {
+		case "refuse":
+			refuse(400, `{"error":"path must be under the arrivals' root (ARRIVALS_ROOT)"}`)
+			return
 		case "down":
 			refuse(503, "busy")
 			return
@@ -525,12 +535,17 @@ func TestAFileOfSeveralEpisodesGoesOverOnce(t *testing.T) {
 }
 
 // A file that covers more episodes in a row than the catalog takes in one is
-// not handed over: its episodes fail, saying why.
+// not handed over: its episodes fail, saying why. No automatic grab takes
+// such a range; this one was picked.
 func TestAFileOfTooManyEpisodesIsRefused(t *testing.T) {
 	r := newTargetRig(t, "Show.Name.S01E01-E12.1080p.WEB-DL-G")
 	ctx := context.Background()
 	_, eps := track(t, r.svc, 4711, "Show Name", 12, true)
-	g, err := r.svc.GrabTarget(ctx, eps[0].ID, "missing")
+	if _, err := r.svc.GrabTarget(ctx, eps[0].ID, "missing"); !errors.Is(err, errNoReleases) {
+		t.Fatalf("an automatic grab took twelve episodes: %v", err)
+	}
+	cands, _ := r.svc.SearchTarget(ctx, eps[0].ID)
+	g, err := r.svc.GrabTargetCandidate(ctx, eps[0].ID, cands[0])
 	if err != nil {
 		t.Fatal(err)
 	}

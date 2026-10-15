@@ -119,6 +119,9 @@ func fileCoverage(path string) release.Coverage {
 // targets. Each file goes for the episodes its name holds; of two files for
 // the same episode the larger is taken. A download whose one file names no
 // episode is the release itself, and goes for what the release's name holds.
+// A file whose name lists episodes that are not one run (S01E01E03) is left
+// out: one file goes over for one episode or one run of them, so a release of
+// such a list maps only when each episode has a file of its own.
 func planEpisodes(videos []videoFile, targets []store.Target, releaseName string) episodePlan {
 	var plan episodePlan
 	byEpisode := map[[2]int]store.Target{}
@@ -162,7 +165,7 @@ func planEpisodes(videos []videoFile, targets []store.Target, releaseName string
 	for _, k := range known {
 		var holds []store.Target
 		overlaps := false
-		for e := k.cov.Episode; e <= k.cov.EpisodeEnd; e++ {
+		for _, e := range k.cov.Episodes {
 			key := [2]int{k.cov.Season, e}
 			overlaps = overlaps || taken[key]
 			if t, ok := byEpisode[key]; ok {
@@ -171,6 +174,9 @@ func planEpisodes(videos []videoFile, targets []store.Target, releaseName string
 		}
 		name := filepath.Base(k.file.Path)
 		switch {
+		case !k.cov.Run():
+			plan.Left = append(plan.Left, name+": "+k.cov.String()+" names episodes that are not one run, which one file cannot go over for")
+			continue
 		case overlaps:
 			plan.Left = append(plan.Left, name+": a second file for "+k.cov.String())
 			continue
@@ -178,7 +184,7 @@ func planEpisodes(videos []videoFile, targets []store.Target, releaseName string
 			plan.Left = append(plan.Left, name+": "+k.cov.String()+" is not one this grab is for (held already, or not wanted)")
 			continue
 		}
-		for e := k.cov.Episode; e <= k.cov.EpisodeEnd; e++ {
+		for _, e := range k.cov.Episodes {
 			taken[[2]int{k.cov.Season, e}] = true
 		}
 		plan.Files = append(plan.Files, fileFor{File: k.file, Coverage: k.cov, Targets: holds})

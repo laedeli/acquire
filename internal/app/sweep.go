@@ -64,10 +64,11 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 // It grabs only when search.autoGrab allows it. Searching is cheap and
 // reversible; grabbing spends disk and bandwidth and is not. With autoGrab
 // off — the default — the sweep only searches and records what it would
-// take. With it on, it grabs the best release an automatic grab may take
-// (never a season pack for one episode), bound to every wanted target that
-// release covers, and only while a download slot is free; a target whose
-// title's holdings are unknown is never grabbed.
+// take. With it on, it grabs the best release an automatic grab may take —
+// the episode alone, or one run of at most ten episodes in a row that are all
+// missing (autoCandidates) — bound to every target that release covers, and
+// only while a download slot is free; a target whose title's holdings are
+// unknown is never grabbed.
 func (s *Service) SweepBacklog(ctx context.Context, limit int) error {
 	due, err := s.st.DueTargets(ctx, limit)
 	if err != nil {
