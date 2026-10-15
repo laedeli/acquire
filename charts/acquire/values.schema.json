@@ -117,6 +117,165 @@
       "description": "Where finished downloads are visible to acquire when a download client names no folder of its own. The platform media storage is mounted at /var/lib/katalog.",
       "default": "/var/lib/katalog",
       "minLength": 1
+    },
+    "clients": {
+      "type": "object",
+      "title": "Download clients",
+      "description": "Download clients the addon runs itself, each optional. acquire stores the enabled ones as managed clients, so they need no setup in its console. They work on the downloads claim, not on the media storage; acquire copies each finished download into the library and then releases it in its client.",
+      "properties": {
+        "downloads": {
+          "type": "object",
+          "title": "Downloads volume",
+          "description": "The claim acquire-downloads (ReadWriteOnce) both clients work on, each in a folder of its own, and acquire reads. A local volume pins the clients and acquire to its node.",
+          "properties": {
+            "size": {
+              "type": "string",
+              "title": "Size",
+              "default": "300Gi",
+              "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|k|M|G|T)?$"
+            },
+            "storageClassName": {
+              "type": "string",
+              "title": "Storage class",
+              "description": "Empty: the cluster's default."
+            },
+            "volumeName": {
+              "type": "string",
+              "title": "Volume",
+              "description": "A PV to bind by name. Under the operator leave it empty: it refuses a claim that names its volume, and a PV whose claimRef names acquire-downloads binds without it."
+            },
+            "reserve": {
+              "type": "string",
+              "title": "Reserve",
+              "description": "Kept free on the volume: NZBGet pauses below it, and acquire hands no release to a client that would leave less. Empty: a tenth of the size.",
+              "pattern": "^$|^[0-9]+(Ki|Mi|Gi|Ti|k|M|G|T)?$"
+            }
+          }
+        },
+        "qbittorrent": {
+          "type": "object",
+          "title": "qBittorrent",
+          "description": "Torrents.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "title": "Run qBittorrent",
+              "default": false
+            },
+            "vpn": {
+              "type": "boolean",
+              "title": "Through the platform VPN",
+              "description": "Torrents, peers, trackers and name lookups go through the platform VPN's SOCKS5 proxy, and the pod reaches nothing outside the cluster directly. Needs a platform with a VPN; turn it off to run qBittorrent without one.",
+              "default": true
+            },
+            "username": {
+              "type": "string",
+              "title": "Username",
+              "description": "The Web UI and API login acquire uses.",
+              "default": "acquire",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"
+            },
+            "password": {
+              "type": "string",
+              "title": "Password",
+              "description": "The Web UI and API password. Generated on first install when not given.",
+              "writeOnly": true,
+              "minLength": 8,
+              "maxLength": 256,
+              "pattern": "^\\S(.*\\S)?$",
+              "x-zaentrum-generate": "random-hex-32"
+            },
+            "seeding": {
+              "type": "object",
+              "title": "Seeding goal",
+              "description": "A finished torrent seeds until it reaches the ratio or has seeded the minutes, whichever comes first; then acquire removes it with its data. -1 lifts a limit.",
+              "properties": {
+                "ratio": {
+                  "type": "number",
+                  "title": "Ratio",
+                  "default": 1,
+                  "minimum": -1
+                },
+                "minutes": {
+                  "type": "integer",
+                  "title": "Minutes",
+                  "default": 4320,
+                  "minimum": -1
+                }
+              }
+            },
+            "config": {
+              "type": "object",
+              "title": "Configuration storage",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "title": "Size",
+                  "default": "1Gi",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$"
+                },
+                "storageClassName": {
+                  "type": "string",
+                  "title": "Storage class",
+                  "description": "Empty: the cluster's default."
+                }
+              }
+            }
+          }
+        },
+        "nzbget": {
+          "type": "object",
+          "title": "NZBGet",
+          "description": "Usenet.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "title": "Run NZBGet",
+              "default": false
+            },
+            "vpn": {
+              "type": "boolean",
+              "title": "Through the platform VPN",
+              "description": "Must stay off: NZBGet has no SOCKS5 proxy setting, so its news server connections cannot go through the platform VPN.",
+              "default": false
+            },
+            "username": {
+              "type": "string",
+              "title": "Username",
+              "description": "The control login acquire uses.",
+              "default": "acquire",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$"
+            },
+            "password": {
+              "type": "string",
+              "title": "Password",
+              "description": "The control password. Generated on first install when not given.",
+              "writeOnly": true,
+              "minLength": 8,
+              "maxLength": 256,
+              "pattern": "^\\S(.*\\S)?$",
+              "x-zaentrum-generate": "random-hex-32"
+            },
+            "config": {
+              "type": "object",
+              "title": "Configuration storage",
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "title": "Size",
+                  "default": "1Gi",
+                  "pattern": "^[0-9]+(\\.[0-9]+)?(Ki|Mi|Gi|Ti|k|M|G|T)?$"
+                },
+                "storageClassName": {
+                  "type": "string",
+                  "title": "Storage class",
+                  "description": "Empty: the cluster's default."
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

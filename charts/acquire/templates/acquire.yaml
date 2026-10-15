@@ -2,6 +2,8 @@
 {{- $labels := include "acquire.labels" (dict "root" $ "component" "acquire") }}
 {{- $secret := include "acquire.secretName" . }}
 {{- $certDir := include "acquire.kafkaCertDir" . }}
+{{- $clients := include "acquire.anyClient" . }}
+{{- $media := include "acquire.mediaMount" . }}
 # acquire — the primary component: console, API, and the capability manifest the
 # portal registers the addon from. It consumes download.client.* and
 # catalog.item.packaged, and ingests finished downloads through katalog-manager.
@@ -31,7 +33,11 @@ spec:
       {{- end }}
       automountServiceAccountToken: false
       securityContext:
+        {{- if $clients }}
+        {{- include "acquire.downloadsPodSecurityContext" . | nindent 8 }}
+        {{- else }}
         {{- include "acquire.podSecurityContext" . | nindent 8 }}
+        {{- end }}
       containers:
         - name: acquire
           image: {{ include "acquire.image" (dict "root" $ "image" .Values.acquire.image) | quote }}
@@ -102,6 +108,24 @@ spec:
               value: {{ if $z.events.tlsSecret }}{{ $certDir | quote }}{{ else }}""{{ end }}
             - name: ACQUIRE_DOWNLOADS_ROOT
               value: {{ .Values.downloadsRoot | quote }}
+            # The download clients this chart runs (clients.*): acquire stores
+            # them as managed clients at start, and removes the ones it stored
+            # for clients the chart no longer runs.
+            - name: ACQUIRE_MANAGED_CLIENTS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: download-clients
+            {{- if $clients }}
+            # Their downloads are copied into the library's arrivals, the one
+            # part of the media storage acquire writes, before the hand-over;
+            # and no release goes to them that their volume cannot hold with
+            # this much left free.
+            - name: ACQUIRE_ARRIVALS_ROOT
+              value: {{ printf "%s/%s" $media (include "acquire.arrivals" .) | quote }}
+            - name: ACQUIRE_DOWNLOADS_RESERVE
+              value: {{ include "acquire.downloadsReserve" . | quote }}
+            {{- end }}
             # Encrypts the credentials acquire stores.
             - name: ACQUIRE_CONFIG_KEY
               valueFrom:
@@ -119,7 +143,7 @@ spec:
               value: {{ .Values.endpoints.deny | default "" | quote }}
             - name: ACQUIRE_ENDPOINT_ALLOW_INTERNAL
               value: {{ if .Values.endpoints.allowInternal }}"true"{{ else }}"false"{{ end }}
-          {{- if or $z.events.tlsSecret $z.media.claimName }}
+          {{- if or $z.events.tlsSecret $z.media.claimName $clients }}
           volumeMounts:
             {{- if $z.events.tlsSecret }}
             - name: kafka-cert
@@ -129,7 +153,19 @@ spec:
             {{- if $z.media.claimName }}
             # The media storage, to find the files a download client finished.
             - name: media
-              mountPath: /var/lib/katalog
+              mountPath: {{ $media }}
+              readOnly: true
+            {{- if $clients }}
+            # Its arrivals, writable: where the copies of finished downloads go.
+            - name: media
+              mountPath: {{ printf "%s/%s" $media (include "acquire.arrivals" .) }}
+              subPath: {{ include "acquire.arrivals" . }}
+            {{- end }}
+            {{- end }}
+            {{- if $clients }}
+            # The volume the chart's download clients work on, to copy from.
+            - name: downloads
+              mountPath: {{ include "acquire.downloadsMount" . }}
               readOnly: true
             {{- end }}
           {{- end }}
@@ -149,7 +185,7 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-      {{- if or $z.events.tlsSecret $z.media.claimName }}
+      {{- if or $z.events.tlsSecret $z.media.claimName $clients }}
       volumes:
         {{- with $z.events.tlsSecret }}
         - name: kafka-cert
@@ -160,6 +196,14 @@ spec:
         - name: media
           persistentVolumeClaim:
             claimName: {{ . | quote }}
+            {{- if not $clients }}
+            readOnly: true
+            {{- end }}
+        {{- end }}
+        {{- if $clients }}
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: {{ include "acquire.downloadsClaim" . }}
             readOnly: true
         {{- end }}
       {{- end }}

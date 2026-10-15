@@ -4,7 +4,9 @@ package charts
 // the chart is held to them here before the operator ever plans it. The copy
 // is kept honest by TestGuardrailCopy, which feeds it one offending manifest
 // per rule. One deliberate difference: every name with the addon's values
-// prefix is reserved, not just the values objects of one install.
+// prefix is reserved, not just the values objects of one install. One rule is
+// the platform VPN's contract rather than a copy: a pod labelled
+// zaentrum.io/vpn: "true" is refused on a platform without a VPN.
 
 import (
 	"fmt"
@@ -30,6 +32,8 @@ type guardInput struct {
 	EventsTLSSecret string
 	// PullSecrets is zaentrum.imagePullSecrets, which pods may use and reference unrendered.
 	PullSecrets []string
+	// VPN is zaentrum.vpn.proxy; "" means the platform has no VPN.
+	VPN string
 }
 
 var (
@@ -63,6 +67,7 @@ func violations(objs []object, in guardInput) []string {
 		mediaClaim:   in.MediaClaim,
 		mountSecrets: map[string]bool{},
 		pullSecrets:  map[string]bool{},
+		vpn:          in.VPN != "",
 	}
 	for _, o := range objs {
 		if o.Kind == "Secret" {
@@ -169,6 +174,7 @@ type podRefs struct {
 	mediaClaim   string
 	mountSecrets map[string]bool // rendered Secrets, the events TLS secret, the pull secrets
 	pullSecrets  map[string]bool // rendered Secrets and the pull secrets
+	vpn          bool            // the platform has a VPN
 }
 
 func podViolations(o object, refs podRefs) []string {
@@ -183,6 +189,11 @@ func podViolations(o object, refs podRefs) []string {
 	}
 	spec := w.Template.Spec
 
+	// A pod assigned to the VPN is confined to the cluster, which only makes
+	// sense with a VPN to reach the internet through.
+	if w.Template.Metadata.Labels["zaentrum.io/vpn"] == "true" && !refs.vpn {
+		add("label zaentrum.io/vpn not allowed: the platform has no VPN")
+	}
 	if spec.HostNetwork {
 		add("hostNetwork not allowed")
 	}
@@ -413,6 +424,7 @@ func TestGuardrailCopy(t *testing.T) {
 		MediaClaim:      "media",
 		EventsTLSSecret: "event-client-tls",
 		PullSecrets:     []string{"registry-pull"},
+		VPN:             "socks5h://vpn.vpn.svc.cluster.local:1080",
 	}
 	yes, no := true, false
 	root := int64(0)
@@ -447,6 +459,7 @@ func TestGuardrailCopy(t *testing.T) {
 				"envFrom": []any{map[string]any{"secretRef": map[string]any{"name": "registry-pull"}}},
 			}))),
 			workload("batch/v1", "Job", pod(nil, containerSpec(nil))),
+			vpnWorkload(),
 		)
 		allowed := in
 		allowed.Primary = "worker"
@@ -527,9 +540,14 @@ func TestGuardrailCopy(t *testing.T) {
 		{"envFrom secret", deployContainer(map[string]any{"envFrom": []any{map[string]any{"secretRef": map[string]any{"name": "platform-db"}}}}), "envFrom references secret platform-db"},
 		{"envFrom configMap", deployContainer(map[string]any{"envFrom": []any{map[string]any{"configMapRef": map[string]any{"name": "platform-config"}}}}), "envFrom references configMap platform-config"},
 		{"init container", list(workload("apps/v1", "Deployment", pod(map[string]any{"initContainers": []any{containerSpec(map[string]any{"name": "init", "securityContext": map[string]any{"privileged": true}})}}, containerSpec(nil)))), "container init: privileged not allowed"},
+		{"vpn without a vpn", list(vpnWorkload()), "Deployment/vpn-client: label zaentrum.io/vpn not allowed: the platform has no VPN"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			in := in
+			if c.name == "vpn without a vpn" {
+				in.VPN = ""
+			}
 			got := violations(manifests(t, c.objs...), in)
 			if !slices.ContainsFunc(got, func(v string) bool { return strings.Contains(v, c.want) }) {
 				t.Errorf("want a refusal containing %q, got %q", c.want, got)
@@ -620,6 +638,14 @@ func deploy(podExtra map[string]any) []map[string]any {
 
 func deployContainer(containerExtra map[string]any) []map[string]any {
 	return list(workload("apps/v1", "Deployment", pod(nil, containerSpec(containerExtra))))
+}
+
+// vpnWorkload is a Deployment whose pods are assigned to the platform VPN.
+func vpnWorkload() map[string]any {
+	return obj("apps/v1", "Deployment", "vpn-client", map[string]any{"spec": map[string]any{"template": map[string]any{
+		"metadata": map[string]any{"labels": map[string]any{"zaentrum.io/vpn": "true"}},
+		"spec":     pod(nil, containerSpec(nil)),
+	}}})
 }
 
 func nodeAffinity(field string, value any) map[string]any {

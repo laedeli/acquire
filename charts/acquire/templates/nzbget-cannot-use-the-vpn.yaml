@@ -1,0 +1,21 @@
+{{- /*
+NZBGET CANNOT USE THE VPN.
+
+The platform VPN carries what a program sends through its SOCKS5 proxy, and a
+pod assigned to it reaches nothing else outside the cluster. NZBGet has no
+proxy setting at all: it connects to its news servers directly, over TLS
+(the Server<n> options of NZBGet 26.3 have none, and its connections open a
+socket straight to the server). Behind the VPN it would reach none of them,
+so clients.nzbget.vpn must stay false (the default).
+
+The operator reports a template failure only by its location, as
+"template error at acquire/templates/nzbget-cannot-use-the-vpn.yaml:<line>",
+never with the message: this file's name, and this comment, are the message.
+
+The file renders nothing otherwise, and must not start with an underscore:
+Helm never executes such files on their own.
+*/ -}}
+{{- $c := .Values.clients.nzbget }}
+{{- if and $c.enabled $c.vpn }}
+{{- fail "clients.nzbget.vpn must be false: NZBGet has no SOCKS5 proxy setting, so its news server connections (TLS) cannot go through the platform VPN, which carries proxied connections only" }}
+{{- end }}

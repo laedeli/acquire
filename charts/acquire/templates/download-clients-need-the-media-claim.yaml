@@ -1,0 +1,20 @@
+{{- /*
+DOWNLOAD CLIENTS NEED THE MEDIA CLAIM.
+
+A download client the chart runs works on the downloads claim, and acquire
+copies what it finishes into the library's arrivals on the platform's media
+storage (zaentrum.media.claimName), where the catalog takes it from. Without
+the media claim there is nowhere to copy it to.
+
+The operator reports a template failure only by its location, as
+"template error at acquire/templates/download-clients-need-the-media-claim.yaml:<line>",
+never with the message: this file's name, and this comment, are the message.
+
+The file renders nothing otherwise, and must not start with an underscore:
+Helm never executes such files on their own.
+*/ -}}
+{{- range $name := include "acquire.clientNames" . | fromJsonArray }}
+{{- if and (index $.Values.clients $name).enabled (not $.Values.zaentrum.media.claimName) }}
+{{- fail (printf "clients.%s.enabled needs the platform's media storage, and zaentrum.media.claimName is empty: acquire copies finished downloads into it" $name) }}
+{{- end }}
+{{- end }}

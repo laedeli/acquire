@@ -1,7 +1,8 @@
 // Package charts tests the addon chart the way the zaentrum operator sees it:
-// rendered by helm with a full zaentrum block (acquire/ci/test-values.yaml),
-// then held to the operator's guardrails (guardrails_test.go). A chart the
-// operator would refuse fails here first.
+// rendered by helm with a full zaentrum block (acquire/ci/test-values.yaml,
+// varied per test, and every other CI values file), then held to the
+// operator's guardrails (guardrails_test.go). A chart the operator would
+// refuse fails here first. clients_test.go covers the download clients.
 //
 // The chart tests need the helm CLI (HELM, else helm on PATH). They skip
 // without it, unless REQUIRE_HELM is set, as the workflows do.
@@ -34,8 +35,9 @@ const (
 )
 
 // TestChartGuardrails: the render passes every guardrail, sets the pod security
-// the guardrails ask for explicitly, carries the addon annotations, renders both
-// components, and keeps every secret input out of the pod specs.
+// the guardrails ask for explicitly, carries the addon annotations, renders
+// every component — both download clients included — and keeps every secret
+// input out of the pod specs.
 func TestChartGuardrails(t *testing.T) {
 	objs := mustRender(t)
 	vals := values(t)
@@ -51,7 +53,7 @@ func TestChartGuardrails(t *testing.T) {
 		t.Errorf("Chart.yaml: annotation zaentrum.io/primary = %q, want acquire", got)
 	}
 
-	for _, name := range []string{"acquire", "download-gateway"} {
+	for _, name := range []string{"acquire", "download-gateway", "qbittorrent", "nzbget"} {
 		dep, svc := find(objs, "Deployment", name), find(objs, "Service", name)
 		if dep == nil || svc == nil {
 			t.Errorf("want Deployment/%s and Service/%s, rendered %v", name, name, refs(objs))
@@ -77,6 +79,14 @@ func TestChartGuardrails(t *testing.T) {
 			if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || !slices.Contains(sc.Capabilities.Drop, "ALL") {
 				t.Errorf("Deployment/%s container %s: must set allowPrivilegeEscalation: false and drop ALL capabilities", name, c.Name)
 			}
+		}
+		if name == "qbittorrent" || name == "nzbget" {
+			c := containerNamed(t, *dep, name)
+			// Their Web UI answers only with a login: the probes connect.
+			if c.ReadinessProbe == nil || c.ReadinessProbe.TCPSocket == nil || c.LivenessProbe == nil || c.LivenessProbe.TCPSocket == nil {
+				t.Errorf("Deployment/%s: readiness and liveness probes must connect to the port", name)
+			}
+			continue
 		}
 		c := containerOf(t, *dep)
 		if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet.Path != "/readyz" {
@@ -227,7 +237,8 @@ func TestChartPlatformFacts(t *testing.T) {
 // secret) the render is still valid and uses no certificate: acquire gets an
 // empty KAFKA_CERT_DIR, the gateway no TLS files, and nothing is mounted. No
 // split horizon, pull secrets, media claim or optional secret inputs render
-// nothing for them either.
+// nothing for them either. (Download clients need the media claim, so they
+// are off here.)
 func TestChartPlaintextAndOptionalFacts(t *testing.T) {
 	objs := mustRender(t,
 		"--set", "zaentrum.events.tlsSecret=",
@@ -237,6 +248,8 @@ func TestChartPlaintextAndOptionalFacts(t *testing.T) {
 		"--set", "zaentrum.partOf=",
 		"--set", "tmdb.apiKey=",
 		"--set", "config.previousKey=",
+		"--set", "clients.qbittorrent.enabled=false",
+		"--set", "clients.nzbget.enabled=false",
 	)
 	guard := platformGuard(t, values(t), chartMeta(t))
 	guard.MediaClaim, guard.EventsTLSSecret, guard.PullSecrets = "", "", nil
@@ -326,6 +339,9 @@ type workloadSpec struct {
 	Selector struct {
 		MatchLabels map[string]string `yaml:"matchLabels"`
 	} `yaml:"selector"`
+	Strategy struct {
+		Type string `yaml:"type"`
+	} `yaml:"strategy"`
 	Template struct {
 		Metadata struct {
 			Labels map[string]string `yaml:"labels"`
@@ -358,9 +374,10 @@ type podSpec struct {
 		} `yaml:"nodeAffinity"`
 	} `yaml:"affinity"`
 	SecurityContext struct {
-		RunAsNonRoot   *bool  `yaml:"runAsNonRoot"`
-		RunAsUser      *int64 `yaml:"runAsUser"`
-		SeccompProfile struct {
+		RunAsNonRoot        *bool  `yaml:"runAsNonRoot"`
+		RunAsUser           *int64 `yaml:"runAsUser"`
+		FSGroupChangePolicy string `yaml:"fsGroupChangePolicy"`
+		SeccompProfile      struct {
 			Type string `yaml:"type"`
 		} `yaml:"seccompProfile"`
 		SELinuxOptions struct {
@@ -397,9 +414,10 @@ type nodeSelectorTerm struct {
 }
 
 type container struct {
-	Name  string `yaml:"name"`
-	Image string `yaml:"image"`
-	Ports []struct {
+	Name    string   `yaml:"name"`
+	Image   string   `yaml:"image"`
+	Command []string `yaml:"command"`
+	Ports   []struct {
 		Name          string `yaml:"name"`
 		ContainerPort int    `yaml:"containerPort"`
 		HostPort      int    `yaml:"hostPort"`
@@ -413,11 +431,7 @@ type container struct {
 			Name string `yaml:"name"`
 		} `yaml:"configMapRef"`
 	} `yaml:"envFrom"`
-	VolumeMounts []struct {
-		Name      string `yaml:"name"`
-		MountPath string `yaml:"mountPath"`
-		ReadOnly  bool   `yaml:"readOnly"`
-	} `yaml:"volumeMounts"`
+	VolumeMounts    []volumeMount `yaml:"volumeMounts"`
 	SecurityContext struct {
 		Privileged               *bool  `yaml:"privileged"`
 		AllowPrivilegeEscalation *bool  `yaml:"allowPrivilegeEscalation"`
@@ -442,6 +456,13 @@ type container struct {
 	LivenessProbe  *probe `yaml:"livenessProbe"`
 }
 
+type volumeMount struct {
+	Name      string `yaml:"name"`
+	MountPath string `yaml:"mountPath"`
+	SubPath   string `yaml:"subPath"`
+	ReadOnly  bool   `yaml:"readOnly"`
+}
+
 type envVar struct {
 	Name      string    `yaml:"name"`
 	Value     yaml.Node `yaml:"value"` // Kind 0 when unset
@@ -461,6 +482,9 @@ type probe struct {
 	HTTPGet struct {
 		Path string `yaml:"path"`
 	} `yaml:"httpGet"`
+	TCPSocket *struct {
+		Port any `yaml:"port"`
+	} `yaml:"tcpSocket"`
 }
 
 type serviceSpec struct {
@@ -479,9 +503,14 @@ type servicePort struct {
 }
 
 type pvcSpec struct {
-	VolumeName    string         `yaml:"volumeName"`
-	DataSource    map[string]any `yaml:"dataSource"`
-	DataSourceRef map[string]any `yaml:"dataSourceRef"`
+	VolumeName       string         `yaml:"volumeName"`
+	DataSource       map[string]any `yaml:"dataSource"`
+	DataSourceRef    map[string]any `yaml:"dataSourceRef"`
+	AccessModes      []string       `yaml:"accessModes"`
+	StorageClassName string         `yaml:"storageClassName"`
+	Resources        struct {
+		Requests map[string]string `yaml:"requests"`
+	} `yaml:"resources"`
 }
 
 var docSeparator = regexp.MustCompile(`(?m)^---[ \t]*$`)
@@ -552,17 +581,24 @@ func platformGuard(t *testing.T, vals map[string]any, meta chartYAML) guardInput
 	t.Helper()
 	var pull []string
 	if list, ok := lookup(vals, "zaentrum.imagePullSecrets"); ok {
-		for _, s := range list.([]any) {
+		items, _ := list.([]any)
+		for _, s := range items {
 			pull = append(pull, s.(string))
 		}
+	}
+	opt := func(path string) string {
+		v, _ := lookup(vals, path)
+		s, _ := v.(string)
+		return s
 	}
 	return guardInput{
 		Namespace:       namespace,
 		Addon:           release,
-		MediaClaim:      str(t, vals, "zaentrum.media.claimName"),
+		MediaClaim:      opt("zaentrum.media.claimName"),
 		Primary:         meta.Annotations["zaentrum.io/primary"],
-		EventsTLSSecret: str(t, vals, "zaentrum.events.tlsSecret"),
+		EventsTLSSecret: opt("zaentrum.events.tlsSecret"),
 		PullSecrets:     pull,
+		VPN:             opt("zaentrum.vpn.proxy"),
 	}
 }
 
@@ -691,6 +727,18 @@ func containerOf(t *testing.T, o object) container {
 		t.Fatalf("%s: want one container, got %d", o.ref(), len(cs))
 	}
 	return cs[0]
+}
+
+// containerNamed returns a Deployment's container of that name.
+func containerNamed(t *testing.T, o object, name string) container {
+	t.Helper()
+	for _, c := range workloadOf(t, o).Template.Spec.Containers {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("%s: no container %s", o.ref(), name)
+	return container{}
 }
 
 func envOf(c container, name string) *envVar {
@@ -836,13 +884,19 @@ func chartMeta(t *testing.T) chartYAML {
 // values reads the CI values as a tree for dotted-path lookups.
 func values(t *testing.T) map[string]any {
 	t.Helper()
-	b, err := os.ReadFile(testValues)
+	return valuesOf(t, testValues)
+}
+
+// valuesOf reads a values file as a tree for dotted-path lookups.
+func valuesOf(t *testing.T, file string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var v map[string]any
 	if err := yaml.Unmarshal(b, &v); err != nil {
-		t.Fatalf("%s: %v", testValues, err)
+		t.Fatalf("%s: %v", file, err)
 	}
 	return v
 }

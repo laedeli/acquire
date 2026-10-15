@@ -60,11 +60,25 @@ jobs:
         with:
           go-version: '1.24'
 
+      # Every CI values file: the full platform with both download clients
+      # (test-values.yaml), one without a VPN, one with the defaults.
       - name: lint
-        run: helm lint "$CHART" --strict --values "$CHART/ci/test-values.yaml"
+        run: |
+          set -euo pipefail
+          for values in "$CHART"/ci/*-values.yaml; do
+            echo "::group::lint with $values"
+            helm lint "$CHART" --strict --values "$values"
+            echo "::endgroup::"
+          done
 
       - name: render
-        run: helm template acquire "$CHART" --namespace zaentrum-example --values "$CHART/ci/test-values.yaml"
+        run: |
+          set -euo pipefail
+          for values in "$CHART"/ci/*-values.yaml; do
+            echo "::group::render with $values"
+            helm template acquire "$CHART" --namespace zaentrum-example --values "$values"
+            echo "::endgroup::"
+          done
 
       - name: chart tests
         env:

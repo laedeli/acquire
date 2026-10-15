@@ -1,7 +1,9 @@
-# CI values: a full `zaentrum` block shaped as the operator sets it, and dummy
-# inputs. Rendered by .github/workflows/chart.yml and charts/chart_test.go.
-# Every secret input carries a distinctive dummy, so the tests can prove none of
-# them leaks outside the chart's Secret. Nothing here is a real credential.
+# CI values: a full `zaentrum` block shaped as the operator sets it, a
+# platform VPN included, both download clients (qBittorrent through the VPN,
+# NZBGet directly) and dummy inputs. Rendered by .github/workflows/chart.yml
+# and charts/chart_test.go, which varies it. Every secret input carries a
+# distinctive dummy, so the tests can prove none of them leaks outside the
+# chart's Secret. Nothing here is a real credential.
 zaentrum:
   namespace: zaentrum-example
   hostname: zaentrum.example.org
@@ -15,6 +17,8 @@ zaentrum:
     tlsSecret: event-client-tls
   media:
     claimName: media
+  vpn:
+    proxy: socks5h://vpn.vpn.svc.cluster.local:1080
 
 database:
   url: postgres://acquire:ci-database-password@postgres.example.org:5432/acquire?sslmode=require
@@ -27,3 +31,10 @@ config:
   previousKey: Y2ktb25seS1wcmV2aW91cy1rZXktbm90LXNlY3JldCE=
 endpoints:
   deny: .other-namespace.svc,files.example.org
+clients:
+  qbittorrent:
+    enabled: true
+    password: ci-qbittorrent-password
+  nzbget:
+    enabled: true
+    password: ci-nzbget-password

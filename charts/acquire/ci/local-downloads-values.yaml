@@ -1,0 +1,41 @@
+# CI values: the downloads claim on a local volume — the storage class of a
+# PV made by hand on a node's disk, whose claimRef names acquire-downloads (no
+# volumeName, which the operator refuses) — with an explicit reserve and a seeding goal of
+# its own, both clients on, qBittorrent through the platform VPN. Rendered by
+# .github/workflows/chart.yml and charts/chart_test.go. Nothing here is a real
+# credential.
+zaentrum:
+  namespace: zaentrum-example
+  hostname: zaentrum.example.org
+  issuer: https://sso.example.org/realms/example
+  imagePullSecrets: [registry-pull]
+  partOf: zaentrum-example-addons
+  events:
+    brokers: event-brokers.event-streaming.svc:9093
+    topicPrefix: zaentrum-example.
+    tlsSecret: event-client-tls
+  media:
+    claimName: media
+  vpn:
+    proxy: socks5h://vpn.vpn.svc.cluster.local:1080
+
+database:
+  url: postgres://acquire:ci-database-password@postgres.example.org:5432/acquire?sslmode=require
+oidc:
+  serviceClientSecret: ci-service-client-secret
+config:
+  key: Y2ktb25seS1jb25maWcta2V5LW5vdC1hLXNlY3JldCE=
+clients:
+  downloads:
+    size: 300Gi
+    storageClassName: local-storage
+    reserve: 20Gi
+  qbittorrent:
+    enabled: true
+    password: ci-qbittorrent-password
+    seeding:
+      ratio: 2.5
+      minutes: -1
+  nzbget:
+    enabled: true
+    password: ci-nzbget-password

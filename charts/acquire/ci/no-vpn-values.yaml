@@ -1,0 +1,36 @@
+# CI values: a platform without a VPN (zaentrum.vpn.proxy empty) on plaintext
+# brokers, running qBittorrent without the VPN on a storage class of its own;
+# NZBGet stays off. Rendered by .github/workflows/chart.yml and
+# charts/chart_test.go. Nothing here is a real credential.
+zaentrum:
+  namespace: zaentrum-example
+  hostname: zaentrum.example.org
+  issuer: https://sso.example.org/realms/example
+  imagePullSecrets: []
+  partOf: zaentrum-example-addons
+  events:
+    brokers: kafka:9092
+    topicPrefix: zaentrum-example.
+    tlsSecret: ""
+  media:
+    claimName: media
+  vpn:
+    proxy: ""
+
+database:
+  url: postgres://acquire:ci-database-password@postgres.example.org:5432/acquire?sslmode=require
+oidc:
+  serviceClientSecret: ci-service-client-secret
+config:
+  key: Y2ktb25seS1jb25maWcta2V5LW5vdC1hLXNlY3JldCE=
+clients:
+  qbittorrent:
+    enabled: true
+    vpn: false
+    username: downloads
+    password: ci-qbittorrent-password
+    config:
+      size: 2Gi
+      storageClassName: fast-ssd
+    image:
+      pullPolicy: IfNotPresent

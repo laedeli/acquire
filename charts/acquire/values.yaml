@@ -9,8 +9,9 @@
 #     anything given here or in an install; templates read the platform from it
 #     and from nowhere else.
 #   - inputs: declared in values.schema.json (database, oidc, tmdb, config,
-#     endpoints, downloadsRoot). Secret inputs are rendered into the Secret
-#     `acquire-secrets` and reach the containers through secretKeyRef only.
+#     endpoints, downloadsRoot, and the download clients' clients.*). Secret
+#     inputs are rendered into the Secret `acquire-secrets` and reach the
+#     containers through secretKeyRef only.
 #   - tuning: images, resources, the in-namespace service URLs.
 
 # ── platform facts (set by the operator) ────────────────────────────────────
@@ -31,8 +32,14 @@ zaentrum:
     # connect without TLS.
     tlsSecret: ""
   media:
-    # The platform media claim; mounted read-only into acquire.
+    # The platform media claim; mounted read-only into acquire, which writes
+    # only its arrivals (.work/incoming) when the chart runs download clients.
     claimName: ""
+  vpn:
+    # The platform VPN's SOCKS5 proxy, socks5h://host:port, or "" when the
+    # platform has no VPN. A download client with vpn: true reaches the
+    # internet through it and nothing else.
+    proxy: ""
 
 # ── inputs (values.schema.json) ─────────────────────────────────────────────
 database: {}
@@ -66,6 +73,76 @@ endpoints:
 # Where finished downloads are visible to acquire when a download client names
 # no folder of its own. The media claim is mounted at /var/lib/katalog.
 downloadsRoot: /var/lib/katalog
+
+# The download clients the addon can run itself, each optional. acquire stores
+# the enabled ones as managed clients (it needs no setup for them). They work on
+# the downloads claim below, not on the media storage; acquire copies each
+# finished download into the library and then releases it in its client. Their
+# Web UI and API are a Service in the namespace, behind the login below. See
+# docs/deploying.md, "Download clients and the VPN".
+clients:
+  # The claim both clients work on (acquire-downloads, ReadWriteOnce): each
+  # its folder of it, and acquire reads it. Rendered when a client is enabled.
+  downloads:
+    size: 300Gi
+    # Empty: the cluster's default storage class. A local volume on a node's disk
+    # suits the clients best: their writes are many and small.
+    storageClassName: ""
+    # A PV to bind by name. Leave empty under the operator: it refuses a
+    # claim that names its volume; a PV whose claimRef names this claim binds
+    # without it.
+    volumeName: ""
+    # Kept free on the volume: NZBGet pauses below it, and acquire hands no
+    # release to a client that would leave less. Empty: a tenth of size.
+    reserve: ""
+  qbittorrent:
+    enabled: false
+    # Through the platform VPN (zaentrum.vpn.proxy): torrents, peers, trackers
+    # and name lookups all go through its SOCKS5 proxy, and the pod reaches
+    # nothing outside the cluster directly. Without a platform VPN, set false.
+    vpn: true
+    # The Web UI and API login acquire uses.
+    username: acquire
+    # password: secret; the operator generates one when none is given.
+    # The seeding goal: a finished torrent seeds until it reaches this ratio or
+    # has seeded this long, whichever comes first; then acquire removes it with
+    # its data. -1 lifts a limit (and both: it seeds until removed by hand).
+    seeding:
+      ratio: 1
+      minutes: 4320
+    # Its configuration claim (settings, queue, session state).
+    config:
+      size: 1Gi
+      # Empty: the cluster's default storage class.
+      storageClassName: ""
+    image:
+      # Rootless: runs as its image's non-root user with a tiny init
+      # (catatonit) and no root start-up step. 5.2.4, pinned by digest.
+      repository: ghcr.io/home-operations/qbittorrent
+      tag: 5.2.4@sha256:9307627e03981d5473aa31175ea76ed56ea3752333ca49d601b6af45e281e7ba
+      pullPolicy: ""
+    resources:
+      requests: { cpu: 50m, memory: 256Mi }
+      limits: { cpu: "2", memory: 2Gi }
+  nzbget:
+    enabled: false
+    # NZBGet has no SOCKS5 proxy setting, so it cannot go through the platform
+    # VPN: true fails the render.
+    vpn: false
+    username: acquire
+    # password: secret; the operator generates one when none is given.
+    config:
+      size: 1Gi
+      storageClassName: ""
+    image:
+      # Rootless, like qBittorrent's. 26.3, pinned by digest.
+      repository: ghcr.io/home-operations/nzbget
+      tag: 26.3.0@sha256:7b8c77ede65ad37b55e318a38e09249e196736c319bd3c24034f7d53a2f1ba5a
+      pullPolicy: ""
+    resources:
+      # Repair and unpacking are CPU-heavy.
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { cpu: "2", memory: 1Gi }
 
 # ── tuning ──────────────────────────────────────────────────────────────────
 acquire:

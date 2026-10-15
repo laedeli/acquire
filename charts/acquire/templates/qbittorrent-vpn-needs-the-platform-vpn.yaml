@@ -1,0 +1,28 @@
+{{- /*
+QBITTORRENT WITH vpn: true NEEDS THE PLATFORM VPN.
+
+clients.qbittorrent.vpn (the default) sends qBittorrent's traffic through the
+platform VPN's SOCKS5 proxy, which the operator names in zaentrum.vpn.proxy,
+and the label zaentrum.io/vpn: "true" confines its direct connections to the
+cluster. A platform without a VPN leaves zaentrum.vpn.proxy empty, and the
+operator refuses that label there: so the render fails here first.
+
+The operator reports a template failure only by its location, as
+"template error at acquire/templates/qbittorrent-vpn-needs-the-platform-vpn.yaml:<line>",
+never with the message: this file's name, and this comment, are the message.
+Set clients.qbittorrent.vpn to false to run qBittorrent without the VPN, or
+give the platform a VPN.
+
+The file renders nothing otherwise, and must not start with an underscore:
+Helm never executes such files on their own.
+*/ -}}
+{{- $c := .Values.clients.qbittorrent }}
+{{- $proxy := include "acquire.vpnProxy" . }}
+{{- if and $c.enabled $c.vpn }}
+{{- if not $proxy }}
+{{- fail "clients.qbittorrent.vpn is true, but the platform has no VPN (zaentrum.vpn.proxy is empty): set clients.qbittorrent.vpn to false to run qBittorrent without one" }}
+{{- end }}
+{{- if not (regexMatch `^socks5h?://(\[[0-9A-Fa-f:.]+\]|[^/:@\[\]]+):[0-9]{1,5}/?$` $proxy) }}
+{{- fail "zaentrum.vpn.proxy must be socks5h://host:port, the platform VPN's SOCKS5 proxy" }}
+{{- end }}
+{{- end }}

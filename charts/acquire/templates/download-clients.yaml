@@ -1,0 +1,274 @@
+{{- /*
+The download clients the addon can run itself: qBittorrent and NZBGet, each
+optional (clients.<name>.enabled). acquire stores the enabled ones as managed
+clients (ACQUIRE_MANAGED_CLIENTS, from the chart's Secret) and the gateway
+drives them; nobody configures them by hand.
+
+They work on a claim of their own, acquire-downloads (clients.downloads), not
+on the media storage: each mounts its folder of it (qbittorrent/, nzbget/) at
+/downloads, where everything happens — incomplete and complete downloads,
+repair, unpacking. acquire mounts the claim read-only, copies each finished
+download into the library's arrivals on the media storage, and then releases
+it in its client. ReadWriteOnce: the three pods share one node.
+
+Each client is a Deployment, its configuration claim and a Service inside the
+namespace (no Route: their Web UI is reached by port-forward). An init
+container in the client's own image sets what the chart owns in its
+configuration on every start (files/configure-client.py). Beside NZBGet runs
+files/nzbget-release.py: NZBGet's API cannot delete a successful download's
+files, so that loop deletes the downloads acquire has released, and their
+records.
+
+A client with vpn: true carries the label zaentrum.io/vpn: "true". The
+operator then confines the pod's direct connections to the cluster, and the
+client reaches the internet through the platform VPN's SOCKS5 proxy only.
+*/ -}}
+{{- $kinds := include "acquire.clients" . | fromYaml }}
+{{- $proxy := include "acquire.vpnProxy" . }}
+{{- $setup := .Files.Get "files/configure-client.py" }}
+{{- $release := .Files.Get "files/nzbget-release.py" }}
+{{- $secret := include "acquire.secretName" . }}
+{{- $downloads := .Values.clients.downloads }}
+{{- $reserveMB := div (include "acquire.downloadsReserve" . | atoi) 1048576 }}
+{{- if include "acquire.anyClient" . }}
+---
+# The volume the download clients work on, which acquire reads. A local disk
+# where the cluster has no provisioner: claimed by a PV made for it (its claimRef
+# names this claim).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "acquire.downloadsClaim" . }}
+  labels:
+    {{- include "acquire.labels" (dict "root" $ "component" "acquire") | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $downloads.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  {{- with $downloads.volumeName }}
+  volumeName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $downloads.size | quote }}
+---
+# The scripts the clients' pods run (files/).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: download-clients
+  labels:
+    {{- include "acquire.labels" (dict "root" $ "component" "acquire") | nindent 4 }}
+data:
+  configure-client.py: |
+    {{- $setup | nindent 4 }}
+  nzbget-release.py: |
+    {{- $release | nindent 4 }}
+{{- end }}
+{{- range $name := include "acquire.clientNames" . | fromJsonArray }}
+{{- $c := index $.Values.clients $name }}
+{{- if $c.enabled }}
+{{- $k := index $kinds $name }}
+{{- $port := int $k.port }}
+{{- $labels := include "acquire.labels" (dict "root" $ "component" $name) }}
+{{- $image := include "acquire.image" (dict "root" $ "image" $c.image) }}
+---
+# {{ $name }}'s configuration: its settings, queue and session state.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-config
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $c.config.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $c.config.size | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: 1
+  # One instance on its configuration at a time: the old pod is gone before
+  # the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- $labels | nindent 8 }}
+        {{- if $c.vpn }}
+        zaentrum.io/vpn: "true"
+        {{- end }}
+      annotations:
+        # A changed script restarts the client, so it runs again.
+        checksum/scripts: {{ printf "%s%s" $setup $release | sha256sum | quote }}
+    spec:
+      {{- with include "acquire.imagePullSecrets" $ }}
+      {{- . | nindent 6 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "acquire.downloadsPodSecurityContext" $ | nindent 8 }}
+      initContainers:
+        - name: configure
+          image: {{ $image | quote }}
+          {{- with $c.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          command: [python3, -I, /setup/configure-client.py]
+          securityContext:
+            {{- include "acquire.containerSecurityContext" $ | nindent 12 }}
+          env:
+            - name: CLIENT
+              value: {{ $name | quote }}
+            - name: CLIENT_USERNAME
+              value: {{ $c.username | quote }}
+            - name: CLIENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: {{ $name }}-password
+            - name: CLIENT_PORT
+              value: {{ $port | quote }}
+            # The platform VPN's proxy for a client that goes through it.
+            - name: CLIENT_PROXY
+              value: {{ if $c.vpn }}{{ $proxy | quote }}{{ else }}""{{ end }}
+            {{- if eq $name "qbittorrent" }}
+            # The seeding goal: stopped there, then removed with its data.
+            - name: CLIENT_SEED_RATIO
+              value: {{ $c.seeding.ratio | toString | quote }}
+            - name: CLIENT_SEED_MINUTES
+              value: {{ $c.seeding.minutes | int | quote }}
+            {{- else }}
+            # Paused before the downloads volume runs low.
+            - name: CLIENT_DISK_SPACE_MB
+              value: {{ $reserveMB | quote }}
+            {{- end }}
+            - name: CONFIG_DIR
+              value: /config
+            - name: DOWNLOADS
+              value: /downloads
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: downloads
+              mountPath: /downloads
+              subPath: {{ $name }}
+            - name: scripts
+              mountPath: /setup
+              readOnly: true
+          {{- with $c.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ $image | quote }}
+          {{- with $c.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          securityContext:
+            {{- include "acquire.containerSecurityContext" $ | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            # Its folder of the downloads volume: everything it does happens there.
+            - name: downloads
+              mountPath: /downloads
+              subPath: {{ $name }}
+          # The Web UI and API answer only with a login, so the probes knock.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          {{- with $c.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- if eq $name "nzbget" }}
+        # Deletes what acquire released: NZBGet's API cannot delete a
+        # successful download's files (files/nzbget-release.py).
+        - name: release
+          image: {{ $image | quote }}
+          {{- with $c.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
+          {{- end }}
+          command: [python3, -I, /setup/nzbget-release.py]
+          securityContext:
+            {{- include "acquire.containerSecurityContext" $ | nindent 12 }}
+          env:
+            - name: CLIENT_USERNAME
+              value: {{ $c.username | quote }}
+            - name: CLIENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: {{ $name }}-password
+            - name: CLIENT_PORT
+              value: {{ $port | quote }}
+            - name: DOWNLOADS
+              value: /downloads
+          volumeMounts:
+            - name: downloads
+              mountPath: /downloads
+              subPath: {{ $name }}
+            - name: scripts
+              mountPath: /setup
+              readOnly: true
+          resources:
+            requests: { cpu: 5m, memory: 24Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+        {{- end }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ $name }}-config
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: {{ include "acquire.downloadsClaim" $ }}
+        - name: scripts
+          configMap:
+            name: download-clients
+---
+# {{ $name }}'s Web UI and API, for the gateway inside the namespace only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ $name }}
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- end }}
