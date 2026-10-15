@@ -58,7 +58,7 @@ type capSpace struct {
 }
 
 // capTile is one entry point into this console. Targets are hash routes of
-// the SPA — the places an operator actually starts from, not a mirror of
+// the console — the places an operator actually starts from, not a mirror of
 // every view the app has.
 type capTile struct {
 	Key         string `json:"key"`
@@ -278,7 +278,7 @@ func capabilityDoc(cfg config.Config) capability {
 				Kind:  "link",
 				Label: "Request this",
 				Icon:  "download",
-				URL:   "/portal/app/acquire?q={q}#/discover",
+				URL:   portalAppPath + "?q={q}#/discover",
 				Ord:   10,
 			}},
 		},

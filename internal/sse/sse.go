@@ -6,9 +6,9 @@
 // body, because a progress bar that had to refetch the whole list every few
 // seconds would be both laggy and wasteful.
 //
-// Because the stream can now carry data, subscribing requires a bearer: the SPA
-// reads it with fetch-streaming rather than EventSource (which cannot send an
-// Authorization header).
+// Because the stream can now carry data, subscribing requires a bearer: the
+// console reads it with fetch-streaming rather than EventSource (which cannot
+// send an Authorization header).
 package sse
 
 import (

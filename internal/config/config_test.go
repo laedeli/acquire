@@ -82,3 +82,25 @@ func TestClusterDomainFromResolvConf(t *testing.T) {
 		}
 	}
 }
+
+// ACQUIRE_PLATFORM_URL keeps the scheme and host a browser is sent to, and
+// nothing else; a bare host is https, and an address with no host is none.
+func TestPlatformURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                    "",
+		"https://zaentrum.example.org":        "https://zaentrum.example.org",
+		"https://zaentrum.example.org/":       "https://zaentrum.example.org",
+		"https://zaentrum.example.org/portal": "https://zaentrum.example.org",
+		"http://zaentrum.localhost:8080":      "http://zaentrum.localhost:8080",
+		"zaentrum.example.org":                "https://zaentrum.example.org",
+		" zaentrum.example.org ":              "https://zaentrum.example.org",
+		"ftp://zaentrum.example.org":          "",
+		"https://":                            "",
+		"/portal/":                            "",
+	} {
+		t.Setenv("ACQUIRE_PLATFORM_URL", in)
+		if got := Load().PlatformURL; got != want {
+			t.Errorf("ACQUIRE_PLATFORM_URL=%q: PlatformURL = %q, want %q", in, got, want)
+		}
+	}
+}

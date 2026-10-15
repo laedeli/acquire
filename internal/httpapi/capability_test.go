@@ -299,7 +299,7 @@ func TestCapabilityTilesAreInstallable(t *testing.T) {
 		seen[tl.Key] = true
 		// Targets open a view INSIDE this console, never somewhere else.
 		if !strings.HasPrefix(tl.Target, "#/") {
-			t.Errorf("tile %q target must be a hash route of this SPA: %q", tl.Key, tl.Target)
+			t.Errorf("tile %q target must be a hash route of this console: %q", tl.Key, tl.Target)
 		}
 		if tl.Description == "" {
 			t.Errorf("tile %q should say what it is for", tl.Key)

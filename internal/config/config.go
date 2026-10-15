@@ -4,6 +4,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -15,9 +16,15 @@ type Config struct {
 	// Auth — the shared realm. AudienceRequired stays off (issuer-only).
 	OIDCIssuer   string // OIDC_ISSUER
 	OIDCAudience string // OIDC_AUDIENCE (default chino)
-	OIDCClientID string // ACQUIRE_OIDC_CLIENT_ID — the SPA's public PKCE client (default laedeli-acquire)
 	AdminRole    string // ACQUIRE_ADMIN_ROLE (default zaentrum-admin) — may grab/delete
 	UserRole     string // ACQUIRE_USER_ROLE (default zaentrum-user)   — may request
+
+	// PlatformURL (ACQUIRE_PLATFORM_URL) is the platform's public address,
+	// scheme and host only (https://zaentrum.example.org); a bare host means
+	// https. Its portal hosts the console, and a browser that asks acquire for
+	// a page is sent to acquire's app there. "" sends it to the portal's root
+	// on the host it asked.
+	PlatformURL string
 
 	// Own database (acquire_beta on the shared cluster).
 	DatabaseURL string // PG_URL / DATABASE_URL (pgx DSN)
@@ -98,9 +105,9 @@ func Load() Config {
 		Addr:         def(":8080", "ADDR"),
 		OIDCIssuer:   env("OIDC_ISSUER"),
 		OIDCAudience: def("chino", "OIDC_AUDIENCE"),
-		OIDCClientID: def("laedeli-acquire", "ACQUIRE_OIDC_CLIENT_ID"),
 		AdminRole:    def("zaentrum-admin", "ACQUIRE_ADMIN_ROLE"),
 		UserRole:     def("zaentrum-user", "ACQUIRE_USER_ROLE"),
+		PlatformURL:  platformURL(env("ACQUIRE_PLATFORM_URL")),
 
 		DatabaseURL: env("PG_URL", "DATABASE_URL"),
 
@@ -135,6 +142,24 @@ func Load() Config {
 		ManagedClients:    strings.TrimSpace(managed),
 		ManagedClientsSet: managedSet,
 	}
+}
+
+// platformURL is the scheme and host of the platform's address, https when it
+// names no scheme. Anything else of it (a path, a query) is dropped: acquire
+// knows where the portal is on that host. "" when it names no host, or a scheme
+// a browser cannot be sent to.
+func platformURL(v string) string {
+	if v == "" {
+		return ""
+	}
+	if !strings.Contains(v, "://") {
+		v = "https://" + v
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // kafkaCertDir is where the brokers' client certificate lives. Unlike other

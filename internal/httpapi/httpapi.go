@@ -1,6 +1,7 @@
-// Package httpapi is acquire's REST surface + OIDC auth. Commands are REST at
-// the edges (request/grab/discover); live status is the SSE stream. Auth is
-// issuer-only + realm-role checks: the user role may request, the admin role may
+// Package httpapi is acquire's REST surface + OIDC auth, and the bundle of the
+// console the portal hosts. Commands are REST at the edges
+// (request/grab/discover); live status is the SSE stream. Auth is issuer-only +
+// realm-role checks: the user role may request, the admin role may
 // grab/delete. Init is lazy + self-healing (recovers when the IdP comes up).
 package httpapi
 
@@ -10,6 +11,8 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/url"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,8 +131,21 @@ func hasRole(ctx context.Context, role string) bool {
 	return false
 }
 
+// webFS holds the console's bundle under web/embed: the federated module the
+// portal loads, and no page. all: keeps the chunks whose names start with an
+// underscore.
+//
 //go:embed all:web
 var webFS embed.FS
+
+const (
+	// portalAppPath is acquire's app in the portal: the shell's route for the
+	// app whose key is the manifest's service name, where the console opens in
+	// place.
+	portalAppPath = "/portal/app/acquire"
+	// portalRoot is the portal's root, its launchpad.
+	portalRoot = "/portal/"
+)
 
 // Server wires the routes.
 type Server struct {
@@ -157,15 +173,15 @@ func (s *Server) Handler() http.Handler {
 	// Capability descriptor for the zae CLI — metadata, aggregated by the
 	// platform's portal. See capability.go.
 	r.Get("/.well-known/zaentrum-capability.json", s.capabilityHandler)
-	// Unauthenticated discovery doc so the SPA can bootstrap OIDC (PKCE).
+	// What the console reads before it renders, unauthenticated like the
+	// health routes since neither value is a secret: the realm role that makes
+	// a user an admin, and whether it shows "Find & grab" — true when a source
+	// AND a client for its protocol exist, so a grab has somewhere to come
+	// from and go to. Signing in is the portal's, so nothing here is for that.
 	r.Get("/api/config", func(w http.ResponseWriter, rq *http.Request) {
 		writeJSON(w, 200, map[string]any{
-			"oidcIssuer":   s.cfg.OIDCIssuer,
-			"oidcClientId": s.cfg.OIDCClientID,
-			"adminRole":    s.cfg.AdminRole,
-			// SPA shows "Find & grab" when true: a source AND a client for its
-			// protocol exist, so a grab has somewhere to come from and go to.
-			"autoGrab": s.svc.AutoGrabEnabled(rq.Context()),
+			"adminRole": s.cfg.AdminRole,
+			"autoGrab":  s.svc.AutoGrabEnabled(rq.Context()),
 		})
 	})
 	r.Get("/readyz", func(w http.ResponseWriter, rq *http.Request) {
@@ -232,35 +248,88 @@ func (s *Server) Handler() http.Handler {
 		r.Put("/api/settings/search", s.putSearchSettings)
 	})
 
-	// Embedded SPA at /  (assets + index fallback).
-	sub, _ := fs.Sub(webFS, "web")
-	// An unknown /api path must 404, never fall through to the SPA.
+	// The console, as the portal loads it through its app proxy: the federated
+	// module's remote entry (/embed/assets/remoteEntry.js), its chunks and its
+	// stylesheet.
+	bundle, _ := fs.Sub(webFS, "web/embed")
+	r.Get("/embed/*", serveBundle(bundle))
+	r.Head("/embed/*", serveBundle(bundle))
+
+	// Every other path. acquire has no page of its own: the portal is the
+	// shell and the console opens in place there, on the portal's sign-in. A
+	// browser that asks acquire for a page — its root, or any other path the
+	// standalone console used to answer — is sent to acquire's app in the
+	// portal (notFound).
 	//
-	// http.FileServer answers a missing directory-ish path with 301 Moved
+	// An unknown /api path must 404, never redirect. The standalone console's
+	// file server answered a missing directory-ish path with 301 Moved
 	// Permanently, and a browser caches a PERMANENT redirect. So an API route
-	// that is temporarily absent — a handler written but not yet registered,
-	// exactly what happened here — poisons every client that touched it: the
-	// console kept looping on the cached 301 long after the server was fixed,
-	// and no amount of redeploying helped. A 404 is honest and uncacheable.
-	r.NotFound(func(w http.ResponseWriter, rq *http.Request) {
-		if strings.HasPrefix(rq.URL.Path, "/api/") {
-			http.Error(w, "no such endpoint: "+rq.URL.Path, http.StatusNotFound)
+	// that was temporarily absent — a handler written but not yet registered,
+	// exactly what happened here once — poisoned every client that touched it:
+	// the console kept looping on the cached 301 long after the server was
+	// fixed, and no amount of redeploying helped. A 404 is honest and
+	// uncacheable, and the redirect to the portal is a temporary one (302).
+	r.NotFound(s.notFound)
+	return r
+}
+
+// notFound answers the paths no route takes (see Handler): a page is sent to
+// acquire's app in the portal, anything else is a 404.
+func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Path
+	switch {
+	case strings.HasPrefix(p, "/api/"):
+		http.Error(w, "no such endpoint: "+p, http.StatusNotFound)
+	case r.Method != http.MethodGet && r.Method != http.MethodHead,
+		// A script or stylesheet that is not there — of the bundle, or of the
+		// standalone page's former assets — is a 404, not a page.
+		p == "/embed" || strings.HasPrefix(p, "/embed/"), strings.HasPrefix(p, "/assets/"),
+		// The portal's own paths are never answered here. Without a platform
+		// address, sending them to the portal's root would send the browser
+		// back here.
+		p == "/portal" || strings.HasPrefix(p, "/portal/"):
+		http.NotFound(w, r)
+	default:
+		// No body: there is no page here, not even one saying so.
+		w.Header().Set("Location", s.portalApp(r.URL.Query().Get("q")))
+		w.WriteHeader(http.StatusFound)
+	}
+}
+
+// portalApp is where a browser finds acquire's console: acquire's app in the
+// portal on the platform's address, carrying a search the console reads (?q=,
+// as the "Request this" row passes it). The browser keeps the place in the
+// console (#/downloads): a redirect without a fragment keeps the one asked
+// for. Nothing else of the query is carried, so a stale sign-in callback of
+// the former standalone console (?code=…&state=…) never reaches the portal's
+// own. Without a platform address it is the portal's root on the host the
+// browser asked.
+func (s *Server) portalApp(q string) string {
+	if s.cfg.PlatformURL == "" {
+		return portalRoot
+	}
+	target := s.cfg.PlatformURL + portalAppPath
+	if q = strings.TrimSpace(q); q != "" {
+		target += "?q=" + url.QueryEscape(q)
+	}
+	return target
+}
+
+// serveBundle serves the files of the console's bundle, mounted at /embed/. A
+// directory or a missing file is a 404: never a listing, never a page.
+func serveBundle(bundle fs.FS) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name, ok := strings.CutPrefix(path.Clean(r.URL.Path), "/embed/")
+		if !ok {
+			http.NotFound(w, r)
 			return
 		}
-		spaFallback(sub, http.FileServer(http.FS(sub)))(w, rq)
-	})
-	fileServer := http.FileServer(http.FS(sub))
-	r.Handle("/*", func() http.HandlerFunc {
-		fb := spaFallback(sub, fileServer)
-		return func(w http.ResponseWriter, rq *http.Request) {
-			if strings.HasPrefix(rq.URL.Path, "/api/") {
-				http.Error(w, "no such endpoint: "+rq.URL.Path, http.StatusNotFound)
-				return
-			}
-			fb(w, rq)
+		if fi, err := fs.Stat(bundle, name); err != nil || fi.IsDir() {
+			http.NotFound(w, r)
+			return
 		}
-	}())
-	return r
+		http.ServeFileFS(w, r, bundle, name)
+	}
 }
 
 // listReleases runs an interactive search for a request and returns the ranked
@@ -558,24 +627,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
-}
-
-// spaFallback serves static files, falling back to index.html for client routes.
-func spaFallback(sub fs.FS, fileServer http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p == "" {
-			p = "index.html"
-		}
-		if _, err := fs.Stat(sub, p); err != nil {
-			// Not a real asset → serve index.html (SPA route).
-			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/index.html"
-			fileServer.ServeHTTP(w, r2)
-			return
-		}
-		fileServer.ServeHTTP(w, r)
-	}
 }
 
 // simulateScore ranks hypothetical releases against a profile without touching
