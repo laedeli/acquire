@@ -20,7 +20,8 @@ into a catalog item.
 The platform core knows nothing about downloading. It ships only **extension
 seams** — quiet, data-driven hooks. Install this addon and the seams light up: a
 native **“Request this”** button appears where a search comes up empty, a
-requests console appears at `/acquire`, and a whole download plane comes online.
+requests console opens in the portal (`/portal/app/acquire`), and a whole
+download plane comes online.
 **Uninstall it and the core is pristine again** — zero acquisition vocabulary,
 zero leftover UI.
 
@@ -58,7 +59,7 @@ flowchart LR
 
 | Repo | What it is |
 |---|---|
-| [`laedeli/acquire`](https://github.com/laedeli/acquire) | The addon service — requests, native newznab/torznab search, the request→grab→ingest brain, the configuration of sources and clients, and the embedded console. Image `ghcr.io/laedeli/acquire`. |
+| [`laedeli/acquire`](https://github.com/laedeli/acquire) | The addon service — requests, native newznab/torznab search, the request→grab→ingest brain, the configuration of sources and clients, and the console the portal hosts. Image `ghcr.io/laedeli/acquire`. |
 | [`laedeli/download-gateway`](https://github.com/laedeli/download-gateway) | A neutral facade that wraps any download client behind one HTTP API + a Kafka event stream. Image `ghcr.io/laedeli/download-gateway`. |
 
 The **`laedeli`** org is the platform's addon shop — a “little shop” (_Lädeli_,

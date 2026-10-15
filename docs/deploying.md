@@ -54,7 +54,8 @@ flowchart TB
 - The platform's **event streaming**: brokers over mTLS with the platform's
   client certificate, or plaintext brokers such as a bundled one. The chart
   follows whichever the platform has.
-- An **OIDC realm** you can add two clients to (see [Identity](#identity)).
+- An **OIDC realm** you can add acquire's service client to (see
+  [Identity](#identity)).
 - A **Postgres database** for acquire.
 - The **media storage** the download clients write to, mountable into acquire
   so it can find finished files. The chart mounts the platform's media claim.
@@ -93,7 +94,12 @@ spec:
     matchLabels: { app: download-gateway }   # selectors stay your own
 ```
 
-No Ingress or Route is needed: the portal proxies acquire's console and API.
+No Ingress or Route is needed, and none should be added. The console opens
+in the portal, at `/portal/app/acquire`, on the portal's sign-in, and the
+portal proxies its bundle and the API. acquire has no page or login of its
+own: a browser that reaches it directly is sent to the portal (see
+[where the console is](#where-the-console-is)).
+
 The gateway workload acquire declares is the first label of the host in
 `DOWNLOAD_GATEWAY_URL` (`http://download-gateway` → `download-gateway`); if
 you rename the gateway, keep the two in step.
@@ -115,15 +121,15 @@ need no extra privileges; the client images run as non-root too (see
 Every chart version is published as a release archive:
 
 ```text
-https://github.com/laedeli/acquire/releases/download/chart-acquire-0.2.0/acquire-0.2.0.tgz
+https://github.com/laedeli/acquire/releases/download/chart-acquire-0.3.0/acquire-0.3.0.tgz
 ```
 
-The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.2.0`.
+The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.3.0`.
 The operator pulls charts anonymously, so the OCI reference works once that
 package is public; the https archive works everywhere. Each release names the
 archive's digest: set it as the chart digest to pin exactly that archive.
 
-Before installing, add the two OIDC clients (see [Identity](#identity)) and
+Before installing, add the OIDC service client (see [Identity](#identity)) and
 create acquire's database. The install asks for two secrets: the database URL
 and the service client's secret.
 
@@ -136,14 +142,15 @@ plan shows the chart, both workloads with their images, and every object the
 chart renders. Fill in the inputs — secret ones are masked and never shown
 back — and install. Progress follows both components; once they are ready, the
 portal registers the addon from acquire's manifest (the app, its tiles, the
-**Request this** row and the setup checklist) without an address to type.
+**Request this** row and the setup checklist) without an address to type. The
+tiles open the console in place, in the portal.
 
 ### With zae
 
 With `ZAE_TOKEN` holding an admin bearer for the instance:
 
 ```bash
-zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.2.0/acquire-0.2.0.tgz \
+zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.3.0/acquire-0.3.0.tgz \
   --name acquire \
   --url https://<instance> \
   --set-secret database.url='postgres://acquire:…@db.example.org:5432/acquire?sslmode=require' \
@@ -155,7 +162,7 @@ zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire
 question). With the OCI reference, once the package is public:
 
 ```bash
-zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.2.0 --name acquire \
+zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.3.0 --name acquire \
   --url https://<instance> \
   --set-secret database.url=… --set-secret oidc.serviceClientSecret=…
 ```
@@ -169,7 +176,6 @@ The inputs, declared in the chart's `values.schema.json`:
 | `database.url` | **required**, secret | `PG_URL` — acquire's Postgres, `postgres://user:password@host:5432/acquire?sslmode=require` |
 | `oidc.serviceClientSecret` | **required**, secret | `ACQUIRE_SVC_CLIENT_SECRET` |
 | `oidc.serviceClientId` | `laedeli-acquire-svc` | `ACQUIRE_SVC_CLIENT_ID`, and the gateway's `ALLOWED_CLIENTS` |
-| `oidc.clientId` | `laedeli-acquire` | `ACQUIRE_OIDC_CLIENT_ID` |
 | `oidc.adminRole` | `zaentrum-admin` | `ACQUIRE_ADMIN_ROLE` |
 | `oidc.userRole` | `zaentrum-user` | `ACQUIRE_USER_ROLE` |
 | `tmdb.apiKey` | optional, secret | `TMDB_API_KEY` — discovery is off without it |
@@ -212,6 +218,7 @@ platform from them and nowhere else:
 
 | Platform value | In the chart |
 |---|---|
+| `zaentrum.hostname` | `ACQUIRE_PLATFORM_URL`, the platform's address `https://<hostname>` (`http` when the issuer is plain http on that host): where acquire sends a browser that asks it for a page, to `/portal/app/acquire` there. Empty sends it to `/portal/` on the host it asked |
 | `zaentrum.issuer` | `OIDC_ISSUER` on both; acquire's token endpoint `<issuer>/protocol/openid-connect/token` |
 | `zaentrum.issuerHostAliasIP` | a host alias resolving the issuer's host to that address, on both |
 | `zaentrum.events.brokers`, `zaentrum.events.topicPrefix` | `KAFKA_BROKERS` and `KAFKA_TOPIC_PREFIX` on both; acquire's consumer group is the prefix without its trailing dot, then `-acquire` |
@@ -255,7 +262,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.2.0/acquire-0.2.0.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.3.0/acquire-0.3.0.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -314,6 +321,14 @@ zae addon upgrade acquire --url https://<instance> --version <version>   # the O
 ```
 
 The plan lists what changes, images included, before anything is applied.
+
+**To 0.3.0.** acquire has no standalone console any more, and no login of its
+own: the console opens only in the portal, and `/` on acquire sends a browser
+there (see [where the console is](#where-the-console-is)). The public client
+`laedeli-acquire` is no longer used: remove it from the realm. An install that
+still sets `oidc.clientId` renders, and the value is ignored. A Route or
+Ingress you gave acquire for the old console now only leads to the portal:
+remove it too.
 
 ### Moving an existing deployment to the chart
 
@@ -567,12 +582,14 @@ still on it.
 
 | Client | Type | Used for |
 |---|---|---|
-| `laedeli-acquire` | public (PKCE) | the standalone console login (`ACQUIRE_OIDC_CLIENT_ID`) |
 | `laedeli-acquire-svc` | confidential (client credentials) | acquire's own calls: the gateway (downloads and client configuration) and ingest |
 
-Realm roles: `zaentrum-user` may request, `zaentrum-admin` may grab, remove and
+That is the only client acquire has. The console signs in through the portal
+and calls acquire with the token of the portal's user, which acquire takes
+from any client of the realm's issuer and judges by its realm roles:
+`zaentrum-user` may request, `zaentrum-admin` may grab, remove and
 **configure** — every configuration route is admin-only. With the chart, the
-client ids and the roles are inputs (`oidc.*`).
+service client's id and the roles are inputs (`oidc.*`).
 
 The gateway validates acquire's service token. Set on the gateway:
 
@@ -584,6 +601,33 @@ The gateway validates acquire's service token. Set on the gateway:
 Only with both set does the gateway accept calls from that client alone **and**
 offer its client configuration API; without them acquire cannot push download
 clients and setup says so. The chart always sets both.
+
+## Where the console is
+
+The console is acquire's app in the portal: `/portal/app/acquire` on the
+platform's host, with a hash route for each tab
+(`/portal/app/acquire#/downloads`), which is what the launchpad tiles open.
+The portal loads the console's bundle from acquire through its app proxy
+(`/api/portal/apps/acquire/embed/assets/remoteEntry.js`), renders it inside
+its own page and signs the user in. acquire has no page and no login of its
+own.
+
+A browser that asks acquire itself for a page — `/`, or any other path the
+standalone console of earlier versions answered — gets a temporary redirect
+(`302`) to `ACQUIRE_PLATFORM_URL` followed by `/portal/app/acquire`:
+
+- a search (`?q=`) is carried, since the console reads it; nothing else of
+  the query is;
+- the browser keeps the place in the console: `/#/downloads` lands on
+  `/portal/app/acquire#/downloads`;
+- without `ACQUIRE_PLATFORM_URL` (the chart leaves it empty only when the
+  platform names no `zaentrum.hostname`) the redirect goes to the portal's
+  root, `/portal/`, on the host the browser asked.
+
+Nothing else acquire answers is a page: `/embed/…` serves the bundle's files
+and nothing more, and an unknown `/api/` path, a missing file of the bundle,
+the old page's `/assets/` and any method other than `GET` and `HEAD` are a
+`404`.
 
 ## Secrets
 
@@ -637,7 +681,8 @@ these from its values and the platform's.
 
 | Env | Purpose |
 |---|---|
-| `OIDC_ISSUER`, `ACQUIRE_OIDC_CLIENT_ID`, `ACQUIRE_ADMIN_ROLE`, `ACQUIRE_USER_ROLE` | auth |
+| `OIDC_ISSUER`, `ACQUIRE_ADMIN_ROLE`, `ACQUIRE_USER_ROLE` | auth |
+| `ACQUIRE_PLATFORM_URL` | the platform's address, `https://<host>`: where a browser that asks acquire for a page is sent (see [where the console is](#where-the-console-is)) |
 | `PG_URL` | acquire's database |
 | `DOWNLOAD_GATEWAY_URL` | e.g. `http://download-gateway` |
 | `KATALOG_URL`, `KATALOG_MANAGER_URL` | catalog read and ingest |
@@ -737,6 +782,8 @@ and acquire must allow at least a minute per request.
 - For a chart install, `zae addon status acquire --url https://<instance>` (or
   the addon's row in the portal) reads *Ready* with both components ready.
 - `GET /api/setup` on acquire (or the portal's checklist) reads `ready`.
+- `GET /` on acquire answers `302` to `https://<host>/portal/app/acquire`, and
+  the console opens there.
 - `GET /api/v1/config/clients` on the gateway reports the same revision the
   clients tab shows.
 - `GET /api/health/system` has no failing `sources` or `clients` check.

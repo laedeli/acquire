@@ -2,9 +2,12 @@
 
 `acquire` (Go, module `github.com/laedeli/acquire`) is the addon's brain and face.
 It records requests, drives grabs, reacts to download and pipeline events, and
-serves its own single-page console. The service mounts the SPA + API at its
-**root**; the reference deploy exposes it under `/acquire` on the portal host (see
-[Deploying the addon](./deploying.md)).
+serves its console: a federated module the portal hosts. acquire has **no page
+of its own** — the portal is the shell, and the console opens in place there,
+at `/portal/app/acquire`, on the portal's sign-in. The service serves the
+console's bundle under `/embed/` and its API under `/api/`, and sends a browser
+that asks it for a page to the portal (see [the console](#the-console) and
+[Deploying the addon](./deploying.md#where-the-console-is)).
 
 ## Request lifecycle
 
@@ -78,7 +81,7 @@ dev (every caller is treated as admin).
 |---|---|---|---|
 | `GET` | `/healthz` | public | liveness |
 | `GET` | `/readyz` | public | DB ping (503 when down) |
-| `GET` | `/api/config` | public | SPA bootstrap: issuer, client id, admin role, `autoGrab` flag |
+| `GET` | `/api/config` | public | what the console reads: the admin role and the `autoGrab` flag |
 | `GET` | `/api/events` | any signed-in¹ | live stream: change pings + download telemetry |
 | `GET` | `/api/wanted` | any signed-in | list requests |
 | `POST` | `/api/wanted` | **user** or admin | create a request |
@@ -96,7 +99,8 @@ dev (every caller is treated as admin).
 | `POST` | `/api/downloads/{adapter}/{id}/{action}` | **admin** | `pause` \| `resume` \| `cancel` |
 | `GET` | `/api/setup` | **admin** | the setup checklist: sources, clients, grab policy |
 | `GET` | `/api/health/system` | public | diagnostic checks (database, outbox, storage, sources, clients, clock); always 200 |
-| `GET` | `/*` | public | the embedded SPA |
+| `GET` | `/embed/…` | public | the console's bundle: `assets/remoteEntry.js`, its chunks and `assets/console.css` |
+| `GET` | `/` and any other page | public | `302` to acquire's app in the portal (see [the console](#the-console)) |
 
 ¹ The stream carries download telemetry (progress, speed, ETA), so it is
 authenticated. Clients read it with **fetch-streaming** rather than
@@ -140,11 +144,29 @@ write is recorded in `settings_audit` without its values. See
 ## The console
 
 A Vite/React/TypeScript app on the nalet design system, built into the binary
-with `go:embed` (source in `web/`, one container — no nginx sidecar). Auth is
-`oidc-client-ts` Auth-Code + PKCE, so the session survives a reload and renews
-silently. **Realm roles come from the ACCESS token** — the ID-token profile
-oidc-client-ts exposes as `user.profile` carries none, so reading it makes every
-user look like a non-admin.
+with `go:embed` (source in `web/`, one container — no nginx sidecar). It is a
+**federated module** and nothing else. The portal shell loads
+`/embed/assets/remoteEntry.js` through its app proxy
+(`/api/portal/apps/acquire/`), renders the exposed `Console` inside its own
+React tree (React and react-dom are shared; no iframe) and links
+`assets/console.css`. The shell signs the user in and hands the console the
+API base and the user's access token; a `401` goes back to the shell, which
+signs the user in again. acquire has no sign-in, no OIDC client and no page of
+its own. **Realm roles come from the ACCESS token** — the ID-token profile
+carries none, so reading it makes every user look like a non-admin.
+
+Each tab has a hash route inside the app's route —
+`/portal/app/acquire#/requests`, `#/downloads` and so on — which the launchpad
+tiles open.
+
+A browser that asks acquire itself for a page — `/`, or any other path the
+standalone console of earlier versions answered — gets a `302` to
+`ACQUIRE_PLATFORM_URL` followed by `/portal/app/acquire`. A search (`?q=`) is
+carried and nothing else of the query, so a stale sign-in callback never
+reaches the portal; the browser keeps the place in the console (`#/downloads`).
+Without `ACQUIRE_PLATFORM_URL` the redirect goes to the portal's root,
+`/portal/`, on the host the browser asked. Unknown `/api/` paths, missing files
+of the bundle and other methods are a `404`, never a redirect or a page.
 
 Tabs:
 
@@ -174,7 +196,7 @@ ranked where it was — so an admin can override the automatic choice.
 - **Live progress** — each downloading request shows a progress bar with speed,
   ETA and the client's own state; a **downloads** table lists every job with
   per-client health chips and pause/resume/cancel.
-- **Live updates** — the SPA reads `/api/events` with fetch-streaming, applying
+- **Live updates** — the console reads `/api/events` with fetch-streaming, applying
   `download` rows in place and refetching on a `changed` ping (30s fallback poll).
 
 ## Storage
@@ -221,9 +243,9 @@ progress message.
 |---|---|---|
 | `ADDR` | `:8080` | listen address |
 | `OIDC_ISSUER` | — | realm issuer (blank ⇒ auth disabled, dev only) |
-| `ACQUIRE_OIDC_CLIENT_ID` | `laedeli-acquire` | public PKCE client id (for the SPA) |
 | `ACQUIRE_ADMIN_ROLE` | `zaentrum-admin` | admin role |
 | `ACQUIRE_USER_ROLE` | `zaentrum-user` | request role |
+| `ACQUIRE_PLATFORM_URL` | unset | the platform's address, scheme and host (`https://zaentrum.example.org`; a bare host means https): a browser that asks acquire for a page is sent to `/portal/app/acquire` there; unset sends it to `/portal/` on the host it asked |
 | `PG_URL` (`DATABASE_URL`) | — | Postgres URL |
 | `DOWNLOAD_GATEWAY_URL` | — | the gateway base URL |
 | `KATALOG_URL` | — | catalog read API (in-library check) |

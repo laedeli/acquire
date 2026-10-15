@@ -192,7 +192,7 @@ capability, remove it for a clean, neutral platform.
 
 ## Next
 
-- [The acquire service](./acquire.md) — the request lifecycle, API, SPA and schema.
+- [The acquire service](./acquire.md) — the request lifecycle, API, console and schema.
 - [Download gateway & clients](./download-gateway.md) — the download plane.
 - [Search sources & NZB-first](./indexers-and-nzb.md) — where acquire searches and how auto-grab picks a release.
 - [Deploying the addon](./deploying.md) — installing it on a platform.
