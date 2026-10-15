@@ -1,6 +1,8 @@
 // Package katalog is acquire's client for the neutral catalog seams: create an
 // item from a staged file via katalog-manager's POST /api/ingest (which emits
-// discovered → the pipeline), and a best-effort in-library check via katalog-api.
+// discovered → the pipeline) — an episode by its series' identity, a movie with
+// its own —, what the library holds of a title by identity via katalog-api's
+// holdings, and a best-effort in-library check by title.
 package katalog
 
 import (
@@ -40,6 +42,15 @@ func New(managerURL, katalogURL string, tokens Tokener) *Client {
 	}
 }
 
+// Identity names a title by an identity it has outside any one library. One
+// is enough; the catalog finds the title by it, or for a series creates it
+// from it and the title given (ingest by identity, ADR-0012).
+type Identity struct {
+	TMDB string `json:"tmdb,omitempty"`
+	TVDB string `json:"tvdb,omitempty"`
+	IMDB string `json:"imdb,omitempty"`
+}
+
 // IngestRequest mirrors katalog-manager's POST /api/ingest body.
 type IngestRequest struct {
 	Path        string  `json:"path"`
@@ -48,18 +59,37 @@ type IngestRequest struct {
 	Year        *int32  `json:"year,omitempty"`
 	Description *string `json:"description,omitempty"`
 
-	// Episode coordinates. katalog REJECTS type=episode without all three, and
+	// Episode coordinates. katalog REJECTS type=episode without them, and
 	// that rejection is deliberate: an episode with a NULL parent becomes a
 	// playable, metadata-less orphan named after the show, with no error
-	// anywhere in the pipeline.
-	ParentID      *string `json:"parentId,omitempty"`
-	SeasonNumber  *int32  `json:"seasonNumber,omitempty"`
-	EpisodeNumber *int32  `json:"episodeNumber,omitempty"`
+	// anywhere in the pipeline. Series names the series by identity, which is
+	// what acquire holds; ParentID is the catalog's own id, which acquire
+	// never holds. EpisodeEnd is the last episode of one file that covers
+	// several in a row.
+	Series        *Identity `json:"series,omitempty"`
+	ParentID      *string   `json:"parentId,omitempty"`
+	SeasonNumber  *int32    `json:"seasonNumber,omitempty"`
+	EpisodeNumber *int32    `json:"episodeNumber,omitempty"`
+	EpisodeEnd    *int32    `json:"episodeEnd,omitempty"`
+
+	// Identity names a movie, so it arrives matched rather than by title.
+	Identity *Identity `json:"identity,omitempty"`
 }
 
+// ByIdentity reports whether the request carries a field of ingest by
+// identity, which a catalog without that contract does not take.
+func (r IngestRequest) ByIdentity() bool {
+	return r.Series != nil || r.EpisodeEnd != nil || r.Identity != nil
+}
+
+// IngestResult is the catalog's ids for what it took in: the item, whether it
+// made it, the series it linked an episode to, and the items of the episodes
+// the file covers after its first (in episode order).
 type IngestResult struct {
-	ItemID  string `json:"itemId"`
-	Created bool   `json:"created"`
+	ItemID   string   `json:"itemId"`
+	Created  bool     `json:"created"`
+	SeriesID string   `json:"seriesId,omitempty"`
+	Covered  []string `json:"covered,omitempty"`
 }
 
 // IngestError is an answer of the ingest other than 200.
@@ -74,6 +104,57 @@ func (e *IngestError) Error() string { return fmt.Sprintf("ingest %d: %s", e.Cod
 // 429), which asking again does not change; anything else is worth a retry.
 func (e *IngestError) Refused() bool {
 	return e.Code >= 400 && e.Code < 500 && e.Code != http.StatusTooManyRequests
+}
+
+// Holder is the item a 409 names: the library holds that episode or movie
+// already, as another item, or the path is that item's. "" when the answer
+// names none.
+func (e *IngestError) Holder() string {
+	if e.Code != http.StatusConflict {
+		return ""
+	}
+	var body struct {
+		ItemID string `json:"itemId"`
+	}
+	if json.Unmarshal([]byte(e.Body), &body) != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.ItemID)
+}
+
+// Message is the error the catalog's answer gives, else its body.
+func (e *IngestError) Message() string {
+	var body struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(e.Body), &body) == nil && body.Error != "" {
+		return body.Error
+	}
+	return strings.TrimSpace(e.Body)
+}
+
+// identityFields are what the catalog's answer names when it is the fields of
+// ingest by identity it does not take: a catalog without the contract asks for
+// the parent instead (an episode requires parentId, …), one that validates its
+// body names the field it does not know.
+var identityFields = []string{"parentid", "series", "episodeend", "identity"}
+
+// Unsupported reports whether the refusal is the catalog not taking ingest by
+// identity: a 422, or a 400 that names those fields. Such a catalog takes the
+// file once it has the contract, so the hand-over waits instead of failing.
+func (e *IngestError) Unsupported() bool {
+	switch e.Code {
+	case http.StatusUnprocessableEntity:
+		return true
+	case http.StatusBadRequest:
+		msg := strings.ToLower(e.Message())
+		for _, f := range identityFields {
+			if strings.Contains(msg, f) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *Client) authHeader(ctx context.Context, req *http.Request) {
@@ -103,7 +184,7 @@ func (c *Client) Ingest(ctx context.Context, in IngestRequest) (IngestResult, er
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return IngestResult{}, &IngestError{Code: resp.StatusCode, Body: string(b)}
 	}
 	var out IngestResult
