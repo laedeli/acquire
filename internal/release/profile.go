@@ -32,12 +32,24 @@ type Profile struct {
 	MinSeeders int   `json:"minSeeders"`
 	PreferHDR  bool  `json:"preferHdr"`
 
+	// AllowDolbyVisionOnly ranks web releases whose name says Dolby Vision and
+	// names no HDR10 base layer (usually profile 5) like any other. Off, they
+	// are demoted (see Score): the platform's transcoder refuses to convert
+	// profile 5 without a tone-mapping encode. It is an opt-in, so a profile
+	// stored before it existed demotes them too.
+	AllowDolbyVisionOnly bool `json:"allowDolbyVisionOnly,omitempty"`
+
 	// MaxLanguages / LanguagePenalty demote multi-language releases. The
 	// penalty is PER language over the limit and has to be big enough to
 	// matter against SourceScores — a flat -40 is swamped by a +400 remux.
 	MaxLanguages    int `json:"maxLanguages,omitempty"`
 	LanguagePenalty int `json:"languagePenalty,omitempty"`
 }
+
+// dolbyVisionOnlyPenalty demotes a web release named Dolby Vision without an
+// HDR10 base layer below the 2160p and 1080p releases the platform converts
+// (Score: resolution steps are 100, a source 25 to 400).
+const dolbyVisionOnlyPenalty = 300
 
 // DefaultProfile is used when the database has none (fresh install, or the
 // profile row was deleted).
@@ -178,6 +190,18 @@ func Score(c Candidate, p Profile) (Verdict, Info) {
 	if p.PreferHDR && in.HDR {
 		v.Score += 100
 		v.Reasons = append(v.Reasons, "HDR")
+	}
+	// Dolby Vision without a named HDR10 base layer, from a web source, is
+	// most often profile 5: it plays only on a Dolby Vision display, and the
+	// platform's transcoder refuses to convert it without a tone-mapping
+	// encode, so the file never plays. Demoted below what the platform can
+	// convert, not rejected, as a name says too little: a web release named
+	// only "DV" may be profile 8 with an HDR10 base, and a UHD Blu-ray's
+	// Dolby Vision is profile 7 with its HDR10 base, so Blu-ray and remux
+	// sources are left alone. Where nothing else is found it is still taken.
+	if in.DolbyVisionOnly() && !p.AllowDolbyVisionOnly && in.Source != "bluray" && in.Source != "remux" {
+		v.Score -= dolbyVisionOnlyPenalty
+		v.Reasons = append(v.Reasons, "Dolby Vision without HDR10 (may not convert)")
 	}
 	if in.Repack {
 		v.Score += 25

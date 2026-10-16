@@ -1,6 +1,9 @@
 package release
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseTypicalReleaseNames(t *testing.T) {
 	in := Parse("The.Matrix.1999.2160p.UHD.BluRay.REMUX.HEVC.DTS-HD.MA.TrueHD.7.1-FGT")
@@ -198,5 +201,67 @@ func TestLanguagePenaltyScalesAgainstSourceBonus(t *testing.T) {
 	if clean.Score-multi.Score < p.SourceScores["remux"] {
 		t.Errorf("the penalty (%d) is too small to outweigh the remux bonus (%d)",
 			clean.Score-multi.Score, p.SourceScores["remux"])
+	}
+}
+
+// TestDolbyVisionWithoutHDR10IsDemoted: a web release that says Dolby Vision
+// and names no HDR10 base layer is usually profile 5, which the platform's
+// transcoder refuses to convert, so it ranks below what the platform converts
+// — never rejected, and Blu-ray and remux sources (profile 7, with its HDR10
+// base) are left alone.
+func TestDolbyVisionWithoutHDR10IsDemoted(t *testing.T) {
+	p := DefaultProfile()
+	score := func(name string, sizeMb int64) Verdict {
+		v, _ := Score(Candidate{Title: name, Protocol: "usenet", SizeMb: sizeMb}, p)
+		return v
+	}
+	const tag = "Dolby Vision without HDR10"
+	dvOnly := score("Ted.Lasso.S04E08.PROPER.DV.2160p.WEB.h265-ETHEL", 3000)
+	if dvOnly.Rejected || !strings.Contains(dvOnly.Summary(), tag) {
+		t.Fatalf("a Dolby Vision-only web release is demoted, not rejected: %+v", dvOnly)
+	}
+	for _, better := range []struct {
+		name string
+		mb   int64
+	}{
+		{"Ted.Lasso.S04E08.2160p.ATVP.WEB-DL.DDP5.1.Atmos.DV.HDR10Plus.H.265-Kitsune", 8200},
+		{"Ted.Lasso.S04E08.2160p.ATVP.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-FLUX", 8200},
+		{"Ted.Lasso.S04E08.2160p.10bit.ATVP.WEB-DL.DDP5.1.HEVC-Vyndros", 2100},
+		{"Ted.Lasso.S04E08.1080p.ATVP.WEB-DL.DDP5.1.H.265-GRP", 1800},
+	} {
+		if v := score(better.name, better.mb); v.Score <= dvOnly.Score {
+			t.Errorf("%s (%d) ranks no higher than the Dolby Vision-only release (%d)", better.name, v.Score, dvOnly.Score)
+		}
+	}
+	for _, name := range []string{
+		"Show.S01E01.2160p.ATVP.WEB-DL.DDP5.1.DoVi.H.265-GRP",
+		"Show.S01E01.2160p.WEB-DL.Dolby.Vision.H.265-GRP",
+		"Euphoria.S03E06.2026.2160p.MAX.WEB-DL.DDP5.1.Atmos.H.265.DV-HDSWEB",
+	} {
+		if v := score(name, 4000); v.Rejected || !strings.Contains(v.Summary(), tag) {
+			t.Errorf("%s is not demoted: %s", name, v.Summary())
+		}
+	}
+	for _, name := range []string{
+		"Arcane.S01E04.Happy.Progress.Day.REPACK.UHD.BluRay.2160p.TrueHD.5.1.DV.HEVC.REMUX-FraMeSToR",
+		"Cobweb.2023.2160p.WEB-DL.DV.HDR10DDP.5.1.H265-4LHD",
+		"Show.S01E01.2160p.WEB-DL.DV.HDR10.H.265-GRP",
+		"Show.S01E01.2160p.WEB-DL.HDR10+.H.265-GRP",
+		"Advent.S01E01.1080p.WEB-DL.H.264-GRP",
+	} {
+		if v := score(name, 4000); strings.Contains(v.Summary(), tag) {
+			t.Errorf("%s is demoted: %s", name, v.Summary())
+		}
+	}
+	p.AllowDolbyVisionOnly = true
+	if v := score("Ted.Lasso.S04E08.PROPER.DV.2160p.WEB.h265-ETHEL", 3000); strings.Contains(v.Summary(), tag) || v.Score <= dvOnly.Score {
+		t.Errorf("allowDolbyVisionOnly still demotes: %+v", v)
+	}
+}
+
+func TestHDR10BesideDolbyVisionInBrackets(t *testing.T) {
+	in := Parse("The Shadow's Edge (2025) UHD BDRemux [H.265/2160p] [4K, HDR10, DV 7.6, 10-bit]")
+	if !in.DolbyVision || !in.HDR10 || in.DolbyVisionOnly() {
+		t.Errorf("dv=%v hdr10=%v: profile 7 with its HDR10 base is no Dolby Vision-only release", in.DolbyVision, in.HDR10)
 	}
 }

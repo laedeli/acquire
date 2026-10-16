@@ -528,6 +528,17 @@ to the tab that fixes it.
 The **release picker** (`releases`) runs the same search auto-grab uses but
 shows the ranked candidates — protocol, source, size, seeders and *why* each was
 ranked where it was — so an admin can override the automatic choice.
+
+A web release whose name says Dolby Vision (`DV`, `DoVi`) and names no HDR10
+base layer beside it (`HDR`, `HDR10`, `HDR10+`) ranks 300 lower, with the
+reason "Dolby Vision without HDR10 (may not convert)": such a file is most
+often Dolby Vision profile 5, which plays only on a Dolby Vision display and
+which the platform's transcoder refuses to convert without a tone-mapping
+encode, so it would never play. It is demoted, never rejected — a name says
+too little, and where nothing else is found it is still taken — and Blu-ray
+and remux sources are left alone (a UHD Blu-ray's Dolby Vision is profile 7,
+with its HDR10 base). The quality profile's `allowDolbyVisionOnly: true` ranks
+such releases like any other.
 - **Live progress** — each downloading request shows a progress bar with speed,
   ETA and the client's own state; a **downloads** table lists every job with
   per-client health chips and pause/resume/cancel.

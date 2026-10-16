@@ -15,17 +15,23 @@ import (
 
 // Info is what a release name claims to contain.
 type Info struct {
-	Title      string   `json:"title"`
-	Year       int      `json:"year"`
-	Resolution string   `json:"resolution"` // 2160p|1080p|720p|480p|""
-	Source     string   `json:"source"`     // bluray|remux|webdl|webrip|hdtv|dvd|cam|""
-	Codec      string   `json:"codec"`      // x265|x264|av1|xvid|""
-	HDR        bool     `json:"hdr"`
-	Repack     bool     `json:"repack"`
-	Group      string   `json:"group"`
-	Languages  []string `json:"languages"`
-	Season     int      `json:"season"`
-	Episode    int      `json:"episode"`
+	Title      string `json:"title"`
+	Year       int    `json:"year"`
+	Resolution string `json:"resolution"` // 2160p|1080p|720p|480p|""
+	Source     string `json:"source"`     // bluray|remux|webdl|webrip|hdtv|dvd|cam|""
+	Codec      string `json:"codec"`      // x265|x264|av1|xvid|""
+	HDR        bool   `json:"hdr"`
+	// DolbyVision: the name says Dolby Vision (DV, DoVi). HDR10: it names an
+	// HDR10 base layer beside it (HDR, HDR10, HDR10+). A Dolby Vision release
+	// without one is usually profile 5, which plays only on a Dolby Vision
+	// display and which a transcoder without tone-mapping cannot convert.
+	DolbyVision bool     `json:"dolbyVision,omitempty"`
+	HDR10       bool     `json:"hdr10,omitempty"`
+	Repack      bool     `json:"repack"`
+	Group       string   `json:"group"`
+	Languages   []string `json:"languages"`
+	Season      int      `json:"season"`
+	Episode     int      `json:"episode"`
 
 	// Normalized is the release name with scene separators collapsed to spaces
 	// and lowercased — the string every term match must run against. Matching
@@ -67,6 +73,12 @@ var (
 		{"av1", "av1"}, {"xvid", "xvid"}, {"divx", "xvid"},
 	}
 	hdrTokens = []string{"hdr10+", "hdr10", "hdr", "dolby vision", "dovi", " dv ", ".dv.", "hlg"}
+	// dvRE names Dolby Vision as a whole word of the normalised name, hdr10RE
+	// an HDR10 base layer as a word that starts with hdr (HDR, HDR10, HDR10+,
+	// HDR10Plus, and names that run it into the next tag, HDR10DDP): "[4K,
+	// HDR10, DV 7.6]" names both, "Advent" neither.
+	dvRE      = regexp.MustCompile(`(^|[^a-z0-9])(dv|dovi|dolby vision)([^a-z0-9]|$)`)
+	hdr10RE   = regexp.MustCompile(`(^|[^a-z0-9])hdr`)
 	langNames = map[string]string{
 		"eng": "en", "english": "en", "ger": "de", "german": "de", "deu": "de",
 		"fre": "fr", "french": "fr", "ita": "it", "italian": "it", "spa": "es",
@@ -75,6 +87,10 @@ var (
 		"kor": "ko", "chi": "zh", "dan": "da", "dut": "nl", "swe": "sv", "nor": "no",
 	}
 )
+
+// DolbyVisionOnly reports whether the name says Dolby Vision and names no
+// HDR10 base layer beside it.
+func (in Info) DolbyVisionOnly() bool { return in.DolbyVision && !in.HDR10 }
 
 // Parse extracts what it can from a release name. Everything is best-effort:
 // an unrecognised field stays empty rather than guessing.
@@ -117,6 +133,8 @@ func Parse(name string) Info {
 			break
 		}
 	}
+	in.DolbyVision = dvRE.MatchString(spaced)
+	in.HDR10 = hdr10RE.MatchString(spaced)
 	in.Repack = strings.Contains(spaced, "repack") || strings.Contains(spaced, "proper")
 
 	if m := episodeRE.FindStringSubmatch(name); m != nil {
