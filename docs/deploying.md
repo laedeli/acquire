@@ -130,10 +130,10 @@ need no extra privileges; the client images run as non-root too (see
 Every chart version is published as a release archive:
 
 ```text
-https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.0/acquire-0.4.0.tgz
+https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.1/acquire-0.4.1.tgz
 ```
 
-The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.4.0`.
+The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.4.1`.
 The operator pulls charts anonymously, so the OCI reference works once that
 package is public; the https archive works everywhere. Each release names the
 archive's digest: set it as the chart digest to pin exactly that archive.
@@ -159,7 +159,7 @@ tiles open the console in place, in the portal.
 With `ZAE_TOKEN` holding an admin bearer for the instance:
 
 ```bash
-zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.0/acquire-0.4.0.tgz \
+zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.1/acquire-0.4.1.tgz \
   --name acquire \
   --url https://<instance> \
   --set-secret database.url='postgres://acquire:…@db.example.org:5432/acquire?sslmode=require' \
@@ -171,7 +171,7 @@ zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire
 question). With the OCI reference, once the package is public:
 
 ```bash
-zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.4.0 --name acquire \
+zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.4.1 --name acquire \
   --url https://<instance> \
   --set-secret database.url=… --set-secret oidc.serviceClientSecret=…
 ```
@@ -271,7 +271,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.0/acquire-0.4.0.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.1/acquire-0.4.1.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -344,6 +344,10 @@ to the catalog by identity and learns what the library holds from it: see
 [upgrading to episode grabs](#upgrading-to-episode-grabs) for what that asks
 of the platform. Nothing is grabbed on its own after the upgrade: the backlog
 sweep only searches until an admin switches it on in settings.
+
+**To 0.4.1.** A web release named Dolby Vision without an HDR10 base layer
+ranks lower, as the platform cannot convert Dolby Vision profile 5 (see
+[the release picker](./acquire.md#the-console)); nothing else changes.
 
 ### Moving an existing deployment to the chart
 
