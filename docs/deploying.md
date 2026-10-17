@@ -130,10 +130,10 @@ need no extra privileges; the client images run as non-root too (see
 Every chart version is published as a release archive:
 
 ```text
-https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.1/acquire-0.4.1.tgz
+https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.2/acquire-0.4.2.tgz
 ```
 
-The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.4.1`.
+The same archive is `oci://ghcr.io/laedeli/charts/acquire`, version `0.4.2`.
 The operator pulls charts anonymously, so the OCI reference works once that
 package is public; the https archive works everywhere. Each release names the
 archive's digest: set it as the chart digest to pin exactly that archive.
@@ -159,7 +159,7 @@ tiles open the console in place, in the portal.
 With `ZAE_TOKEN` holding an admin bearer for the instance:
 
 ```bash
-zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.1/acquire-0.4.1.tgz \
+zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.2/acquire-0.4.2.tgz \
   --name acquire \
   --url https://<instance> \
   --set-secret database.url='postgres://acquire:…@db.example.org:5432/acquire?sslmode=require' \
@@ -171,7 +171,7 @@ zae addon add https://github.com/laedeli/acquire/releases/download/chart-acquire
 question). With the OCI reference, once the package is public:
 
 ```bash
-zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.4.1 --name acquire \
+zae addon add oci://ghcr.io/laedeli/charts/acquire --version 0.4.2 --name acquire \
   --url https://<instance> \
   --set-secret database.url=… --set-secret oidc.serviceClientSecret=…
 ```
@@ -271,7 +271,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.1/acquire-0.4.1.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.2/acquire-0.4.2.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -348,6 +348,16 @@ sweep only searches until an admin switches it on in settings.
 **To 0.4.1.** A web release named Dolby Vision without an HDR10 base layer
 ranks lower, as the platform cannot convert Dolby Vision profile 5 (see
 [the release picker](./acquire.md#the-console)); nothing else changes.
+
+**To 0.4.2.** The console's missing tab is a worklist on design system 0.3.0:
+tabs with counts, one message for what cannot be checked, filters, episodes
+grouped by series and season, and one emphasized action for what is
+selected. Copies into the arrivals are synced every 64 MiB on their way, and
+the temporary file of a copy killed mid-way is removed once it is two hours
+old (see [from download to library](#from-download-to-library)). The portal
+should run design system 0.3.0 too: the console's stylesheet carries the
+design system's tokens, which a portal on an older version would otherwise
+take on.
 
 ### Moving an existing deployment to the chart
 
