@@ -100,14 +100,16 @@ Grabs come from four places:
 
 - the **backlog sweep**, when `search.autoGrab` allows it
   ([the sweep](#the-backlog-sweep));
-- the console's **missing** tab: **grab** on a row, or **grab selected** for
-  several — a search and grab of the best release an automatic grab may take,
+- the console's **missing** tab: **grab now** in a row's action menu, **grab
+  all** on a season's group, or **grab N selected** for the rows ticked — a
+  search and grab of the best release an automatic grab may take,
   queued and done one at a time by acquire's grab worker. While as many
   downloads are in flight as the policy allows, a queued grab waits, unsearched,
   and says so; a grab refused for another reason (no client for the protocol,
   no room) is taken off the queue saying why;
-- **releases** on a row: the target's typed search, each release saying what
-  it holds; the one picked is grabbed for every wanted target it covers;
+- **pick a release** in a row's action menu: the target's typed search, each
+  release saying what it holds; the one picked is grabbed for every wanted
+  target it covers;
 - the **search** tab: a release whose name holds episodes of a tracked series
   is grabbed for that series' targets. One of a series acquire does not track,
   or of several, is refused rather than filed as a movie request — and so is
@@ -501,13 +503,23 @@ Tabs:
   (paste a magnet/`.torrent` URL), **remove**.
 - **series** — every tracked series: held of its episodes, missing and on
   their way, or *holdings unknown* until the catalog has said what it holds.
-- **missing** — the backlog, each row with its state and why: not searched
-  yet, found, nothing found and when it is looked at again, queued, grabbed,
-  downloaded, waiting for the catalog, failed. The header says how many
-  titles' holdings are unknown and why (**ask the catalog now**), and whether
-  the sweep grabs on its own. Admin actions: **grab** per row, **releases**
-  per row (the target's typed search, a season pack among them), and **grab
-  selected** for the rows ticked.
+- **missing** — the backlog as a worklist. Tabs with counts filter it:
+  *missing* (all of it), *on their way* (queued, grabbed, downloaded, waiting
+  for the catalog), *needs attention* (the last grab failed, with the reason),
+  *not yet aired*, and — while the catalog cannot say what the library holds of
+  some titles — *can't be checked*, which lists those titles. Rows are grouped
+  by series and season (movies in a group of their own), searchable by title
+  or `S04E07`, filterable by kind and air date, and shown a hundred at a time.
+  Each row says its state in words — missing, on its way, needs attention —
+  and why: not searched yet, found a release, nothing found and when it is
+  looked at again, search failed, no id a source accepts. One message strip
+  says how many titles' holdings are unknown and why, in words, with **show
+  them** and **ask the catalog again**; the catalog's own sentence and the item
+  id are under its **details**. The header says whether the sweep grabs on its
+  own. Admin actions: one action menu per row (**pick a release** — the
+  target's typed search, a season pack among them — and **grab now**), **grab
+  all** per group, and **grab N selected** for the rows ticked; a toast says
+  how many were queued and how many skipped.
 - **downloads** — every client job with progress and telemetry, pause/resume/
   cancel, under per-client health chips (speed, free disk, active news servers).
 - **search** — free-text search across the sources, scoped to some of them if
@@ -524,6 +536,12 @@ Tabs:
 
 On **requests** and **search**, admins see what setup still needs, with a link
 to the tab that fixes it.
+
+To look at a view on made-up data — for design work and screenshots —
+`npm run harness` in `web/` serves the missing tab at `http://127.0.0.1:5199/`
+on an invented backlog of 2,500 rows across 120 series (`?scenario=backlog`,
+`empty`, `unknown` or `error`; `&admin=0` for a non-admin). The harness is not
+part of the console's build.
 
 The **release picker** (`releases`) runs the same search auto-grab uses but
 shows the ranked candidates — protocol, source, size, seeders and *why* each was

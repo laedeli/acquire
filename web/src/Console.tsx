@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Tabs } from '@nalet/design-system'
+import { Tabs, Toaster } from '@nalet/design-system'
 // The console's styles: the design system's and its own layout. The build
 // emits them as one stylesheet, assets/console.css, which the portal links
 // when it mounts the console.
@@ -229,6 +229,8 @@ export function Console({
         {tab === 'clients' && <Clients api={api} admin={admin} />}
         {tab === 'settings' && <Settings api={api} admin={admin} />}
       </main>
+      {/* Transient feedback after an action ("8 episodes queued"), for every view. */}
+      <Toaster />
     </div>
   )
 }

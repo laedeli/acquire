@@ -14,5 +14,6 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src"]
+  "include": ["src", "harness"],
+  "exclude": ["harness/vite.config.ts"]
 }

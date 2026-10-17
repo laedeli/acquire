@@ -214,3 +214,46 @@
   flex-wrap: wrap;
   margin: var(--s-2) 0;
 }
+
+/* Visually hidden, still read: a column header the eye does not need. */
+.acq__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* A quiet line under a list: what it does not show, and why. */
+.acq__note {
+  margin: var(--s-2) 0 0;
+  color: var(--fg-dim);
+  font-family: var(--ff-mono);
+  font-size: 12px;
+}
+
+/* Technical detail (ids, the catalog's own words) behind a disclosure. */
+.acq__details {
+  margin-top: var(--s-1);
+}
+
+.acq__details > summary {
+  width: max-content;
+  color: var(--fg-muted);
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.acq__details > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.acq__details[open] > .acq__sub {
+  display: block;
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
