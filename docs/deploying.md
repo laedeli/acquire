@@ -501,6 +501,16 @@ says what failed and when acquire tries next. A good copy is not written
 twice. A refusal by the catalog fails the request, as before. The work is kept
 in acquire's database (`imports`), so a restart picks it up where it stopped.
 
+A copy is synced to disk every 64 MiB on its way, not only at its end. Written
+to network storage, the pages a copy has not written yet count against the
+memory of acquire's container, and a file of several gigabytes copied while the
+storage is busy would otherwise pile them up until the container is killed for
+memory. A copy killed outright (its pod lost, or killed for memory) leaves its
+temporary dot file behind and is copied again once its claim runs out (an
+hour); acquire removes such a temporary file — named `.<file>.<token>.copying`,
+under `.work/incoming/acquire/` alone — once nothing has written it for two
+hours, looking at start and every hour after, and says so in its log.
+
 An **episode grab** — a release grabbed for episodes acquire tracks, one, a
 file of several or a season pack — goes the same way, file by file: its copies
 land in `.work/incoming/acquire/<grab>/<client>-<job>/`, each file is handed

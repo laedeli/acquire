@@ -47,6 +47,12 @@ const (
 	importLease = time.Hour
 	// seedingCheck is how often a torrent still seeding is looked at again.
 	seedingCheck = 10 * time.Minute
+	// leftoverAge is how long a copy's temporary file must have gone unwritten
+	// before it counts as abandoned: twice the lease, after which no holder
+	// still copies it (a copy writes its file all the time).
+	leftoverAge = 2 * importLease
+	// leftoverSweep is how often the worker looks for abandoned temporary files.
+	leftoverSweep = time.Hour
 )
 
 // importBackoff is the wait before another attempt after n failed ones.
@@ -108,7 +114,12 @@ func (s *Service) RunImports(ctx context.Context) {
 	}
 	t := time.NewTicker(importTick)
 	defer t.Stop()
+	var swept time.Time
 	for {
+		if now := time.Now(); now.Sub(swept) >= leftoverSweep {
+			s.removeLeftovers(now)
+			swept = now
+		}
 		for ctx.Err() == nil && s.importNext(ctx) {
 		}
 		select {
@@ -117,6 +128,25 @@ func (s *Service) RunImports(ctx context.Context) {
 		case <-t.C:
 		case <-s.importWake:
 		}
+	}
+}
+
+// removeLeftovers takes away the temporary files of copies into the arrivals
+// that were killed mid-way (a pod killed for memory, a node lost), under the
+// arrivals folder acquire copies into alone; each is said in the log.
+func (s *Service) removeLeftovers(now time.Time) {
+	if s.cfg.ArrivalsRoot == "" {
+		return
+	}
+	removed, n, err := arrivals.RemoveLeftovers(filepath.Join(s.cfg.ArrivalsRoot, "acquire"), leftoverAge, now)
+	for _, p := range removed {
+		log.Printf("acquire: removed %s, the temporary file of a copy into the arrivals that was killed mid-way", p)
+	}
+	if len(removed) > 0 {
+		log.Printf("acquire: removed %d abandoned temporary file(s), %d bytes", len(removed), n)
+	}
+	if err != nil {
+		log.Printf("acquire: look for abandoned temporary files in the arrivals: %v", err)
 	}
 }
 

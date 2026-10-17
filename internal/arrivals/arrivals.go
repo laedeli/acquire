@@ -7,7 +7,14 @@
 // into a temporary name beside the target (a dot name, which the arrivals scan
 // passes over), synced to disk, checked, and only then renamed into place in
 // one step. A copy that fails leaves nothing behind but the source, which is
-// never touched.
+// never touched; one killed outright leaves its temporary file, which
+// RemoveLeftovers takes away once it is clearly abandoned.
+//
+// The copy is synced every syncEvery bytes on its way, not only at its end:
+// written to network storage, the pages a copy has not yet written count
+// against the memory of the container that writes them, and a file of
+// several gigabytes copied while the storage is busy would otherwise pile
+// them up until the container is killed for memory.
 package arrivals
 
 import (
@@ -23,7 +30,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
+
+// syncEvery is how many bytes a copy writes between two syncs: what it may
+// leave unwritten in memory at any time. A variable for the tests.
+var syncEvery int64 = 64 << 20
 
 const (
 	// chunk is what one read and one write move.
@@ -69,6 +81,7 @@ func Copy(ctx context.Context, src, dst string) error {
 		}
 	}()
 	buf := make([]byte, chunk)
+	var unsynced int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -77,6 +90,12 @@ func Copy(ctx context.Context, src, dst string) error {
 		if n > 0 {
 			if _, err := out.Write(buf[:n]); err != nil {
 				return err
+			}
+			if unsynced += int64(n); unsynced >= syncEvery {
+				if err := out.Sync(); err != nil {
+					return err
+				}
+				unsynced = 0
 			}
 		}
 		if errors.Is(rerr, io.EOF) {
@@ -163,6 +182,43 @@ func syncDir(dir string) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// leftoverRE is the name of a copy's temporary file: a dot, the target's
+// name, the copy's token and .copying (Copy).
+var leftoverRE = regexp.MustCompile(`^\..+\.[0-9a-f]{12}\.copying$`)
+
+// RemoveLeftovers removes, under root, the temporary files of copies that
+// were killed before they could clean up (Copy's own failures remove theirs):
+// files named as Copy names them and not written for longer than olderThan,
+// as a copy that still runs writes its file all the time. It answers the
+// paths it removed and the bytes they held; a root that does not exist holds
+// none.
+func RemoveLeftovers(root string, olderThan time.Duration, now time.Time) ([]string, int64, error) {
+	var removed []string
+	var bytes int64
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if path == root && errors.Is(err, os.ErrNotExist) {
+				return filepath.SkipAll
+			}
+			return err
+		}
+		if d.IsDir() || !leftoverRE.MatchString(d.Name()) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || !info.Mode().IsRegular() || now.Sub(info.ModTime()) < olderThan {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		removed = append(removed, path)
+		bytes += info.Size()
+		return nil
+	})
+	return removed, bytes, err
 }
 
 func token() string {
