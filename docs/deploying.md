@@ -197,7 +197,7 @@ The inputs, declared in the chart's `values.schema.json`:
 | `tmdb.apiKey` | optional, secret | `TMDB_API_KEY` — discovery is off without it |
 | `config.key` | generated, secret | `ACQUIRE_CONFIG_KEY` (see [the config key](#the-config-key)) |
 | `config.previousKey` | optional, secret | `ACQUIRE_CONFIG_KEY_PREVIOUS`, while rotating the key |
-| `subtitles.enabled` | `true` | `ACQUIRE_SUBTITLES` — [subtitles](./acquire.md#subtitles) in the platform's languages; nothing is searched for without the account below |
+| `subtitles.enabled` | `true` | `ACQUIRE_SUBTITLES` — [subtitles](./acquire.md#subtitles) in the configured languages; nothing is searched for without the account below |
 | `subtitles.languages` | empty | `ACQUIRE_SUBTITLE_LANGUAGES`, language tags (`[en, de, zh-Hans]`); empty takes the platform's (its `subtitles.languages`, else the packager's language whitelist) |
 | `subtitles.dailyBudget` | `18` | `ACQUIRE_SUBTITLE_DAILY_BUDGET` — the automatic downloads a UTC day; a free account allows 20, and the rest of the account's downloads are for versions you pick in the console |
 | `subtitles.opensubtitles.username`, `.password`, `.apiKey` | optional, secret | `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `OPENSUBTITLES_API_KEY` — the OpenSubtitles.com account and its API consumer's key; without all three, subtitles are off |
@@ -286,7 +286,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.5.0/acquire-0.5.0.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.5.1/acquire-0.5.1.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -387,7 +387,7 @@ design system's tokens, which a portal on an older version would otherwise
 take on.
 
 **To 0.5.0.** acquire downloads subtitles from OpenSubtitles.com in the
-platform's languages: new arrivals first, then the rest of the library, up to
+configured languages: new arrivals first, then the rest of the library, up to
 `subtitles.dailyBudget` automatic downloads a day (see
 [subtitles](./acquire.md#subtitles)). It needs the catalog's subtitle API
 (katalog-manager's `/api/library/items/{id}/subtitles` and
@@ -399,6 +399,12 @@ the downloads) is applied on start, and the schedule `subtitles-sweep` (every
 fifteen minutes) registered. The console has a **subtitles** tab, and its
 settings a subtitles section. Every download counts against the account's daily
 quota, which a free account has 20 of.
+
+**To 0.5.1.** Nothing to set. The console reads every subtitle name, number
+and setting it shows — the source's name, the languages and where they are
+set, the limits — from the configuration and the account when it shows them.
+The API's subtitle overview, its searches and every version found carry the
+source's name (`source`).
 
 ### Moving an existing deployment to the chart
 

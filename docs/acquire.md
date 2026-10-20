@@ -2,7 +2,7 @@
 
 `acquire` (Go, module `github.com/laedeli/acquire`) is the addon's brain and face.
 It records requests, drives grabs, reacts to download and pipeline events,
-downloads subtitles from OpenSubtitles.com in the platform's languages, and serves its console: a federated module the portal hosts. acquire has **no page
+downloads subtitles from OpenSubtitles.com in the configured languages, and serves its console: a federated module the portal hosts. acquire has **no page
 of its own** — the portal is the shell, and the console opens in place there,
 at `/portal/app/acquire`, on the portal's sign-in. The service serves the
 console's bundle under `/embed/` and its API under `/api/`, and sends a browser
@@ -389,7 +389,7 @@ its data. acquire never moves or deletes a client's files itself.
 
 ## Subtitles
 
-acquire downloads subtitles from **OpenSubtitles.com** in the platform's
+acquire downloads subtitles from **OpenSubtitles.com** in the configured
 languages, for the movies and episodes the library holds that lack one. It
 downloads the best match of each language, up to a daily limit, and adds it
 to the title through the catalog's subtitle API (katalog-manager
@@ -399,7 +399,7 @@ the title's package, and nothing is encoded or packaged again. A title no
 source has a subtitle for stays under *not found*; nothing else makes
 subtitles today.
 
-- **The languages** are the platform's — the catalog names them
+- **The languages** are, by default, the platform's — the catalog names them
   (`GET /api/library/subtitles/languages`: its `subtitles.languages`, else
   the packager's language whitelist, the languages its players show) — or,
   set for acquire alone, `subtitles.languages`.
@@ -416,7 +416,7 @@ subtitles today.
 - **Without an account and an API key** (`subtitles.opensubtitles.*`), or with
   `subtitles.enabled` false, nothing is searched for; the console and the
   setup checklist say what is missing.
-- **A language that is no longer the platform's** is searched for no more. A
+- **A language that is no longer configured** is searched for no more. A
   subtitle acquire added in it stays, and you can remove it in the console.
 
 ### What acquire looks at first
@@ -489,7 +489,7 @@ alone.
 
 ### The daily limit, and what waits
 
-`subtitles.dailyBudget` (18) is how many files acquire downloads automatically
+`subtitles.dailyBudget` (by default 18) is how many files acquire downloads automatically
 a UTC day; a free account allows 20, and the rest of the account's downloads
 are for versions you pick in the console. The account's own count is the
 limit for everyone — the account may be shared with other tools — so acquire
@@ -543,13 +543,14 @@ search. Under each status a line says why, in plain words, and what happens
 next. The source, the release, how it fits, the file's name and the source's
 or the catalog's own words are a row's **details**: shown on a row that needs
 attention, in the row's menu on the others. A subtitle made by AI reads
-"German · AI" — information, not a warning. The header says what
-the tab is ("Subtitles for the library's movies and episodes, from
-OpenSubtitles.com."), and its line of data says each language's coverage
-and the downloads the account has left today ("English 94% · German 40% ·
-Chinese 13% · 9 downloads left today"), which it leaves out while the day's
-count isn't known; how many automatic downloads were used today, the
-account's count and where the languages are set are under its **details**.
+"German · AI" — information, not a warning. The header's line of data says
+each configured language's coverage and the downloads the account has left
+today (for example "English 94% · German 40% · Chinese 13% · 9 downloads left
+today"), which it leaves out while the day's count isn't known; how many
+automatic downloads were used today, the account's count and where the
+languages are set are under its **details**. Every name, number and setting
+on the tab is read from the configuration and the account when it is shown —
+the source's name too, which the API gives.
 With nothing set up and nothing done, the tab says so once, in its empty
 state, with **open settings**.
 
@@ -719,7 +720,7 @@ Tabs:
   target's typed search, a season pack among them — and **grab now**), **grab
   all** per group, and **grab N selected** for the rows ticked; a toast says
   how many were queued and how many skipped.
-- **subtitles** — subtitles from OpenSubtitles.com in the platform's
+- **subtitles** — subtitles from OpenSubtitles.com in the configured
   languages, a worklist that opens on what needs you: tabs with counts (*needs attention*, *not
   found*, *waiting*, *on its way*, *with subtitles*), a language facet, rows grouped
   by series and season, **pick a version**, **preview**, **details** and
@@ -750,7 +751,8 @@ on an invented backlog of 2,500 rows across 120 series (`?scenario=backlog`,
 `empty`, `unknown` or `error`; `&admin=0` for a non-admin), and the subtitles
 tab with `?view=subtitles` on an invented library of 48 series and 60 movies in
 three languages (`&scenario=library`, `calm` — nothing needs attention —,
-`off` — no account — or `error`; `&tab=notfound&language=de&q=harbour` to open
+`off` — no account —, `unset` — the library's rows, and no API key — or
+`error`; `&tab=notfound&language=de&q=harbour` to open
 on a tab, a language and a search; `&picker=1` to open **pick a version** on
 the first row), and the settings view with `?view=settings` on the same
 library; `&zh=hans` makes the languages English, German and Chinese
@@ -892,7 +894,7 @@ progress message.
 | `ACQUIRE_SUBTITLE_LANGUAGES` | unset | the subtitle languages acquire searches for, a comma list of tags (`en,de,zh-Hans`); unset takes the platform's |
 | `ACQUIRE_SUBTITLE_DAILY_BUDGET` | `18` | the automatic downloads a UTC day; `0` downloads only the versions you pick |
 | `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `OPENSUBTITLES_API_KEY` | unset | the OpenSubtitles.com account and its API consumer's key; without all three, subtitles are off |
-| `ACQUIRE_VERSION` | `dev` | acquire's version, as its User-Agent names it to OpenSubtitles.com (`acquire v0.5.0`) |
+| `ACQUIRE_VERSION` | `dev` | acquire's version, as its User-Agent names it to OpenSubtitles.com (for example `acquire v0.5.1`) |
 
 Search sources and download clients are not environment settings: they are
 added in the console. `INDEXER_URL` / `INDEXER_API_KEY` are no longer read. The

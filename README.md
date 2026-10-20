@@ -22,8 +22,9 @@ builds on are documented canonically in the platform docs:
 - **[download-gateway](https://github.com/laedeli/download-gateway)** — the
   download plane: one API + Kafka events (`download.client.*`) in front of the
   actual download clients.
-- **Subtitles from OpenSubtitles.com** — in the platform's languages, for the
-  movies and episodes the library holds that lack one: new arrivals first,
+- **Subtitles from OpenSubtitles.com** — in the configured languages (by
+  default the platform's), for the movies and episodes the library holds that
+  lack one: new arrivals first,
   then the rest of the library, up to a daily download limit. acquire adds the
   best match of each language to the title through the catalog, where every
   player lists and plays it. A worklist in the console shows what needs you,
@@ -60,8 +61,8 @@ Full design docs live in [`docs/`](./docs) and are mirrored to this repo's
 Live end-to-end on the author's instance: request → grab → download → ingest →
 package → playback, with the console (requests, downloads, search, search
 sources, download clients, series, missing backlog, quality profiles) hosted
-in the portal. Subtitles (chart 0.5.0) are new, and need the catalog's attach
-seam. Expect sharp
+in the portal. Subtitles (since chart 0.5.0) are new, and need the catalog's
+attach seam. Expect sharp
 edges: this is a young codebase serving one deployment so far, and
 installation still involves the manual steps the platform's
 [addon identity](https://github.com/zaentrum/zaentrum/wiki/extending-identity)
