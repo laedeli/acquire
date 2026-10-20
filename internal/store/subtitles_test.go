@@ -428,3 +428,55 @@ func TestSubtitleRenewalAndWhatStays(t *testing.T) {
 		t.Error("a title that takes none is due")
 	}
 }
+
+// A title whose file is over 2 GiB, and titles whose TMDB ids are over 2^31,
+// are saved and read back as they are: the size of the original and the ids
+// are bigint, whatever the statements compare them with.
+func TestSubtitleTitlesOfLargeFilesAndIds(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	const size, movieID, seriesID = int64(8_298_739_425), int64(3_000_000_001), int64(4_000_000_002)
+	if err := s.PutSubtitleTitle(ctx, SubtitleTitle{ItemID: "big", Kind: "movie", Title: "A Long Film", TMDBID: movieID},
+		[]string{"de"}); err != nil {
+		t.Fatalf("a movie with a large TMDB id: %v", err)
+	}
+	if err := s.PutSubtitleTitle(ctx, SubtitleTitle{ItemID: "ep", Kind: "episode", Title: "A Show", Season: 1, Episode: 1,
+		ParentTMDBID: seriesID}, []string{"de"}); err != nil {
+		t.Fatalf("an episode of a series with a large TMDB id: %v", err)
+	}
+	fp := &SubtitleFingerprint{SizeBytes: size, Sum64: "0123456789abcdef"}
+	if err := s.SetSubtitleCatalog(ctx, "big", SubtitleCatalog{VersionID: "v1", Attachable: true, Fingerprint: fp,
+		Languages: []string{"de"}}); err != nil {
+		t.Fatalf("the read of a file of %d bytes: %v", size, err)
+	}
+	if ti, err := s.SubtitleTitleByID(ctx, "big"); err != nil || ti.SizeBytes != size || ti.TMDBID != movieID ||
+		ti.Sum64 != "0123456789abcdef" || ti.ReadAt == nil {
+		t.Errorf("the movie read back: %+v %v", ti, err)
+	}
+	if ep, err := s.SubtitleTitleByID(ctx, "ep"); err != nil || ep.ParentTMDBID != seriesID {
+		t.Errorf("the episode read back: %+v %v", ep, err)
+	}
+	// recorded again, as a new arrival: the ids stay as they are
+	if err := s.PutSubtitleTitle(ctx, SubtitleTitle{ItemID: "big", Kind: "movie", TMDBID: movieID, Priority: SubtitleNewArrival},
+		[]string{"de"}); err != nil {
+		t.Fatalf("recorded again: %v", err)
+	}
+	if ti, _ := s.SubtitleTitleByID(ctx, "big"); ti.TMDBID != movieID || ti.SizeBytes != size {
+		t.Errorf("recorded again: %+v", ti)
+	}
+	// a source's file ids over 2^31: downloaded, added, blocked
+	const fileID = int64(5_000_000_003)
+	k := SubtitleKey{"big", "de"}
+	if err := s.RecordSubtitleDownload(ctx, SubtitleDownload{ItemID: "big", Language: "de", FileID: fileID, How: "auto", OK: true}); err != nil {
+		t.Fatalf("a download of a large file id: %v", err)
+	}
+	if err := s.RecordSubtitleAttached(ctx, k, SubtitleAttached{SubtitleID: "sub-big", FileID: fileID, How: "auto"}); err != nil {
+		t.Fatalf("added: %v", err)
+	}
+	if err := s.BlockSubtitleFile(ctx, k, fileID+1); err != nil {
+		t.Fatalf("blocked: %v", err)
+	}
+	if w, err := s.SubtitleWantOf(ctx, k); err != nil || w.FileID != fileID || len(w.Blocked) != 1 || w.Blocked[0] != fileID+1 {
+		t.Errorf("the want with large file ids: %+v %v", w, err)
+	}
+}

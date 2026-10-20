@@ -147,8 +147,8 @@ func (s *Store) PutSubtitleTitle(ctx context.Context, t SubtitleTitle, langs []s
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO subtitle_titles (item_id, kind, title, year, season, episode, imdb_id, tmdb_id, parent_imdb_id,
 			parent_tmdb_id, target_id, title_id, release, priority, aired_at, packaged_at)
-		VALUES ($1, $2, $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, 0), $7, NULLIF($8, 0), $9, NULLIF($10, 0), $11, $12,
-			$13, $14, $15, $16)
+		VALUES ($1, $2, $3, NULLIF($4, 0), NULLIF($5, 0), NULLIF($6, 0), $7, NULLIF($8::bigint, 0), $9, NULLIF($10::bigint, 0),
+			$11, $12, $13, $14, $15, $16)
 		ON CONFLICT (item_id) DO UPDATE SET
 			kind = EXCLUDED.kind,
 			title = COALESCE(NULLIF(EXCLUDED.title, ''), subtitle_titles.title),
@@ -333,7 +333,7 @@ func (s *Store) SetSubtitleCatalog(ctx context.Context, itemID string, c Subtitl
 			labels = map[string]string{}
 		}
 		_, err = tx.Exec(ctx, `UPDATE subtitle_titles SET version_id = $2, attachable = $3, not_attachable = $4, read_at = now(),
-			size_bytes = NULLIF($5, 0), sum64 = $6, labels = $7, original_note = $8, updated_at = now() WHERE item_id = $1`,
+			size_bytes = NULLIF($5::bigint, 0), sum64 = $6, labels = $7, original_note = $8, updated_at = now() WHERE item_id = $1`,
 			itemID, c.VersionID, c.Attachable, c.NotAttachable, f.SizeBytes, f.Sum64, labels, f.Note)
 	} else {
 		_, err = tx.Exec(ctx, `UPDATE subtitle_titles SET version_id = $2, attachable = $3, not_attachable = $4, read_at = now(),
