@@ -69,7 +69,7 @@ config: {}
   #   stores. The operator generates one on first install when none is given.
   # previousKey: secret, optional: the key before a rotation.
 
-# Subtitles from OpenSubtitles.com in the platform's languages, for the titles
+# Subtitles from OpenSubtitles.com in the configured languages, for the titles
 # the library holds that lack one, added to each title through the catalog
 # (docs/acquire.md, "Subtitles"): new arrivals first, then the rest of the
 # library, the newest first, up to a daily download limit. On by default;

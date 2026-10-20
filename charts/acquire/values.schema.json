@@ -90,13 +90,13 @@
     "subtitles": {
       "type": "object",
       "title": "Subtitles",
-      "description": "Subtitles from OpenSubtitles.com in the platform's languages, for the titles the library holds. Without an account and an API key, nothing is searched for.",
+      "description": "Subtitles from OpenSubtitles.com in the configured languages, for the titles the library holds. Without an account and an API key, nothing is searched for.",
       "additionalProperties": false,
       "properties": {
         "enabled": {
           "type": "boolean",
           "title": "Subtitles on",
-          "description": "Search for subtitles in the platform's languages. Needs the account and the API key below.",
+          "description": "Search for subtitles in the configured languages. Needs the account and the API key below.",
           "default": true
         },
         "languages": {
