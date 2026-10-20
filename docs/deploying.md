@@ -60,6 +60,13 @@ flowchart TB
   once the catalog takes it; and since nothing says what the library holds,
   the missing tab lists nothing of a title and nothing is grabbed on its own
   (see [what the library holds](./acquire.md#what-the-library-holds)).
+- For **subtitles**, the catalog's **subtitle API** in katalog-manager
+  (`GET /api/library/subtitles/languages`, `GET`, `POST` and `DELETE
+  /api/library/items/{id}/subtitles`, open to the addon role) and an
+  **OpenSubtitles.com** account with the key of an API consumer. Without the
+  account, subtitles are off and the setup checklist says what is missing;
+  against a catalog without that API, the console says so (see
+  [subtitles](./acquire.md#subtitles)).
 - The platform's **event streaming**: brokers over mTLS with the platform's
   client certificate, or plaintext brokers such as a bundled one. The chart
   follows whichever the platform has.
@@ -190,6 +197,10 @@ The inputs, declared in the chart's `values.schema.json`:
 | `tmdb.apiKey` | optional, secret | `TMDB_API_KEY` — discovery is off without it |
 | `config.key` | generated, secret | `ACQUIRE_CONFIG_KEY` (see [the config key](#the-config-key)) |
 | `config.previousKey` | optional, secret | `ACQUIRE_CONFIG_KEY_PREVIOUS`, while rotating the key |
+| `subtitles.enabled` | `true` | `ACQUIRE_SUBTITLES` — [subtitles](./acquire.md#subtitles) in the platform's languages; nothing is searched for without the account below |
+| `subtitles.languages` | empty | `ACQUIRE_SUBTITLE_LANGUAGES`, language tags (`[en, de, zh-Hans]`); empty takes the platform's (its `subtitles.languages`, else the packager's language whitelist) |
+| `subtitles.dailyBudget` | `18` | `ACQUIRE_SUBTITLE_DAILY_BUDGET` — the automatic downloads a UTC day; a free account allows 20, and the rest of the account's downloads are for versions you pick in the console |
+| `subtitles.opensubtitles.username`, `.password`, `.apiKey` | optional, secret | `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `OPENSUBTITLES_API_KEY` — the OpenSubtitles.com account and its API consumer's key; without all three, subtitles are off |
 | `endpoints.deny` | empty | `ACQUIRE_ENDPOINT_DENY` (see [where configuration may point](#where-configuration-may-point)) |
 | `endpoints.allowInternal` | `false` | `ACQUIRE_ENDPOINT_ALLOW_INTERNAL` |
 | `downloadsRoot` | `/var/lib/katalog` | `ACQUIRE_DOWNLOADS_ROOT` |
@@ -263,6 +274,10 @@ type: Opaque
 stringData:
   database.url: postgres://acquire:CHANGE-ME@db.example.org:5432/acquire?sslmode=require
   oidc.serviceClientSecret: CHANGE-ME
+  # subtitles (optional): the OpenSubtitles.com account and its API key
+  subtitles.opensubtitles.username: CHANGE-ME
+  subtitles.opensubtitles.password: CHANGE-ME
+  subtitles.opensubtitles.apiKey: CHANGE-ME
 ---
 apiVersion: zaentrum.io/v1alpha1
 kind: ZaentrumAddon
@@ -271,7 +286,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.4.2/acquire-0.4.2.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.5.0/acquire-0.5.0.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -285,6 +300,18 @@ spec:
       name: zaentrum-addon-acquire-values
       valuesKey: oidc.serviceClientSecret
       targetPath: oidc.serviceClientSecret
+    - kind: Secret
+      name: zaentrum-addon-acquire-values
+      valuesKey: subtitles.opensubtitles.username
+      targetPath: subtitles.opensubtitles.username
+    - kind: Secret
+      name: zaentrum-addon-acquire-values
+      valuesKey: subtitles.opensubtitles.password
+      targetPath: subtitles.opensubtitles.password
+    - kind: Secret
+      name: zaentrum-addon-acquire-values
+      valuesKey: subtitles.opensubtitles.apiKey
+      targetPath: subtitles.opensubtitles.apiKey
 ```
 
 The operator reads `valuesFrom` only from Secrets and ConfigMaps whose name
@@ -358,6 +385,20 @@ old (see [from download to library](#from-download-to-library)). The portal
 should run design system 0.3.0 too: the console's stylesheet carries the
 design system's tokens, which a portal on an older version would otherwise
 take on.
+
+**To 0.5.0.** acquire downloads subtitles from OpenSubtitles.com in the
+platform's languages: new arrivals first, then the rest of the library, up to
+`subtitles.dailyBudget` automatic downloads a day (see
+[subtitles](./acquire.md#subtitles)). It needs the catalog's subtitle API
+(katalog-manager's `/api/library/items/{id}/subtitles` and
+`/api/library/subtitles/languages`) and an account: add `subtitles.opensubtitles.username`,
+`.password` and `.apiKey` to the values Secret (see [GitOps](#gitops)) — without
+them the chart renders, acquire starts, and subtitles are off, saying so in the
+console and the setup checklist. Migration `080` (the titles, their wants and
+the downloads) is applied on start, and the schedule `subtitles-sweep` (every
+fifteen minutes) registered. The console has a **subtitles** tab, and its
+settings a subtitles section. Every download counts against the account's daily
+quota, which a free account has 20 of.
 
 ### Moving an existing deployment to the chart
 
@@ -705,6 +746,7 @@ the manifests yourself, create:
 | `acquire-svc-oidc` | `client-secret` | `ACQUIRE_SVC_CLIENT_SECRET` |
 | `acquire-config` | `key` | `ACQUIRE_CONFIG_KEY` |
 | `katalog-tmdb` | `api-key` | `TMDB_API_KEY` (optional mount) |
+| `acquire-opensubtitles` | `username`, `password`, `api-key` | `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `OPENSUBTITLES_API_KEY` (optional mounts; subtitles are off without them) |
 | `kafka-mtls` | `user.crt`, `user.key`, `ca.crt` | created by the core deploy |
 
 Nothing else: search source keys and download client passwords are **not**
@@ -760,6 +802,9 @@ these from its values and the platform's.
 | `ACQUIRE_ENDPOINT_DENY` | hosts acquire must never be pointed at (below) |
 | `ACQUIRE_ENDPOINT_ALLOW_INTERNAL` | `true` to allow cluster services in other namespaces |
 | `POD_NAMESPACE` | acquire's own namespace (downward API); read from the service account otherwise |
+| `ACQUIRE_SUBTITLES`, `ACQUIRE_SUBTITLE_LANGUAGES`, `ACQUIRE_SUBTITLE_DAILY_BUDGET` | subtitles on, their languages (empty: the platform's) and the downloads a day |
+| `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `OPENSUBTITLES_API_KEY` | the OpenSubtitles.com account and its API key |
+| `ACQUIRE_VERSION` | acquire's version, as it names itself to OpenSubtitles.com (the chart's version) |
 
 `ACQUIRE_PREFER`, `ACQUIRE_STORAGE_FLOOR_GB` and `ACQUIRE_MAX_CONCURRENT_GRABS`
 only seed the search and grab settings on the first boot; the console owns them

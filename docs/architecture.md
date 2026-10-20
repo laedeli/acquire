@@ -12,10 +12,12 @@ acquisition capability something you can add or remove cleanly.
 > the platform's [Extending zaentrum](https://github.com/zaentrum/zaentrum/wiki/extending)
 > documentation. If this page and those ever disagree, those win.
 
-## The two seams
+## The seams
 
-The core exposes exactly two extension points. The addon uses both; the core
-depends on neither.
+The core exposes extension points in its own vocabulary; the addon uses
+them, and the core depends on none of them. Besides the two below, acquire
+asks the catalog what the library holds by identity (holdings), and attaches
+subtitles to titles (seam 3).
 
 ### Seam 1 — the UI extension registry (a native button, zero coupling)
 
@@ -73,6 +75,22 @@ over a file that is already in the library's arrivals — the finished download
 itself when it lies there, else acquire's verified copy of it — and lets the
 pipeline take it from `discovered` onward.
 
+### Seam 3 — attached subtitles (a subtitle becomes a title's track)
+
+katalog-manager adds a subtitle to a title it holds —
+`POST /api/library/items/{id}/subtitles`, WebVTT or SubRip, its language, how
+it came to be (`provider` for acquire's) — writes it beside the title's
+package and registers it, so every player lists and plays it. Nothing is
+packaged again. The same seam says what a title has (its subtitles, those
+that came with its file and those added, and the fingerprint its original is
+matched by), which subtitle languages the platform has set, and removes a
+subtitle the caller added. It knows nothing of where a subtitle came from.
+
+acquire uses it for [subtitles](./acquire.md#subtitles): it searches
+OpenSubtitles.com for the languages a title lacks and adds the best match of
+each, up to a daily limit. Without the seam, or without an account, it adds
+nothing and says so.
+
 ## Event-driven by design
 
 acquire **consumes** platform events and emits none of its own beyond its
@@ -120,7 +138,7 @@ sequenceDiagram
 | `download.client.completed` | download-gateway | **consumed** → copy into the arrivals if needed, ingest (an episode by identity) |
 | `download.client.failed` | download-gateway | **consumed** → mark failed |
 | `catalog.item.discovered` | katalog-manager (on ingest, and the scanner) | **consumed** → the episode or movie its identities name is held |
-| `catalog.item.packaged` | katalog-manager (pipeline) | **consumed** → mark fulfilled; what the item holds is playable |
+| `catalog.item.packaged` | katalog-manager (pipeline) | **consumed** → mark fulfilled; what the item holds is playable; its subtitles are looked for first |
 | `catalog.item.removed` | katalog-manager | **consumed** → what the item held is wanted again |
 
 acquire's consumer starts at the **latest** offset (only new events; history is
@@ -152,11 +170,12 @@ flowchart TB
     subgraph external["external endpoints — configured in acquire, not deployed"]
         SRC["search sources<br/><i>newznab · torznab</i>"]
         DC["download clients<br/><i>NZBGet · qBittorrent · oDownloader</i>"]
+        OS["OpenSubtitles.com<br/><i>the deployment's account</i>"]
     end
     subgraph coreapp["zaentrum core"]
         POR["portal-api<br/><i>addon install · components · setup checklist · proxy</i>"]
         WEB["chino-web / chino-api<br/><i>extension slot</i>"]
-        KMG["katalog-manager<br/><i>/api/ingest + pipeline</i>"]
+        KMG["katalog-manager<br/><i>/api/ingest + pipeline<br/>attached subtitles</i>"]
     end
     DB[("acquire's Postgres")]
     BUS[["shared Kafka (mTLS, tenant-prefixed)"]]
@@ -171,6 +190,8 @@ flowchart TB
     GW -->|"download.client.*"| BUS
     BUS -->|"completed / failed"| ACQ
     ACQ -->|"POST /api/ingest"| KMG
+    ACQ -->|"search · download subtitles"| OS
+    ACQ -->|"attach subtitles"| KMG
     KMG -->|"discovered / packaged"| BUS
     BUS -->|"packaged"| ACQ
 ```

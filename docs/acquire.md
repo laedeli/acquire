@@ -1,8 +1,8 @@
 # The acquire service
 
 `acquire` (Go, module `github.com/laedeli/acquire`) is the addon's brain and face.
-It records requests, drives grabs, reacts to download and pipeline events, and
-serves its console: a federated module the portal hosts. acquire has **no page
+It records requests, drives grabs, reacts to download and pipeline events,
+downloads subtitles from OpenSubtitles.com in the platform's languages, and serves its console: a federated module the portal hosts. acquire has **no page
 of its own** — the portal is the shell, and the console opens in place there,
 at `/portal/app/acquire`, on the portal's sign-in. The service serves the
 console's bundle under `/embed/` and its API under `/api/`, and sends a browser
@@ -362,7 +362,8 @@ acquire reacts to these consumed events:
   them, wanted again after a wait ([when a grab fails](#when-a-grab-fails)).
 - `catalog.item.packaged` → look up the request by item id → `fulfilled`; the
   targets the item holds are held and playable
-  ([what the library holds](#what-the-library-holds)).
+  ([what the library holds](#what-the-library-holds)); and the item is a new
+  arrival for [subtitles](#subtitles), searched first.
 - `catalog.item.discovered` / `.removed` → the targets the item holds are held,
   or wanted again. These two are read in a consumer group of their own, the
   main group's id followed by `-catalog`: a group whose topics include one that
@@ -385,6 +386,204 @@ For the clients the deployment runs, acquire then releases the download in
 the client, through the client's own API — an NZB right after its verified
 copy, a torrent once qBittorrent stopped it at its seeding goal, removed with
 its data. acquire never moves or deletes a client's files itself.
+
+## Subtitles
+
+acquire downloads subtitles from **OpenSubtitles.com** in the platform's
+languages, for the movies and episodes the library holds that lack one. It
+downloads the best match of each language, up to a daily limit, and adds it
+to the title through the catalog's subtitle API (katalog-manager
+`POST /api/library/items/{id}/subtitles`, origin `provider`). Every player
+lists and plays an added subtitle as any other: the catalog writes it beside
+the title's package, and nothing is encoded or packaged again. A title no
+source has a subtitle for stays under *not found*; nothing else makes
+subtitles today.
+
+- **The languages** are the platform's — the catalog names them
+  (`GET /api/library/subtitles/languages`: its `subtitles.languages`, else
+  the packager's language whitelist, the languages its players show) — or,
+  set for acquire alone, `subtitles.languages`.
+- **What a title has** is the catalog's word: its full subtitles, the ones
+  that came with the file and those added separately (a forced one doesn't
+  count). For Chinese, the language's script decides: Chinese of no script
+  (`zh`) counts a subtitle in either script, marked "in Traditional
+  characters" for a Traditional one; Chinese of a script (`zh-Hans`,
+  `zh-Hant`, or a region such as `zh-CN`, `zh-TW`) counts one in that script,
+  or one whose script isn't marked, and not one in the other script, which
+  nothing turns into it. A title with only that other one stays open for the
+  language, and its row says so ("nothing found · has one in Traditional
+  characters · again in 14 days").
+- **Without an account and an API key** (`subtitles.opensubtitles.*`), or with
+  `subtitles.enabled` false, nothing is searched for; the console and the
+  setup checklist say what is missing.
+- **A language that is no longer the platform's** is searched for no more. A
+  subtitle acquire added in it stays, and you can remove it in the console.
+
+### What acquire looks at first
+
+acquire makes a pass every fifteen minutes (`subtitles-sweep`), after a
+packaged title, when you ask in the console, and at least every half hour:
+
+1. **New arrivals first.** A `catalog.item.packaged` event makes its movie or
+   episode a new arrival — named from acquire's targets, else from the
+   catalog — whose languages are searched at once. A title packaged again
+   (another file, perhaps) is checked again, though it had every language: a
+   language its new file lost is searched anew, by the new file's
+   fingerprint, and a match found for the file before is dropped.
+2. **Then what was asked for**: titles acquire grabbed, or someone requested.
+   acquire can't see what is watched; what was asked for is the closest it
+   knows.
+3. **Then the rest of the library**, the newest first: the movies and
+   episodes acquire tracks that the library holds and plays, five hundred a
+   pass (an episode another's file covers has its holder's).
+
+A pass first downloads the queued matches, up to the daily limit, then
+searches twenty titles, one search each for every language they lack, and
+downloads each match at once while the limit lasts. **A search costs no
+download**, so acquire searches ahead of the limit; the matches it finds
+wait, queued, for a later day's downloads. Before a download acquire asks
+the catalog about the title again: nothing is downloaded for a title that
+has the language by now, or can't take a subtitle right now, and nothing
+while the catalog doesn't answer.
+
+### Finding the match
+
+A title is searched by its IMDb and TMDB ids — a movie's own, an episode's
+series' with its season and episode — and by its file's fingerprint: the
+catalog reads 128 KiB of the original and answers its size and the 64-bit
+sums of its first and last 64 KiB
+(`GET /api/library/items/{id}/subtitles?fingerprint=true`), which is how
+OpenSubtitles.com matches a subtitle to a file. acquire reads no file of the
+library itself. Once the original was deleted after packaging there is no
+fingerprint, and the ids and names decide. Of what the search finds, for each
+language:
+
+1. **made for this file** — its fingerprint matched — first;
+2. **made for this release** — its release name has what tells the file's
+   release from another (the release acquire grabbed it from, and what the
+   catalog's source record says its name claimed: disc or web, its height);
+3. then the **downloads** and the **rating**; one without hearing-impaired
+   cues before one with.
+
+Never downloaded automatically, but shown in the console with why: a
+**machine- or AI-translated** subtitle (unless `machine translations` is on
+in settings), one of the **foreign parts only**, one **in several files**,
+and one made for **another title** — a fingerprint can be another film's
+when a subtitle was uploaded under the wrong one. One made for **another
+episode** is left out of an episode's results altogether, as one in another
+language is: the source says which episode it belongs to, and so does its
+release's name (S04E07, a run like S04E07E08, 4x07, a season's S04). For
+**Chinese** of no script, Simplified (`zh-cn`) is taken before Traditional
+(`zh-tw`), whatever the downloads say; Traditional only when there is no
+Simplified one, added as `zh-Hant` and shown "in Traditional characters".
+Chinese of a script is searched in that script alone (`zh-Hans`: `zh-cn`;
+`zh-Hant`: `zh-tw`), and a version in the other script is never offered for
+it.
+
+The file is downloaded as SubRip and sent to the catalog as UTF-8: one in an
+older encoding is read in the one its language was most often written in
+(GB18030 or Big5 for Chinese, Windows-1250 to 1256 by language, else
+Windows-1252). The catalog keeps it as WebVTT. A language counts as **had**
+only once the catalog lists the subtitle acquire added — never on a download
+alone.
+
+### The daily limit, and what waits
+
+`subtitles.dailyBudget` (18) is how many files acquire downloads automatically
+a UTC day; a free account allows 20, and the rest of the account's downloads
+are for versions you pick in the console. The account's own count is the
+limit for everyone — the account may be shared with other tools — so acquire
+keeps to what it says it has left (OpenSubtitles.com answers every download
+with the day's remaining ones, and acquire asks the account when the day's
+count isn't known yet): automatic downloads stop at the daily limit or at the
+account's count, whichever comes first, and a version you pick draws on the
+account alone, whatever the automatic downloads used, refused only when the
+account has none left. A limit of `0` downloads nothing automatically; you
+can still pick. The console shows one number, the downloads the account has
+left today — what a version you pick takes from. The API is asked one
+request at a time, a second apart, and a `429` is waited out as its
+`Retry-After` says.
+
+- **Nothing found** — or only what is never downloaded automatically — is
+  searched again after a week, two, then four.
+- **A failed download or add** needs attention, its line saying what went
+  wrong in plain words and what comes next ("can't read the file · tries
+  another version in 5h"), the source's or the catalog's own words in its
+  details. A file the source refuses, one that can't be read or used, and one
+  whose text the catalog refuses are never downloaded again for that title:
+  after six hours the next search takes the next version, or, when the last
+  search found no other usable one, the line says so ("no other version
+  yet") and a new one is searched for after a week, as for nothing found.
+  What fails otherwise — a link that doesn't work, a subtitle the catalog
+  took and doesn't list — is tried again with the same version after six
+  hours. After five failures in a row it waits for you. A catalog or source
+  that doesn't answer fails nothing: the match waits, and the pass downloads
+  nothing more.
+- **A match the daily limit doesn't reach** waits, queued; the console says
+  in about how many days its turn comes.
+- **A subtitle you remove** is removed from the catalog, its file is never
+  downloaded again for that title, and acquire searches for another after a
+  day.
+
+With **downloading** off in settings, acquire still searches, and downloads
+only what you find (from the daily limit) or pick; the rest of what it finds
+waits for you under *waiting*.
+
+### In the console
+
+The **subtitles** tab is a worklist that opens on what needs you. One status
+per title and language, in words — *has subtitles* ("came with the file",
+"added by acquire · matches this file", "added by acquire · in Traditional
+characters"), *on its way* (in today's downloads, or asked for), *waiting*
+(not searched yet, or a match waiting for a later day: "found · waits for
+the daily download limit (about 22 days)"), *not found* ("nothing found ·
+again in 22 days"), *needs attention* ("the catalog refused it · tries
+another version in 5h") — with tabs that count each, a language facet and a
+search. Under each status a line says why, in plain words, and what happens
+next. The source, the release, how it fits, the file's name and the source's
+or the catalog's own words are a row's **details**: shown on a row that needs
+attention, in the row's menu on the others. A subtitle made by AI reads
+"German · AI" — information, not a warning. The header says what
+the tab is ("Subtitles for the library's movies and episodes, from
+OpenSubtitles.com."), and its line of data says each language's coverage
+and the downloads the account has left today ("English 94% · German 40% ·
+Chinese 13% · 9 downloads left today"), which it leaves out while the day's
+count isn't known; how many automatic downloads were used today, the
+account's count and where the languages are set are under its **details**.
+With nothing set up and nothing done, the tab says so once, in its empty
+state, with **open settings**.
+
+Rows are grouped by series and season, movies in a group of their own. Each
+row has one action menu — **pick a version**, **preview**, **details**,
+**remove** (an admin has all four) — an admin has **find all** per group,
+and **find German for 12 selected** for the rows ticked, which queues them
+first; a match that only waits for a later day's downloads is not among
+them, as finding it again would change nothing. **Pick a version** shows the
+versions OpenSubtitles.com has for the title in that language — for an
+episode, that episode's alone — in the order the automatic choice ranks
+them, each its release's name, how it fits ("matches this file", "matches
+this release", "may be out of sync"), its downloads, its rating and whether
+it is a machine translation (AI), for the hearing impaired or Traditional;
+how the search was made is under its **details**. **Use this one** downloads
+it at once, from the account's own downloads, whatever the automatic
+downloads used ("Using one takes 1 of the 9 downloads left today"), and
+takes the place of the one acquire added in that language before, which is
+removed, its file never downloaded again for the title. The languages, the
+account, the daily limit, **downloading** and **machine translations** are
+in **settings**.
+
+### Its API
+
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| `GET` | `/api/subtitles/overview?language=` | any signed-in | whether it runs and why not, the languages with their coverage, the day's downloads, the settings, the tabs' counts |
+| `GET` | `/api/subtitles?tab=&language=&q=&limit=` | any signed-in | a tab's titles and languages (`attention`, `notfound`, `waiting`, `way`, `has`), each with its status, its line and its details |
+| `GET` | `/api/subtitles/{itemId}/{language}/search` | **admin** | a search for one title and language: every version found, ranked, saying how it fits and why one is never downloaded automatically |
+| `POST` | `/api/subtitles/{itemId}/{language}/pick` | **admin** | download one of them and add it, at once (sends back the version) |
+| `DELETE` | `/api/subtitles/{itemId}/{language}` | **admin** | remove the subtitle acquire added |
+| `GET` | `/api/subtitles/{itemId}/{language}/preview` | any signed-in | the first cues of the subtitle acquire added |
+| `POST` | `/api/subtitles/find` | **admin** | queue searches for `{"keys": [{"itemId", "language"}, …]}`, first, at most 500; `202 {queued, skipped}` |
+| `GET` · `PUT` | `/api/settings/subtitles` | **admin** | `auto` (downloading on its own, `true`) and `allowMachineTranslated` (`false`); a `PUT` sends its revision in `If-Match` |
 
 ## HTTP API
 
@@ -520,6 +719,12 @@ Tabs:
   target's typed search, a season pack among them — and **grab now**), **grab
   all** per group, and **grab N selected** for the rows ticked; a toast says
   how many were queued and how many skipped.
+- **subtitles** — subtitles from OpenSubtitles.com in the platform's
+  languages, a worklist that opens on what needs you: tabs with counts (*needs attention*, *not
+  found*, *waiting*, *on its way*, *with subtitles*), a language facet, rows grouped
+  by series and season, **pick a version**, **preview**, **details** and
+  **remove** per row, and **find German for N selected** (see
+  [subtitles](#in-the-console)).
 - **downloads** — every client job with progress and telemetry, pause/resume/
   cancel, under per-client health chips (speed, free disk, active news servers).
 - **search** — free-text search across the sources, scoped to some of them if
@@ -531,8 +736,10 @@ Tabs:
   the gateway's live state and whether it runs the stored revision. The ones
   the addon runs itself carry a **managed** badge and can only be tested.
 - **settings** — search and grab (protocol preference, free-space floor,
-  downloads at once, and whether the backlog sweep grabs or only searches) and
-  the quality profile.
+  downloads at once, and whether the backlog sweep grabs or only searches),
+  subtitles (their languages and source, the day's downloads, whether they
+  are downloaded on their own and whether a machine translation may be taken)
+  and the quality profile.
 
 On **requests** and **search**, admins see what setup still needs, with a link
 to the tab that fixes it.
@@ -540,8 +747,14 @@ to the tab that fixes it.
 To look at a view on made-up data — for design work and screenshots —
 `npm run harness` in `web/` serves the missing tab at `http://127.0.0.1:5199/`
 on an invented backlog of 2,500 rows across 120 series (`?scenario=backlog`,
-`empty`, `unknown` or `error`; `&admin=0` for a non-admin). The harness is not
-part of the console's build.
+`empty`, `unknown` or `error`; `&admin=0` for a non-admin), and the subtitles
+tab with `?view=subtitles` on an invented library of 48 series and 60 movies in
+three languages (`&scenario=library`, `calm` — nothing needs attention —,
+`off` — no account — or `error`; `&tab=notfound&language=de&q=harbour` to open
+on a tab, a language and a search; `&picker=1` to open **pick a version** on
+the first row), and the settings view with `?view=settings` on the same
+library; `&zh=hans` makes the languages English, German and Chinese
+(Simplified). The harness is not part of the console's build.
 
 The **release picker** (`releases`) runs the same search auto-grab uses but
 shows the ranked candidates — protocol, source, size, seeders and *why* each was
@@ -621,6 +834,20 @@ handed over, the episode run it covers, the item the catalog answered, and
 what became of it (`imported`, `held` by an item of the library's own,
 `waiting`, `missing`, `failed`).
 
+**`subtitle_titles`**, **`subtitle_wants`** and **`subtitle_downloads`** —
+[subtitles](#subtitles): each catalog item acquire looks subtitles for (the
+item whose file it is), with the identities and release name it is searched
+by, its priority (a new arrival, asked for, the library), when it was
+packaged, and what the catalog last said of it (the version a subtitle is
+attached to, or why there is none, and its original's fingerprint); one want
+per title and language, its state (`has`, `wanted`, `found`, `notfound`,
+`failed`), its line, its best match while it waits, when it is searched
+again, the subtitle acquire added (its catalog id, the file and release it
+was made of, how it fits, the first cues) and the files you removed; and
+every download asked of OpenSubtitles.com, which the daily limit is counted
+from. The settings the console edits are `acquire_settings`'
+`subtitles`.
+
 **`downloads`** — one row per client job (`adapter` + `client_job_id`): state,
 the client's native state, bytes, speed, ETA, seeders/health, timestamps. This is
 a *projection* of the clients' state, so `wanted_id` is a soft reference — a
@@ -661,6 +888,11 @@ progress message.
 | `ACQUIRE_ARRIVALS_ROOT` | unset | the library's arrivals as acquire and the catalog see it, writable: finished downloads outside it are copied in before the hand-over; unset hands every download over in place |
 | `ACQUIRE_DOWNLOADS_RESERVE` | `0` | bytes kept free on the volume the managed clients work on: a release for one of them waits until that volume holds twice its size for an NZB, its size for a torrent, plus this |
 | `ACQUIRE_MANAGED_CLIENTS` | unset | the download clients the deployment runs: a JSON list in the shape the console writes a client in (`id`, `type`, `baseUrl`, `auth`, `username`, `secret`, `protocols`, `category`, `remotePath`, `localPath`), stored as managed clients at start; set but empty declares none |
+| `ACQUIRE_SUBTITLES` | `true` | `false` turns [subtitles](#subtitles) off |
+| `ACQUIRE_SUBTITLE_LANGUAGES` | unset | the subtitle languages acquire searches for, a comma list of tags (`en,de,zh-Hans`); unset takes the platform's |
+| `ACQUIRE_SUBTITLE_DAILY_BUDGET` | `18` | the automatic downloads a UTC day; `0` downloads only the versions you pick |
+| `OPENSUBTITLES_USERNAME`, `OPENSUBTITLES_PASSWORD`, `OPENSUBTITLES_API_KEY` | unset | the OpenSubtitles.com account and its API consumer's key; without all three, subtitles are off |
+| `ACQUIRE_VERSION` | `dev` | acquire's version, as its User-Agent names it to OpenSubtitles.com (`acquire v0.5.0`) |
 
 Search sources and download clients are not environment settings: they are
 added in the console. `INDEXER_URL` / `INDEXER_API_KEY` are no longer read. The
@@ -671,10 +903,11 @@ the declaration, takes over a client of the same id and type once no download
 is in flight on it, and removes — or, while downloads are in flight, disables —
 the managed clients no longer declared. Unset leaves the stored clients alone.
 
-acquire calls the gateway, katalog-manager and katalog-api's holdings with a
-**service-account** token (client-credentials), refreshed shortly before
-expiry, so those calls are authenticated independently of any user. katalog-api
-takes it when it carries the audience katalog-api accepts.
+acquire calls the gateway, katalog-manager (ingest, and the subtitle API of
+[subtitles](#subtitles), which its addon role may call) and katalog-api's
+holdings with a **service-account** token (client-credentials), refreshed
+shortly before expiry, so those calls are authenticated independently of any
+user. katalog-api takes it when it carries the audience katalog-api accepts.
 
 ## Next
 
