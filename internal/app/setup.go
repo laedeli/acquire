@@ -67,6 +67,7 @@ func (s *Service) Setup(ctx context.Context) SetupStatus {
 		s.sourcesSection(cov),
 		s.clientsSection(ctx, cov),
 		s.grabPolicySection(ctx),
+		s.subtitlesSection(ctx),
 	}
 	for i := range sections {
 		sections[i].Summary = clip(sections[i].Summary, 200)

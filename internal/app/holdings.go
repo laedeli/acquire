@@ -573,8 +573,10 @@ func (s *Service) OnRemoved(ctx context.Context, ev events.ItemEvent) error {
 // OnItemRemoved reverses a holding when katalog loses the file. The target
 // becomes wanted again — that is why WANT is modelled separately from HAVE, and
 // a one-way projection would quietly leave a hole nobody hunts. Of a title
-// that is not monitored, it is not hunted.
+// that is not monitored, it is not hunted. Its subtitles are looked for no
+// more.
 func (s *Service) OnItemRemoved(ctx context.Context, itemID string) error {
+	s.subtitleRemoved(ctx, itemID) // nothing to look subtitles for any more
 	n, err := s.st.ClearHolding(ctx, itemID)
 	if err != nil {
 		return err

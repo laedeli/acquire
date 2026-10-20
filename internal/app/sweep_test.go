@@ -86,8 +86,14 @@ func TestAutoGrabIsGated(t *testing.T) {
 	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 1, AutoGrab: true}, 0, "test"); err != nil {
 		t.Fatal(err)
 	}
-	if s := r.svc.Setup(ctx); !strings.Contains(s.Sections[len(s.Sections)-1].Summary, "the sweep grabs what is missing") {
-		t.Errorf("setup: %+v", s.Sections)
+	policy := ""
+	for _, sec := range r.svc.Setup(ctx).Sections {
+		if sec.Key == "grab-policy" {
+			policy = sec.Summary
+		}
+	}
+	if !strings.Contains(policy, "the sweep grabs what is missing") {
+		t.Errorf("setup's grab policy: %q", policy)
 	}
 	for _, e := range eps {
 		// Due again right away, as if the recheck had passed.

@@ -24,6 +24,7 @@ import (
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/indexer"
 	"github.com/laedeli/acquire/internal/katalog"
+	"github.com/laedeli/acquire/internal/opensubtitles"
 	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/secretbox"
 	"github.com/laedeli/acquire/internal/store"
@@ -75,6 +76,10 @@ type Service struct {
 	holdingsMu   sync.Mutex
 	holdingsAll  bool
 	holdingsIDs  map[string]bool
+
+	// Subtitles in the instance's languages (subtitles.go): the source's
+	// client and the worker's state.
+	subs *subtitleWork
 }
 
 func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, bus Bus, box *secretbox.Box) *Service {
@@ -90,10 +95,22 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming,
 		importWake: make(chan struct{}, 1), freeSpace: freeSpaceAt,
 		grabWake: make(chan struct{}, 1), holdingsWake: make(chan struct{}, 1), holdingsIDs: map[string]bool{}}
+	svc.subs = newSubtitleWork(opensubtitles.New(opensubtitles.Config{APIKey: cfg.OpenSubtitlesAPIKey,
+		Username: cfg.OpenSubtitlesUsername, Password: cfg.OpenSubtitlesPassword, UserAgent: userAgent(cfg.Version)}))
 	if st != nil {
 		svc.sync = configsync.New(st, gw, box, 30*time.Second)
 	}
 	return svc
+}
+
+// userAgent is how acquire names itself to a subtitle source: its name and
+// version, "acquire v0.5.0".
+func userAgent(version string) string {
+	v := strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if v == "" || v[0] < '0' || v[0] > '9' {
+		return "acquire " + strings.TrimSpace(version)
+	}
+	return "acquire v" + v
 }
 
 // processKey is a random key for sealing release references. Nothing sealed
@@ -419,12 +436,15 @@ func (s *Service) OnFailed(ctx context.Context, ev events.DownloadEvent) error {
 }
 
 // OnPackaged: the pipeline finished packaging the item → the request is
-// served, and the targets it holds are held and playable (holdings.go).
+// served, the targets it holds are held and playable (holdings.go), and its
+// subtitles are looked for first (subtitles.go).
 func (s *Service) OnPackaged(ctx context.Context, ev events.ItemEvent) error {
 	if ev.ItemID == "" {
 		return nil
 	}
 	s.holdingFromEvent(ctx, ev, true)
+	// a new arrival: its subtitles in the instance's languages, first in line
+	s.subtitleArrival(ctx, ev)
 	w, err := s.st.FindWantedByItemID(ctx, ev.ItemID)
 	if err != nil {
 		return nil // not one of ours

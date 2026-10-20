@@ -80,7 +80,30 @@ type Config struct {
 	// console's alone; set but empty is a declaration of none.
 	ManagedClients    string
 	ManagedClientsSet bool
+
+	// Subtitles in the instance's languages (internal/app/subtitles.go):
+	// SubtitlesEnabled (ACQUIRE_SUBTITLES, default true) turns them on, which
+	// does anything only with an OpenSubtitles account and API key
+	// (OPENSUBTITLES_USERNAME, OPENSUBTITLES_PASSWORD, OPENSUBTITLES_API_KEY).
+	// SubtitleLanguages (ACQUIRE_SUBTITLE_LANGUAGES, comma list) names the
+	// languages; empty takes the platform's. SubtitleDailyBudget
+	// (ACQUIRE_SUBTITLE_DAILY_BUDGET, default 18) is how many files the
+	// automatic work downloads a day (UTC), under the account's quota so a
+	// person's downloads in the console have some left.
+	SubtitlesEnabled      bool
+	SubtitleLanguages     []string
+	SubtitleDailyBudget   int
+	OpenSubtitlesUsername string
+	OpenSubtitlesPassword string
+	OpenSubtitlesAPIKey   string
+	// Version (ACQUIRE_VERSION) is acquire's version, as the User-Agent of its
+	// requests to a subtitle source names it.
+	Version string
 }
+
+// DefaultSubtitleDailyBudget is the automatic downloads a day: a free
+// OpenSubtitles account allows 20, and two are left for the console.
+const DefaultSubtitleDailyBudget = 18
 
 func env(keys ...string) string {
 	for _, k := range keys {
@@ -141,7 +164,25 @@ func Load() Config {
 
 		ManagedClients:    strings.TrimSpace(managed),
 		ManagedClientsSet: managedSet,
+
+		SubtitlesEnabled:      def("true", "ACQUIRE_SUBTITLES") != "false",
+		SubtitleLanguages:     splitList(env("ACQUIRE_SUBTITLE_LANGUAGES")),
+		SubtitleDailyBudget:   budgetOf(env("ACQUIRE_SUBTITLE_DAILY_BUDGET")),
+		OpenSubtitlesUsername: env("OPENSUBTITLES_USERNAME"),
+		OpenSubtitlesPassword: os.Getenv("OPENSUBTITLES_PASSWORD"),
+		OpenSubtitlesAPIKey:   env("OPENSUBTITLES_API_KEY"),
+		Version:               def("dev", "ACQUIRE_VERSION"),
 	}
+}
+
+// budgetOf reads the daily download budget: a whole number from 0 up (0 lets
+// the automatic work download nothing); anything else is the default.
+func budgetOf(v string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return DefaultSubtitleDailyBudget
+	}
+	return n
 }
 
 // platformURL is the scheme and host of the platform's address, https when it

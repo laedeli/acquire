@@ -94,6 +94,9 @@ func main() {
 	// What the library holds, asked of katalog-api on the holdings-reconcile
 	// schedule and whenever titles are imported or derived.
 	go svc.RunHoldings(ctx)
+	// Subtitles in the instance's languages: new arrivals first, then the
+	// library, within the day's download budget.
+	go svc.RunSubtitles(ctx)
 
 	// The consumer starts at the latest offset, so downloads that began while
 	// acquire was down would be invisible. Ask the gateway what is in flight.
@@ -130,7 +133,8 @@ func main() {
 	// consumer acts on schedule.due (OnScheduleDue): the sweep searches the
 	// backlog (and grabs with search.autoGrab), the reconcile learns what the
 	// library holds, the grab recovery wants failed targets again after their
-	// wait and gives up grabs stuck in flight.
+	// wait and gives up grabs stuck in flight, the subtitle sweep looks for the
+	// instance's languages.
 	for _, sc := range []struct {
 		name  string
 		every time.Duration
@@ -139,6 +143,7 @@ func main() {
 		{"retry-failed", 15 * time.Minute},
 		{"holdings-reconcile", 6 * time.Hour},
 		{"grab-recovery", time.Hour},
+		{"subtitles-sweep", 15 * time.Minute},
 		{"outbox-audit", 6 * time.Hour},
 	} {
 		if err := st.EnsureSchedule(ctx, sc.name, sc.every); err != nil {
