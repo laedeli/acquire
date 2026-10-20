@@ -32,7 +32,8 @@ same commit that adds the file.**
 | `030`–`039` | P6 / WP6 — requests, discovery, notifications | reserved |
 | `040`–`059` | P7 / WP7 — TV: episodes, split import, continuous acquisition: `040` target grabs, holdings by identity, search outcomes and the grab queue; `041` reservations, hand-overs and failure recovery; `042`–`059` free for this range | **in progress** |
 | `060`–`079` | P8 pulled forward — source and client registry: `060` search sources, `061` download clients, `062` settings, settings audit, grab provenance, `063` managed download clients, `064` imports; `065`–`079` free for this range | **in progress** |
-| `080`+ | P9 and beyond | unreserved |
+| `080`–`089` | subtitles in the instance's languages: `080` the titles looked at, their wants per language and the downloads; `081`–`089` free for this range | **in progress** |
+| `090`+ | P9 and beyond | unreserved |
 
 ## Rules
 
