@@ -2,7 +2,7 @@
 // that stands in for the portal shell (dark canvas, the fonts the shell loads).
 // Not part of the console's build; `npm run harness` serves it.
 //   /?scenario=backlog|empty|unknown|error  &admin=0            the missing tab
-//   /?view=subtitles&scenario=library|calm|off|error  &admin=0  the subtitles tab
+//   /?view=subtitles&scenario=library|calm|off|unset|error  &admin=0  the subtitles tab
 //   /?view=subtitles&tab=notfound&language=de&q=harbour       a tab (attention|notfound|waiting|way|has), a language, a search
 //   /?view=subtitles&picker=1                                  the picker, over the tab
 //   /?view=settings&scenario=library|off                       the settings view, its subtitles section on the same data

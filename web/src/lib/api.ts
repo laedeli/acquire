@@ -617,6 +617,8 @@ export type SubtitleKey = { itemId: string; language: string }
 
 /** A subtitle a source found, ranked for one of the instance's languages. */
 export type SubtitleCandidate = {
+  /** The name of the source it was found at. */
+  source: string
   subtitleId: string
   fileId: number
   files: number
@@ -683,6 +685,8 @@ export type SubtitleQuota = { known: boolean; allowed: number; remaining: number
 export type SubtitleSettings = { auto: boolean; allowMachineTranslated: boolean; revision: number }
 
 export type SubtitleOverview = {
+  /** The subtitle source's name, as the console shows it. */
+  source: string
   enabled: boolean
   configured: boolean
   missing?: string[]
@@ -701,6 +705,8 @@ export type SubtitleOverview = {
 }
 
 export type SubtitleSearch = {
+  /** The name of the source searched. */
+  source: string
   itemId: string
   title: string
   language: string

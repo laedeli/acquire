@@ -43,6 +43,7 @@ export function SubtitlePicker({
   api,
   row,
   name,
+  source: sourceName,
   onClose,
   onPicked,
 }: {
@@ -50,6 +51,8 @@ export function SubtitlePicker({
   row: SubtitleItem
   /** The row as people name it: "The Quiet Orchard · S01E08 · German". */
   name: string
+  /** The subtitle source's name, as the data gives it (the search's own once it answers). */
+  source: string
   onClose: () => void
   onPicked: () => void
 }) {
@@ -84,6 +87,7 @@ export function SubtitlePicker({
   }
 
   const quota = result?.quota
+  const source = result?.source || sourceName
   // the one number the header shows too: what the account has left today, which a pick takes from
   const left = result?.left ?? null
   const noneLeft = left != null && left <= 0
@@ -109,7 +113,7 @@ export function SubtitlePicker({
       ),
     },
     { key: 'language', header: 'language', render: (c) => languageName(c, row.languageName) },
-    { key: 'fromTrusted', header: 'source', render: () => 'OpenSubtitles.com' },
+    { key: 'fromTrusted', header: 'source', render: (c) => c.source || source },
     {
       key: 'match',
       header: 'fit',
@@ -144,7 +148,7 @@ export function SubtitlePicker({
     )
     if (result.release) how.push(`the release: ${result.release}`)
     if (quota?.known) {
-      how.push(`the OpenSubtitles.com account: ${formatCount(Math.max(quota.remaining, 0))} of ${formatCount(quota.allowed)} downloads left today`)
+      how.push(`the ${source} account: ${formatCount(Math.max(quota.remaining, 0))} of ${formatCount(quota.allowed)} downloads left today`)
     }
   }
   const using =
@@ -161,7 +165,7 @@ export function SubtitlePicker({
           {result ? 'Couldn’t add it.' : 'Couldn’t search.'}
         </MessageStrip>
       )}
-      {!result && !error && <Text variant="muted">Searching OpenSubtitles.com…</Text>}
+      {!result && !error && <Text variant="muted">{`Searching ${source}…`}</Text>}
       {result && (
         <>
           <Text variant="muted" as="p">

@@ -223,7 +223,11 @@ export function mockApi(scenario: Scenario): Api {
 // little; a few that need attention, many not found or waiting for the day's
 // downloads. Deterministic, like the backlog.
 
-export type SubtitleScenario = 'library' | 'calm' | 'off' | 'error'
+// unset: the library's rows, and the source's API key missing since
+export type SubtitleScenario = 'library' | 'calm' | 'off' | 'unset' | 'error'
+
+// the source's name, as the server gives it (opensubtitles.Name)
+const SOURCE_NAME = 'OpenSubtitles.com'
 
 const SUB_LANGS: SubtitleLanguage[] = [
   { tag: 'en', name: 'English', has: 0, total: 0 },
@@ -358,6 +362,7 @@ function candidate(title: string, at: string, lang: string, match: 'file' | 'rel
   const name = title.replace(/ /g, '.')
   const code = lang.startsWith('zh') ? 'zh-cn' : lang
   return {
+    source: SOURCE_NAME,
     subtitleId: String(Math.floor(r() * 1e7)), fileId: Math.floor(r() * 1e7), files: 1, fileName: `${name}.${at}.${code}.srt`, language: code,
     release: `${name}.${at}.1080p.WEB-DL.DDP5.1.H.264-GRP`, downloads: Math.floor(r() * 40000), rating: 6 + r() * 4, votes: Math.floor(r() * 30),
     hearingImpaired: false, foreignPartsOnly: false, aiTranslated: false, machineTranslated: false, fromTrusted: r() < 0.4,
@@ -388,7 +393,8 @@ export function mockSubtitlesApi(scenario: SubtitleScenario, chinese: SubtitleCh
     const counts: Partial<Record<SubtitleStatus, number>> = {}
     for (const x of rows) if (!language || x.language === language) counts[x.status] = (counts[x.status] ?? 0) + 1
     return {
-      enabled: true, configured: scenario !== 'off', missing: scenario === 'off' ? ['username', 'password', 'apiKey'] : [],
+      source: SOURCE_NAME, enabled: true, configured: scenario !== 'off' && scenario !== 'unset',
+      missing: scenario === 'off' ? ['username', 'password', 'apiKey'] : scenario === 'unset' ? ['apiKey'] : [],
       problem: scenario === 'error' ? 'OpenSubtitles refused the sign-in (HTTP 401): check the username and password' : undefined,
       languages: langs, from: { scope: 'platform', setting: 'packager.language_whitelist' },
       budget: budget(),
@@ -419,7 +425,7 @@ export function mockSubtitlesApi(scenario: SubtitleScenario, chinese: SubtitleCh
         c(`${name}.${at}.CD1`, 'unknown', 900, { files: 2, excluded: 'in 2 files' }),
       ]
       if (language === 'zh') list.push(c(`${name}.${at}.BluRay`, 'unknown', 640, { language: 'zh-tw', tag: 'zh-Hant', traditional: true }))
-      return pause({ itemId, title: row ? `${row.title} ${row.kind === 'movie' ? '' : at}`.trim() : title,
+      return pause({ source: SOURCE_NAME, itemId, title: row ? `${row.title} ${row.kind === 'movie' ? '' : at}`.trim() : title,
         language, languageName: row?.languageName ?? language, hash: true, release: `${name}.${at}.1080p.WEB-DL.DDP5.1.H.264-GRP`,
         candidates: list, left: budget().accountLeft, quota: budget().account }, 500)
     },

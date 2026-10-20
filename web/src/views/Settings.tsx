@@ -170,17 +170,19 @@ function Subtitles({ api }: { api: Api }) {
   }
 
   const o = overview
-  const account = !o
+  // the source field: the source's name as the data gives it, then how it stands
+  const state = !o
     ? ''
     : !o.enabled
-      ? "switched off in acquire's installation (subtitles.enabled)"
+      ? 'switched off (subtitles.enabled)'
       : !o.configured
-        ? `not set up: missing subtitles.opensubtitles.${(o.missing ?? []).join(', ')} in acquire's installation`
+        ? `not set up: missing subtitles.opensubtitles.${(o.missing ?? []).join(', ')}`
         : o.problem
           ? `not working: ${o.problem}`
           : o.budget.account?.known
             ? `signed in · ${o.budget.account.allowed} downloads a day, ${o.budget.account.remaining} left today`
             : 'set up'
+  const account = o ? `${o.source || 'the subtitle source'} · ${state}` : ''
 
   return (
     <div className="acq__settings">
@@ -188,8 +190,7 @@ function Subtitles({ api }: { api: Api }) {
         <div>
           <span className="acq__mono">subtitles</span>
           <Text variant="muted" as="div">
-            subtitles from OpenSubtitles.com in the platform&apos;s languages: new arrivals first, then the rest of the
-            library, up to the daily limit.
+            new arrivals first, then the rest of the library, up to the daily limit.
           </Text>
         </div>
         <Button variant="primary" loading={saving} leading={<Save size={14} />} onClick={() => void save()}>
@@ -210,7 +211,7 @@ function Subtitles({ api }: { api: Api }) {
         >
           <Text as="div">{o?.languages.length ? o.languages.map((l) => l.name).join(', ') : '—'}</Text>
         </Field>
-        <Field label="source" hint="OpenSubtitles.com, with the account from acquire's installation (subtitles.opensubtitles.*)">
+        <Field label="source" hint="set in subtitles.opensubtitles.*">
           <Text as="div">{account || '—'}</Text>
         </Field>
         <Field

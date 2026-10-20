@@ -110,12 +110,21 @@ function languageNote(r: SubtitleItem): string {
   return ''
 }
 
-/** What a row's details say: the source and the release, how it fits, the source's or the catalog's words, the original, when it was added. */
-function detailLines(r: SubtitleItem): string[] {
+/** The source's name when nothing names it yet. */
+const SOURCE = 'the subtitle source'
+
+/** A text's first letter in capitals, as a sentence starts: "The subtitle source isn't set up, so nothing is downloaded." */
+const sentence = (t: string) => t.charAt(0).toUpperCase() + t.slice(1)
+
+/**
+ * What a row's details say: the source (its name as the data gives it) and the release, how it fits, the source's or
+ * the catalog's words, the original, when it was added.
+ */
+function detailLines(r: SubtitleItem, source: string): string[] {
   const lines: string[] = []
   const f = r.found
   if (f) {
-    lines.push(`OpenSubtitles.com · ${f.release || f.fileName}`)
+    lines.push(`${f.source || source} · ${f.release || f.fileName}`)
     lines.push(
       `${fitWords(f.match)}${f.hashMatch ? ' (its fingerprint)' : ''} · ${formatCount(f.downloads)} downloads${
         f.votes > 0 ? ` · rated ${f.rating.toFixed(1)}` : ''
@@ -123,7 +132,7 @@ function detailLines(r: SubtitleItem): string[] {
     )
     if (f.fileName && f.fileName !== f.release) lines.push(`file: ${f.fileName}`)
   } else if (r.release) {
-    lines.push(`OpenSubtitles.com · ${r.release}`)
+    lines.push(`${source} · ${r.release}`)
     lines.push(fitWords(r.match))
   }
   if (r.why) lines.push(r.why)
@@ -160,7 +169,7 @@ function headerDetails(o: SubtitleOverview | null): string[] {
     if (b.account?.known && b.accountLeft != null) {
       const renewed = b.account.resetAt ? until(b.account.resetAt) : ''
       out.push(
-        `the OpenSubtitles.com account: ${formatCount(b.accountLeft)} of ${formatCount(b.account.allowed)} downloads left today${
+        `the ${o.source || 'subtitle source'} account: ${formatCount(b.accountLeft)} of ${formatCount(b.account.allowed)} downloads left today${
           renewed && renewed !== 'now' ? ` · renewed ${renewed}` : ''
         }`,
       )
@@ -230,6 +239,8 @@ export function Subtitles({
   const [picking, setPicking] = useState<SubtitleItem | null>(null)
   const [previewing, setPreviewing] = useState<{ row: SubtitleItem; text: string | null } | null>(null)
   const [detailing, setDetailing] = useState<SubtitleItem | null>(null)
+  // the source's name as the data gives it
+  const source = overview?.source || SOURCE
 
   const load = useCallback(async () => {
     try {
@@ -342,7 +353,7 @@ export function Subtitles({
         header: 'state',
         cell: (r) => {
           // a row that needs attention shows its details; the others keep them in the row's menu
-          const lines = r.status === 'attention' ? detailLines(r) : []
+          const lines = r.status === 'attention' ? detailLines(r, source) : []
           return (
             <div>
               <StatusCell {...statusOf(r)} detail={r.detail} />
@@ -383,7 +394,7 @@ export function Subtitles({
               { id: 'preview', label: 'preview', disabled: !r.preview, onSelect: () => preview(r) },
               ...(r.status === 'attention'
                 ? []
-                : [{ id: 'details', label: 'details', disabled: detailLines(r).length === 0, onSelect: () => setDetailing(r) }]),
+                : [{ id: 'details', label: 'details', disabled: detailLines(r, source).length === 0, onSelect: () => setDetailing(r) }]),
               ...(admin
                 ? [{ id: 'remove', label: 'remove', danger: true, disabled: !r.removable, onSelect: () => void remove(r) }]
                 : []),
@@ -392,7 +403,7 @@ export function Subtitles({
         ),
       },
     ],
-    [admin, busy],
+    [admin, busy, source],
   )
 
   const groupHeader = (g: DataTableGroup<SubtitleItem>) => {
@@ -442,8 +453,8 @@ export function Subtitles({
   if (overview && !setupOnly) {
     if (!overview.enabled) {
       strips.push(
-        <MessageStrip key="off" state="information" actions={settingsButton}>
-          Subtitles are switched off in acquire’s installation, so nothing new is searched for.
+        <MessageStrip key="off" state="information" details="subtitles.enabled is off" actions={settingsButton}>
+          Subtitles are switched off, so nothing new is searched for.
         </MessageStrip>,
       )
     } else if (!overview.configured) {
@@ -451,10 +462,10 @@ export function Subtitles({
         <MessageStrip
           key="setup"
           state="warning"
-          details={`missing in acquire’s installation: subtitles.opensubtitles.${(overview.missing ?? []).join(', ')}`}
+          details={`missing: subtitles.opensubtitles.${(overview.missing ?? []).join(', ')}`}
           actions={settingsButton}
         >
-          OpenSubtitles.com isn’t set up, so nothing is downloaded. acquire needs an account and an API key, added in its installation.
+          {`${sentence(source)} isn’t set up, so nothing is downloaded. Settings shows what’s missing.`}
         </MessageStrip>,
       )
     } else if (overview.problem) {
@@ -546,8 +557,8 @@ export function Subtitles({
         title={overview.enabled ? "subtitles aren't set up" : 'subtitles are off'}
         description={
           overview.enabled
-            ? 'To download subtitles, acquire needs an OpenSubtitles.com account and an API key. Both are added in acquire’s installation; settings shows which are missing.'
-            : 'Subtitles are switched off in acquire’s installation, so nothing is searched for.'
+            ? 'Settings shows what’s missing.'
+            : 'Subtitles are switched off, so nothing is searched for.'
         }
         headingLevel={3}
         actions={onNavigate ? <Button onClick={() => onNavigate('settings')}>open settings</Button> : undefined}
@@ -592,8 +603,6 @@ export function Subtitles({
   const listShown = rows.length > 0
   const canSelectAll = admin && selectedInView.size > 0 && selectedInView.size < findableInView.length
   const languageOptions = [{ value: '', label: 'all languages' }, ...(overview?.languages ?? []).map((l) => ({ value: l.tag, label: l.name }))]
-  // the subtitle line says what the tab is, in the body face; the mono line holds data alone (the coverage names the languages)
-  const subtitle = 'Subtitles for the library’s movies and episodes, from OpenSubtitles.com.'
   const facts = [coverageLine(overview), budgetLine(overview)].filter(Boolean).join(' · ')
   const more = headerDetails(overview)
 
@@ -601,7 +610,6 @@ export function Subtitles({
     <div className="acq__view">
       <Worklist
         title="subtitles"
-        subtitle={subtitle}
         headingLevel={2}
         headerInfo={
           <>
@@ -684,6 +692,7 @@ export function Subtitles({
           api={api}
           row={picking}
           name={rowName(picking)}
+          source={source}
           onClose={() => setPicking(null)}
           onPicked={() => {
             toast(`Added ${rowName(picking)}.`, { state: 'success' })
@@ -712,7 +721,7 @@ export function Subtitles({
           {previewing.row.release && (
             <p className="acq__note">
               <Badge tone="neutral">
-                <KeepCase>OpenSubtitles.com</KeepCase>
+                <KeepCase>{source}</KeepCase>
               </Badge>{' '}
               {previewing.row.release} · {fitWords(previewing.row.match)}
             </p>
@@ -732,7 +741,7 @@ export function Subtitles({
         >
           <StatusCell {...statusOf(detailing)} detail={detailing.detail} />
           <div className="acq__lines">
-            {detailLines(detailing).map((l, i) => (
+            {detailLines(detailing, source).map((l, i) => (
               <span key={i} className="acq__sub">
                 {l}
               </span>
