@@ -286,7 +286,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.5.1/acquire-0.5.1.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.5.2/acquire-0.5.2.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -405,6 +405,12 @@ and setting it shows — the source's name, the languages and where they are
 set, the limits — from the configuration and the account when it shows them.
 The API's subtitle overview, its searches and every version found carry the
 source's name (`source`).
+
+**To 0.5.2.** Nothing to set. The subtitles store refused every title whose
+file is over 2 GiB when it saved what the catalog said of it (`size_bytes`
+was sent as a 32-bit number), so those titles were never searched; TMDB ids
+over 2^31 had the same trap. No download was spent on them, and they are
+searched on the next pass after the update, without a step of yours.
 
 ### Moving an existing deployment to the chart
 
