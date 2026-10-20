@@ -56,9 +56,11 @@ const (
 // Candidate is a result ranked for one of the instance's languages.
 type Candidate struct {
 	opensubtitles.Result
-	// Want is the instance language it serves; Tag what it is attached as
-	// (zh-Hans, zh-Hant, de); Traditional that it is Traditional Chinese for a
-	// Simplified want.
+	// Source is the name of the source it was found at (opensubtitles.Name).
+	Source string `json:"source"`
+	// Want is the language it serves; Tag what it is added as (zh-Hans,
+	// zh-Hant, de); Traditional that it is in Traditional characters for a
+	// Chinese want of no script.
 	Want        string  `json:"want"`
 	Tag         string  `json:"tag"`
 	Traditional bool    `json:"traditional"`
@@ -95,7 +97,8 @@ func Rank(results []opensubtitles.Result, want string, t Target, o Options) []Ca
 		if !ok || !ofTheEpisode(r, t) {
 			continue
 		}
-		c := Candidate{Result: r, Want: want, Tag: TagOf(r.Language), Traditional: how == "hant", Match: MatchUnknown}
+		c := Candidate{Result: r, Source: opensubtitles.Name, Want: want, Tag: TagOf(r.Language), Traditional: how == "hant",
+			Match: MatchUnknown}
 		c.Similarity = similarity(known, tokensOf(t, r.Release, r.FileName))
 		labels := labelsAgree(t.Labels, r.Release+" "+r.FileName)
 		switch {

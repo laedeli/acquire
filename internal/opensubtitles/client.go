@@ -28,6 +28,10 @@ import (
 // DefaultBaseURL is the API's address.
 const DefaultBaseURL = "https://api.opensubtitles.com/api/v1"
 
+// Name is the source's name as the console shows it: the overview, a
+// search and every version found carry it, so no text types it.
+const Name = "OpenSubtitles.com"
+
 // Config is what the client needs: the account and the API key (all three, or
 // the client is off), and the User-Agent ("acquire v0.5.0").
 type Config struct {

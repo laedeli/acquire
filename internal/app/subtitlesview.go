@@ -49,6 +49,8 @@ type SubtitleBudget struct {
 
 // SubtitleOverview is what the tab says of the work as a whole.
 type SubtitleOverview struct {
+	// Source is the subtitle source's name, as the console shows it.
+	Source     string                `json:"source"`
 	Enabled    bool                  `json:"enabled"`
 	Configured bool                  `json:"configured"`
 	Missing    []string              `json:"missing,omitempty"`
@@ -62,7 +64,7 @@ type SubtitleOverview struct {
 
 // SubtitleOverview reads the overview; lang narrows the counts.
 func (s *Service) SubtitleOverview(ctx context.Context, lang string) SubtitleOverview {
-	o := SubtitleOverview{Enabled: s.cfg.SubtitlesEnabled, Configured: s.subs.client.Enabled(),
+	o := SubtitleOverview{Source: opensubtitles.Name, Enabled: s.cfg.SubtitlesEnabled, Configured: s.subs.client.Enabled(),
 		Missing: s.subs.client.Missing(), Settings: s.SubtitleSettings(ctx), Counts: map[string]int{}}
 	s.subs.mu.Lock()
 	o.Problem = s.subs.problem
@@ -358,6 +360,8 @@ func inWords(d time.Duration) string {
 // fits and why one is never taken on its own; what is known of the file; and
 // the account's downloads.
 type SubtitleSearch struct {
+	// Source is the name of the source searched.
+	Source     string                `json:"source"`
 	ItemID     string                `json:"itemId"`
 	Title      string                `json:"title"`
 	Language   string                `json:"language"`
@@ -374,7 +378,7 @@ type SubtitleSearch struct {
 }
 
 // ErrSubtitlesOff is any subtitle action while the work cannot run.
-var ErrSubtitlesOff = errors.New("subtitles are off: switched off, or OpenSubtitles.com has no account and API key")
+var ErrSubtitlesOff = errors.New("subtitles are off: switched off, or the subtitle source isn't set up")
 
 // ErrNoDownloadsLeft is a pick while the account has no downloads left today.
 var ErrNoDownloadsLeft = errors.New("the account has no downloads left today")
@@ -401,7 +405,7 @@ func (s *Service) SearchSubtitleTitle(ctx context.Context, k store.SubtitleKey) 
 	if _, t, err = s.readSubtitleCatalog(ctx, t, langs); err != nil {
 		return SubtitleSearch{}, err
 	}
-	out := SubtitleSearch{ItemID: t.ItemID, Title: t.Title, Language: k.Language, Name: subtitles.Name(k.Language),
+	out := SubtitleSearch{Source: opensubtitles.Name, ItemID: t.ItemID, Title: t.Title, Language: k.Language, Name: subtitles.Name(k.Language),
 		Hash: t.Sum64 != "", Release: t.Release, Original: t.OriginalNote, Candidates: []subtitles.Candidate{}}
 	if t.Kind == "episode" {
 		out.Title = fmt.Sprintf("%s S%02dE%02d", t.Title, t.Season, t.Episode)
@@ -533,7 +537,7 @@ func (s *Service) subtitlesSection(ctx context.Context) SetupSection {
 		return sec
 	case !s.subs.client.Enabled():
 		sec.State = SetupNeedsSetup
-		sec.Summary = "OpenSubtitles.com needs " + strings.Join(s.subs.client.Missing(), ", ") + " (subtitles.opensubtitles.* in acquire's installation)"
+		sec.Summary = opensubtitles.Name + " needs " + strings.Join(s.subs.client.Missing(), ", ") + " (subtitles.opensubtitles.*)"
 		return sec
 	}
 	s.subs.mu.Lock()
@@ -549,7 +553,7 @@ func (s *Service) subtitlesSection(ctx context.Context) SetupSection {
 		names = append(names, subtitles.Name(l))
 	}
 	sec.State = SetupReady
-	sec.Summary = "OpenSubtitles.com · " + strings.Join(names, ", ")
+	sec.Summary = opensubtitles.Name + " · " + strings.Join(names, ", ")
 	if n, ok := s.AccountLeft(ctx, false); ok {
 		sec.Summary += fmt.Sprintf(" · %d %s left today", n, plural(n, "download", "downloads"))
 	}

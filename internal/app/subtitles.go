@@ -147,7 +147,7 @@ func (s *Service) RunSubtitles(ctx context.Context) {
 		log.Printf("acquire: subtitles are off (subtitles.enabled)")
 		return
 	case s.subs == nil || !s.subs.client.Enabled():
-		log.Printf("acquire: subtitles are off: OpenSubtitles.com needs %s (subtitles.opensubtitles.* in acquire's installation)",
+		log.Printf("acquire: subtitles are off: "+opensubtitles.Name+" needs %s (subtitles.opensubtitles.*)",
 			strings.Join(s.subs.client.Missing(), ", "))
 		return
 	}

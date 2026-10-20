@@ -446,6 +446,11 @@ func TestAPickAndARemoval(t *testing.T) {
 		found.Left == nil || *found.Left != 20 {
 		t.Fatalf("the search (the account asked for its count): %+v %v", found, err)
 	}
+	// the source's name is data: the search and every version carry it, and the overview
+	if found.Source != opensubtitles.Name || found.Candidates[1].Source != opensubtitles.Name ||
+		r.svc.SubtitleOverview(ctx, "").Source != opensubtitles.Name {
+		t.Errorf("the source's name: %q, %q", found.Source, found.Candidates[1].Source)
+	}
 	if err := r.svc.PickSubtitle(ctx, k, found.Candidates[1]); err != nil {
 		t.Fatal(err)
 	}
