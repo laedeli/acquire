@@ -22,6 +22,7 @@ import { Indexers } from './views/Indexers'
 import { Clients } from './views/Clients'
 import { SetupBanner } from './components/SetupBanner'
 import { Missing } from './views/Missing'
+import { Subtitles } from './views/Subtitles'
 import { Series } from './views/Series'
 import { Search } from './views/Search'
 import { Settings } from './views/Settings'
@@ -31,7 +32,7 @@ const FALLBACK_POLL_MS = 30_000
 // Each surface is its own launchpad tile, so it needs its own address. Hash
 // routes give it one inside the portal's route for the app
 // (/portal/app/acquire#/downloads) that the shell's own router leaves alone.
-const TABS = ['requests', 'series', 'missing', 'downloads', 'search', 'discover', 'indexers', 'clients', 'settings'] as const
+const TABS = ['requests', 'series', 'missing', 'subtitles', 'downloads', 'search', 'discover', 'indexers', 'clients', 'settings'] as const
 type Tab = (typeof TABS)[number]
 
 function tabFromHash(): Tab {
@@ -172,6 +173,8 @@ export function Console({
           // and "what is still owed" are the same question from two ends.
           { value: 'series', label: 'series' },
           { value: 'missing', label: 'missing' },
+          // what the library holds, in the instance's languages: work, like missing
+          { value: 'subtitles', label: 'subtitles' },
           { value: 'downloads', label: `downloads${active ? ` (${active})` : ''}` },
           { value: 'search', label: 'search' },
           { value: 'discover', label: 'discover' },
@@ -198,6 +201,7 @@ export function Console({
         )}
         {tab === 'series' && <Series api={api} />}
         {tab === 'missing' && <Missing api={api} admin={admin} tick={tick} />}
+        {tab === 'subtitles' && <Subtitles api={api} admin={admin} tick={tick} onNavigate={setTab} />}
         {tab === 'downloads' && (
           <Downloads
             api={api}

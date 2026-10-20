@@ -1,8 +1,23 @@
 // Small shared pieces: the progress bar the design system doesn't ship, status
-// tones, and the per-client health chips.
+// tones, the per-client health chips, and a name that keeps its case.
+import type { ReactNode } from 'react'
 import { Badge } from '@nalet/design-system'
 import type { ClientStatus, Download } from '../lib/api'
 import { bytes, eta, health, pct, speed } from '../lib/format'
+
+/**
+ * A name — a title, a language, an acronym — inside a label the design system
+ * lowercases keeps its case: "find German for 4 selected". Only where a label
+ * takes elements (a button's children, a modal's or an empty state's title, a
+ * badge, an action menu item, a status); a string-typed label (a tile's title,
+ * a filter tab's label, a column header) takes no name.
+ *
+ * TODO(design system 0.4.0): swap for its <KeepCase> (it renders nc-keep-case)
+ * and drop .keep-case from app.css.
+ */
+export function KeepCase({ children }: { children: ReactNode }) {
+  return <span className="keep-case">{children}</span>
+}
 
 /** Square accent-filled bar on a border-coloured track — the house convention. */
 export function ProgressBar({ value }: { value: number }) {

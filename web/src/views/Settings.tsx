@@ -1,5 +1,6 @@
-// Settings: how acquire searches and grabs, and the quality profile that
-// decides which release wins.
+// Settings: how acquire searches and grabs, the quality profile that decides
+// which release wins, and the subtitles: their languages, their source and
+// whether they come on their own.
 //
 // Everything in the profile feeds the scorer, and the scores it produces are
 // what the search and picker views show — so a change is visible immediately
@@ -7,7 +8,14 @@
 import { useEffect, useState } from 'react'
 import { Badge, Button, Checkbox, Divider, Field, Input, Select, Switch, Text } from '@nalet/design-system'
 import { Save } from 'lucide-react'
-import { ApiError, type Api, type QualityProfile, type SearchSettings } from '../lib/api'
+import {
+  ApiError,
+  type Api,
+  type QualityProfile,
+  type SearchSettings,
+  type SubtitleOverview,
+  type SubtitleSettings,
+} from '../lib/api'
 
 const RESOLUTIONS = ['2160p', '1080p', '720p', '480p']
 
@@ -15,6 +23,7 @@ export function Settings({ api, admin }: { api: Api; admin: boolean }) {
   return (
     <div className="acq__settings-stack">
       {admin && <SearchAndGrab api={api} />}
+      {admin && <Subtitles api={api} />}
       <QualityProfileSettings api={api} admin={admin} />
     </div>
   )
@@ -110,6 +119,125 @@ function SearchAndGrab({ api }: { api: Api }) {
           checked={draft.autoGrab}
           onChange={(e) => setDraft({ ...draft, autoGrab: e.currentTarget.checked })}
           label={draft.autoGrab ? 'grabs on its own' : 'only searches'}
+        />
+      </Field>
+      <Divider />
+    </div>
+  )
+}
+
+/**
+ * The subtitles: the languages every title is to have (the platform's, or the
+ * deployment's), the source and its account, the day's downloads, and what
+ * the console sets — whether they come on their own, and whether a
+ * machine-translated one may be taken. The account and the budget are the
+ * deployment's (the addon's values), shown, not edited.
+ */
+function Subtitles({ api }: { api: Api }) {
+  const [draft, setDraft] = useState<SubtitleSettings | null>(null)
+  const [overview, setOverview] = useState<SubtitleOverview | null>(null)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    api
+      .subtitleSettings()
+      .then(setDraft)
+      .catch((e) => setError(String(e.message || e)))
+    api
+      .subtitleOverview()
+      .then(setOverview)
+      .catch(() => undefined)
+  }, [api])
+
+  if (error && !draft) return <Text variant="muted">{error}</Text>
+  if (!draft) return null
+
+  async function save() {
+    if (!draft) return
+    setSaving(true)
+    setError('')
+    try {
+      setDraft(await api.saveSubtitleSettings(draft))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      setError(String((e as Error).message || e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const o = overview
+  const account = !o
+    ? ''
+    : !o.enabled
+      ? "switched off in acquire's installation (subtitles.enabled)"
+      : !o.configured
+        ? `not set up: missing subtitles.opensubtitles.${(o.missing ?? []).join(', ')} in acquire's installation`
+        : o.problem
+          ? `not working: ${o.problem}`
+          : o.budget.account?.known
+            ? `signed in · ${o.budget.account.allowed} downloads a day, ${o.budget.account.remaining} left today`
+            : 'set up'
+
+  return (
+    <div className="acq__settings">
+      <div className="acq__settings-head">
+        <div>
+          <span className="acq__mono">subtitles</span>
+          <Text variant="muted" as="div">
+            subtitles from OpenSubtitles.com in the platform&apos;s languages: new arrivals first, then the rest of the
+            library, up to the daily limit.
+          </Text>
+        </div>
+        <Button variant="primary" loading={saving} leading={<Save size={14} />} onClick={() => void save()}>
+          {saved ? 'saved' : 'save'}
+        </Button>
+      </div>
+      {error && <Text variant="muted">{error}</Text>}
+      <div className="acq__settings-row">
+        <Field
+          label="languages"
+          hint={
+            o?.from?.setting
+              ? o.from.scope === 'deployment'
+                ? `set for acquire (${o.from.setting})`
+                : `set for the whole platform (${o.from.setting})`
+              : undefined
+          }
+        >
+          <Text as="div">{o?.languages.length ? o.languages.map((l) => l.name).join(', ') : '—'}</Text>
+        </Field>
+        <Field label="source" hint="OpenSubtitles.com, with the account from acquire's installation (subtitles.opensubtitles.*)">
+          <Text as="div">{account || '—'}</Text>
+        </Field>
+        <Field
+          label="automatic downloads a day"
+          hint="the daily limit for automatic downloads (subtitles.dailyBudget); the rest of the account's downloads are for versions you pick"
+        >
+          <Text as="div">{o ? `${o.budget.daily} · ${o.budget.used} used today` : '—'}</Text>
+        </Field>
+      </div>
+      <Field
+        label="downloading"
+        hint="on: the best match in each language is downloaded, up to the daily limit. off: titles are still searched, and only what you find or pick is downloaded."
+      >
+        <Switch
+          checked={draft.auto}
+          onChange={(e) => setDraft({ ...draft, auto: e.currentTarget.checked })}
+          label={draft.auto ? 'downloads on its own' : 'downloads only what you ask for'}
+        />
+      </Field>
+      <Field
+        label="machine translations"
+        hint="subtitles a source marks as machine- or AI-translated. off: never downloaded automatically, but you can still pick one."
+      >
+        <Switch
+          checked={draft.allowMachineTranslated}
+          onChange={(e) => setDraft({ ...draft, allowMachineTranslated: e.currentTarget.checked })}
+          label={draft.allowMachineTranslated ? 'downloaded like any other' : 'never downloaded automatically'}
         />
       </Field>
       <Divider />

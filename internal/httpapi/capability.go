@@ -230,7 +230,9 @@ func capabilityDoc(cfg config.Config) capability {
 			{Name: "series", Summary: "tracked series with acquisition progress", Method: "GET", Path: "/api/series"},
 			{Name: "calendar", Summary: "upcoming and recent episodes", Method: "GET", Path: "/api/calendar"},
 			{Name: "status", Summary: "counts and pipeline state", Method: "GET", Path: "/api/status"},
-			{Name: "setup", Summary: "is acquire configured: sources, clients, grab policy", Method: "GET", Path: "/api/setup", Role: "admin"},
+			{Name: "subtitles", Summary: "subtitles in the platform's languages: coverage, today's downloads, what needs attention", Method: "GET", Path: "/api/subtitles/overview"},
+			{Name: "find-subtitles", Summary: "queue subtitle searches for titles and languages", Method: "POST", Path: "/api/subtitles/find", Role: "admin"},
+			{Name: "setup", Summary: "is acquire configured: sources, clients, grab policy, subtitles", Method: "GET", Path: "/api/setup", Role: "admin"},
 			{Name: "sources", Summary: "the search sources", Method: "GET", Path: "/api/indexers", Role: "admin"},
 			{Name: "clients", Summary: "the download clients and their live state", Method: "GET", Path: "/api/download-clients", Role: "admin"},
 		},
@@ -249,6 +251,7 @@ func capabilityDoc(cfg config.Config) capability {
 				{Key: "sources", Title: "search sources", Description: "where acquire searches for releases", Required: true, Target: "#/indexers", Ord: 10},
 				{Key: "clients", Title: "download clients", Description: "the download programs acquire hands releases to", Required: true, Target: "#/clients", Ord: 20},
 				{Key: "grab-policy", Title: "search and grab", Description: "protocol preference, free-space floor and concurrency", Required: false, Target: "#/settings", Ord: 30},
+				{Key: "subtitles", Title: "subtitles", Description: "from OpenSubtitles.com, in the platform's languages", Required: false, Target: "#/settings", Ord: 40},
 			},
 		},
 		UI: &capUI{
@@ -268,6 +271,7 @@ func capabilityDoc(cfg config.Config) capability {
 				{Key: "search", Title: "search", Description: "across all search sources", Icon: "radar", Target: "#/search", Ord: 30},
 				{Key: "indexers", Title: "search sources", Description: "where releases are searched", Icon: "globe", Target: "#/indexers", Ord: 40},
 				{Key: "clients", Title: "clients", Description: "where downloads run", Icon: "server", Target: "#/clients", Ord: 45},
+				{Key: "subtitles", Title: "subtitles", Description: "coverage per language", Icon: "tv", Target: "#/subtitles", Ord: 47},
 				{Key: "settings", Title: "quality profiles", Description: "what counts as good", Icon: "settings", Target: "#/settings", Ord: 50},
 			},
 			// The one row the addon contributes: "Request this" on an empty

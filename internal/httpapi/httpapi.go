@@ -234,6 +234,16 @@ func (s *Server) Handler() http.Handler {
 		r.Post("/api/targets/grab", s.grabTargets)             // admin
 		r.Post("/api/targets/{id}/pick", s.pickTarget)         // admin
 		r.Post("/api/holdings/reconcile", s.reconcileHoldings) // admin
+		// Subtitles in the instance's languages (subtitlesapi.go): the tab's
+		// header and list, a person's search, pick and removal, a selection
+		// put first in line.
+		r.Get("/api/subtitles/overview", s.subtitleOverview)
+		r.Get("/api/subtitles", s.subtitleList)
+		r.Post("/api/subtitles/find", s.findSubtitles)                       // admin
+		r.Get("/api/subtitles/{itemId}/{language}/search", s.searchSubtitle) // admin
+		r.Post("/api/subtitles/{itemId}/{language}/pick", s.pickSubtitle)    // admin
+		r.Get("/api/subtitles/{itemId}/{language}/preview", s.previewSubtitle)
+		r.Delete("/api/subtitles/{itemId}/{language}", s.removeSubtitle) // admin
 
 		// Configuration, admin-only (configapi.go). The platform links its setup
 		// checklist into the console tabs that edit these.
@@ -252,6 +262,8 @@ func (s *Server) Handler() http.Handler {
 		r.Delete("/api/download-clients/{id}", s.deleteDownloadClient)
 		r.Get("/api/settings/search", s.getSearchSettings)
 		r.Put("/api/settings/search", s.putSearchSettings)
+		r.Get("/api/settings/subtitles", s.getSubtitleSettings)
+		r.Put("/api/settings/subtitles", s.putSubtitleSettings)
 	})
 
 	// The console, as the portal loads it through its app proxy: the federated

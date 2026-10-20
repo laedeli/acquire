@@ -493,6 +493,39 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
     pickTarget: (id: string, c: Candidate) =>
       call<unknown>('targets/' + encodeURIComponent(id) + '/pick', { method: 'POST', body: JSON.stringify(c) }),
     reconcileHoldings: () => call<unknown>('holdings/reconcile', { method: 'POST' }),
+    // Subtitles in the instance's languages: the tab's header and list (any
+    // signed-in user), a search, a pick, a removal and a selection put first
+    // in line (admin), and their settings (admin).
+    subtitleOverview: (language = '') =>
+      call<SubtitleOverview>('subtitles/overview' + (language ? '?language=' + encodeURIComponent(language) : '')),
+    subtitles: (tab: SubtitleStatus | '', language = '', q = '', limit = 5000) =>
+      call<{ items: SubtitleItem[] | null }>(
+        'subtitles?' + new URLSearchParams({ tab, language, q, limit: String(limit) }).toString(),
+      ).then((r) => r.items ?? []),
+    subtitleSearch: (itemId: string, language: string) =>
+      call<SubtitleSearch>(`subtitles/${encodeURIComponent(itemId)}/${encodeURIComponent(language)}/search`).then(
+        (r) => ({ ...r, candidates: r.candidates ?? [] }),
+      ),
+    pickSubtitle: (itemId: string, language: string, c: SubtitleCandidate) =>
+      call<unknown>(`subtitles/${encodeURIComponent(itemId)}/${encodeURIComponent(language)}/pick`, {
+        method: 'POST',
+        body: JSON.stringify(c),
+      }),
+    removeSubtitle: (itemId: string, language: string) =>
+      call<void>(`subtitles/${encodeURIComponent(itemId)}/${encodeURIComponent(language)}`, { method: 'DELETE' }),
+    subtitlePreview: (itemId: string, language: string) =>
+      call<{ text: string }>(`subtitles/${encodeURIComponent(itemId)}/${encodeURIComponent(language)}/preview`).then(
+        (r) => r.text,
+      ),
+    findSubtitles: (keys: SubtitleKey[]) =>
+      call<{ queued: SubtitleKey[]; skipped: number }>('subtitles/find', { method: 'POST', body: JSON.stringify({ keys }) }),
+    subtitleSettings: () => call<SubtitleSettings>('settings/subtitles'),
+    saveSubtitleSettings: (s: SubtitleSettings) =>
+      call<SubtitleSettings>('settings/subtitles', {
+        method: 'PUT',
+        headers: ifMatch(s.revision),
+        body: JSON.stringify({ auto: s.auto, allowMachineTranslated: s.allowMachineTranslated }),
+      }),
   }
 }
 
@@ -575,6 +608,110 @@ export type Counts = {
   /** Monitored titles whose holdings are unknown, and their aired targets left out of missing. */
   holdingsUnknown: number
   unknownTargets: number
+}
+
+/** has · on its way · waiting · not found · needs attention: one per title and language. */
+export type SubtitleStatus = 'has' | 'way' | 'waiting' | 'notfound' | 'attention'
+
+export type SubtitleKey = { itemId: string; language: string }
+
+/** A subtitle a source found, ranked for one of the instance's languages. */
+export type SubtitleCandidate = {
+  subtitleId: string
+  fileId: number
+  files: number
+  fileName: string
+  /** The source's code: de, zh-cn, zh-tw. */
+  language: string
+  release: string
+  downloads: number
+  rating: number
+  votes: number
+  hearingImpaired: boolean
+  foreignPartsOnly: boolean
+  aiTranslated: boolean
+  machineTranslated: boolean
+  fromTrusted: boolean
+  hashMatch: boolean
+  uploaded: string
+  want: string
+  /** What it is attached as: de, zh-Hans, zh-Hant. */
+  tag: string
+  traditional: boolean
+  /** file: made for this very file · release: for a release of its name · unknown: may be out of sync. */
+  match: 'file' | 'release' | 'unknown'
+  similarity: number
+  score: number
+  /** Why an automatic choice never takes it. */
+  excluded?: string
+  best: boolean
+}
+
+export type SubtitleItem = {
+  itemId: string
+  kind: string
+  title: string
+  titleId: string
+  year: number
+  season: number
+  episode: number
+  airedAt: string | null
+  language: string
+  languageName: string
+  status: SubtitleStatus
+  /** The line under the status: why, or what happens next. */
+  detail: string
+  /** The source's or the catalog's own words, for the details. */
+  why?: string
+  nextAt: string | null
+  hasKind?: string
+  /** A subtitle acquire attached, which it can remove. */
+  removable: boolean
+  preview: boolean
+  release?: string
+  match?: string
+  attachedAt?: string | null
+  found?: SubtitleCandidate | null
+  asked: boolean
+  original?: string
+}
+
+export type SubtitleLanguage = { tag: string; name: string; has: number; total: number }
+
+export type SubtitleQuota = { known: boolean; allowed: number; remaining: number; resetAt: string; at: string }
+
+export type SubtitleSettings = { auto: boolean; allowMachineTranslated: boolean; revision: number }
+
+export type SubtitleOverview = {
+  enabled: boolean
+  configured: boolean
+  missing?: string[]
+  problem?: string
+  languages: SubtitleLanguage[]
+  /** Where the languages are set: for the whole platform, or in acquire's deployment; and the setting that names them. */
+  from: { scope: 'platform' | 'deployment' | ''; setting: string }
+  /**
+   * The day's downloads: the automatic budget (daily), what the automatic work used of it today and has left, the
+   * picks a person made today, what the account said, and what the account has left today — the one number the
+   * console shows, and what a pick takes from (null while it is not known for today).
+   */
+  budget: { daily: number; used: number; left: number; manual: number; account?: SubtitleQuota; accountLeft: number | null }
+  settings: SubtitleSettings
+  counts: Partial<Record<SubtitleStatus, number>>
+}
+
+export type SubtitleSearch = {
+  itemId: string
+  title: string
+  language: string
+  languageName: string
+  hash: boolean
+  release?: string
+  original?: string
+  candidates: SubtitleCandidate[]
+  /** The downloads the account has left today, the one number the console shows; using a candidate takes one of them. Null while not known. */
+  left: number | null
+  quota?: SubtitleQuota
 }
 
 export type Api = ReturnType<typeof makeApi>

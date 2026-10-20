@@ -257,3 +257,49 @@
   max-width: 72ch;
   overflow-wrap: anywhere;
 }
+
+/* A name inside a label the design system lowercases keeps its case
+   (KeepCase in components/Bits.tsx). TODO(design system 0.4.0): its
+   <KeepCase> (nc-keep-case) replaces this. */
+.keep-case {
+  text-transform: none;
+}
+
+/* Lines of detail, one under the other: a row's details, the header's. */
+.acq__lines > .acq__sub,
+.acq__details--info[open] > .acq__sub {
+  display: block;
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+
+/* The header's details: on the line of its facts, and under them once open,
+   each line as long as it is. */
+.acq__details--info {
+  margin-top: 0;
+}
+
+.acq__details--info[open] > .acq__sub {
+  max-width: none;
+}
+
+.acq__details--info[open] {
+  flex-basis: 100%;
+}
+
+/* A quiet word beside a value: "German · AI" — information, not a warning. */
+.acq__quiet {
+  color: var(--fg-muted);
+}
+
+/* The beginning of a subtitle, cue by cue. */
+.acq__preview {
+  font-family: var(--ff-mono);
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0;
+}

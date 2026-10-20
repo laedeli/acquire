@@ -76,3 +76,14 @@ export function until(iso: string | null | undefined): string {
   if (s < 86400) return `in ${Math.round(s / 3600)}h`
   return `in ${Math.round(s / 86400)}d`
 }
+
+/** How a subtitle fits a title's file, in words. */
+export function fitWords(match: string | undefined): string {
+  switch (match) {
+    case 'file':
+      return 'matches this file'
+    case 'release':
+      return 'matches this release'
+  }
+  return 'may be out of sync'
+}
