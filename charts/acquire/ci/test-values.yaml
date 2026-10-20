@@ -29,6 +29,13 @@ tmdb:
 config:
   key: Y2ktb25seS1jb25maWcta2V5LW5vdC1hLXNlY3JldCE=
   previousKey: Y2ktb25seS1wcmV2aW91cy1rZXktbm90LXNlY3JldCE=
+subtitles:
+  languages: [en, de, zh-Hans]
+  dailyBudget: 12
+  opensubtitles:
+    username: ci-opensubtitles-username
+    password: ci-opensubtitles-password
+    apiKey: ci-opensubtitles-api-key
 endpoints:
   deny: .other-namespace.svc,files.example.org
 clients:

@@ -87,6 +87,44 @@
         }
       }
     },
+    "subtitles": {
+      "type": "object",
+      "title": "Subtitles",
+      "description": "Subtitles from OpenSubtitles.com in the platform's languages, for the titles the library holds. Without an account and an API key, nothing is searched for.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Subtitles on",
+          "description": "Search for subtitles in the platform's languages. Needs the account and the API key below.",
+          "default": true
+        },
+        "languages": {
+          "type": "array",
+          "title": "Languages",
+          "description": "The subtitle languages acquire searches for, as language tags (en, de, zh-Hans). Empty: the platform's (its subtitles.languages, else the packager's language whitelist).",
+          "items": { "type": "string", "pattern": "^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})*$" },
+          "default": []
+        },
+        "dailyBudget": {
+          "type": "integer",
+          "title": "Downloads a day",
+          "description": "The automatic downloads a day (UTC). A free account allows 20; the rest of the account's downloads are for versions you pick in the console.",
+          "minimum": 0,
+          "default": 18
+        },
+        "opensubtitles": {
+          "type": "object",
+          "title": "OpenSubtitles.com",
+          "additionalProperties": false,
+          "properties": {
+            "username": { "type": "string", "title": "Username", "description": "The OpenSubtitles.com account acquire signs in with.", "writeOnly": true },
+            "password": { "type": "string", "title": "Password", "description": "Its password.", "writeOnly": true },
+            "apiKey": { "type": "string", "title": "API key", "description": "The API key of an OpenSubtitles.com API consumer.", "writeOnly": true }
+          }
+        }
+      }
+    },
     "endpoints": {
       "type": "object",
       "title": "Where configuration may point",

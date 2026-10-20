@@ -1,12 +1,13 @@
 apiVersion: v2
 name: acquire
 description: >-
-  Requests and downloads for a zaentrum platform: the acquire service (console,
-  API, request and grab logic), the download gateway it drives and, optionally,
-  the download clients qBittorrent and NZBGet.
+  Requests, downloads and subtitles for a zaentrum platform: the acquire service
+  (console, API, request and grab logic, subtitles from OpenSubtitles.com),
+  the download gateway it drives and, optionally, the download clients
+  qBittorrent and NZBGet.
 type: application
 # Bump for every change that should reach installs: a version is published once.
-version: 0.4.2
+version: 0.5.0
 # The chart workflow replaces appVersion with the git sha it publishes from
 # (helm package --app-version <sha>). The image workflow pushes acquire under
 # that same sha, so a published chart runs exactly the code it was cut from.

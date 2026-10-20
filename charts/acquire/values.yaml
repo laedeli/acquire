@@ -9,7 +9,8 @@
 #     anything given here or in an install; templates read the platform from it
 #     and from nowhere else.
 #   - inputs: declared in values.schema.json (database, oidc, tmdb, config,
-#     endpoints, downloadsRoot, and the download clients' clients.*). Secret
+#     subtitles, endpoints, downloadsRoot, and the download clients'
+#     clients.*). Secret
 #     inputs are rendered into the Secret `acquire-secrets` and reach the
 #     containers through secretKeyRef only.
 #   - tuning: images, resources, the in-namespace service URLs.
@@ -67,6 +68,26 @@ config: {}
   # key: secret: 32 random bytes, base64, encrypting every credential acquire
   #   stores. The operator generates one on first install when none is given.
   # previousKey: secret, optional: the key before a rotation.
+
+# Subtitles from OpenSubtitles.com in the platform's languages, for the titles
+# the library holds that lack one, added to each title through the catalog
+# (docs/acquire.md, "Subtitles"): new arrivals first, then the rest of the
+# library, the newest first, up to a daily download limit. On by default;
+# without the account and its API key below nothing is searched for, and the
+# console and the setup checklist say so.
+subtitles:
+  enabled: true
+  # The subtitle languages acquire searches for, as language tags (en, de,
+  # zh-Hans). Empty: the platform's — its subtitles.languages, else the
+  # packager's language whitelist, the languages its players show.
+  languages: []
+  # The automatic downloads a day (UTC). A free account allows 20; the rest of
+  # the account's downloads are for versions you pick in the console.
+  dailyBudget: 18
+  opensubtitles: {}
+    # username: secret: the account's name.
+    # password: secret: its password.
+    # apiKey: secret: the API key of an OpenSubtitles.com API consumer.
 
 endpoints:
   # Comma list of hostnames and domain suffixes configuration may never point at.

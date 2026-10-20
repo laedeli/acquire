@@ -6,7 +6,8 @@
 {{- $media := include "acquire.mediaMount" . }}
 # acquire — the primary component: console, API, and the capability manifest the
 # portal registers the addon from. It consumes download.client.* and
-# catalog.item.packaged, and ingests finished downloads through katalog-manager.
+# catalog.item.packaged, ingests finished downloads through katalog-manager and
+# attaches subtitles to titles there.
 # Search sources and download clients are configuration it stores itself.
 # No Route or Ingress: the portal hosts the console in place and proxies its
 # bundle and the API. acquire has no page of its own.
@@ -105,6 +106,38 @@ spec:
                   name: {{ $secret }}
                   key: tmdb-api-key
                   optional: true
+            # Subtitles in the instance's languages, from OpenSubtitles.com: on
+            # only with the account and its API key; the languages are the
+            # platform's unless named here.
+            - name: ACQUIRE_SUBTITLES
+              value: {{ if (.Values.subtitles).enabled }}"true"{{ else }}"false"{{ end }}
+            - name: ACQUIRE_SUBTITLE_LANGUAGES
+              value: {{ join "," ((.Values.subtitles).languages | default list) | quote }}
+            {{- $budget := (.Values.subtitles).dailyBudget }}
+            # unset: acquire's own default, 18
+            - name: ACQUIRE_SUBTITLE_DAILY_BUDGET
+              value: {{ if kindIs "invalid" $budget }}""{{ else }}{{ $budget | int | toString | quote }}{{ end }}
+            - name: OPENSUBTITLES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: opensubtitles-username
+                  optional: true
+            - name: OPENSUBTITLES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: opensubtitles-password
+                  optional: true
+            - name: OPENSUBTITLES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: opensubtitles-api-key
+                  optional: true
+            # acquire's version, as it names itself to OpenSubtitles.com.
+            - name: ACQUIRE_VERSION
+              value: {{ .Chart.Version | quote }}
             # Events: the platform's brokers and tenant prefix.
             - name: KAFKA_BROKERS
               value: {{ $z.events.brokers | quote }}

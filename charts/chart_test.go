@@ -139,6 +139,9 @@ func TestChartInputs(t *testing.T) {
 		"TMDB_API_KEY":                "tmdb.apiKey",
 		"ACQUIRE_CONFIG_KEY":          "config.key",
 		"ACQUIRE_CONFIG_KEY_PREVIOUS": "config.previousKey",
+		"OPENSUBTITLES_USERNAME":      "subtitles.opensubtitles.username",
+		"OPENSUBTITLES_PASSWORD":      "subtitles.opensubtitles.password",
+		"OPENSUBTITLES_API_KEY":       "subtitles.opensubtitles.apiKey",
 	} {
 		e := envOf(acquire, env)
 		if e == nil || e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil {
@@ -160,6 +163,10 @@ func TestChartInputs(t *testing.T) {
 		"DOWNLOAD_GATEWAY_URL":            "http://download-gateway",
 		"KATALOG_URL":                     "http://katalog-api",
 		"KATALOG_MANAGER_URL":             "http://katalog-manager-api",
+		"ACQUIRE_SUBTITLES":               "true",
+		"ACQUIRE_SUBTITLE_LANGUAGES":      "en,de,zh-Hans",
+		"ACQUIRE_SUBTITLE_DAILY_BUDGET":   "12",
+		"ACQUIRE_VERSION":                 chartMeta(t).Version,
 	})
 	// The gateway accepts acquire's service client, and only it.
 	wantEnv(t, "download-gateway", gateway, map[string]string{"ALLOWED_CLIENTS": "laedeli-acquire-svc"})
@@ -170,6 +177,40 @@ func TestChartInputs(t *testing.T) {
 
 	if want := "ghcr.io/laedeli/acquire:" + chartMeta(t).AppVersion; acquire.Image != want {
 		t.Errorf("acquire: image %s, want %s (the tag defaults to the chart's appVersion)", acquire.Image, want)
+	}
+}
+
+// TestChartSubtitles: subtitles are on by default and take the platform's
+// languages and a budget of 18 downloads a day; without the account and its
+// key the Secret holds none of them, and acquire reads them as optional, so
+// it starts and says what is missing. Turned off, they stay off.
+func TestChartSubtitles(t *testing.T) {
+	objs := mustRender(t, "--set", "subtitles.languages=null", "--set", "subtitles.dailyBudget=18",
+		"--set", "subtitles.opensubtitles=null")
+	acquire := containerOf(t, mustFind(t, objs, "Deployment", "acquire"))
+	wantEnv(t, "acquire", acquire, map[string]string{
+		"ACQUIRE_SUBTITLES":             "true",
+		"ACQUIRE_SUBTITLE_LANGUAGES":    "",
+		"ACQUIRE_SUBTITLE_DAILY_BUDGET": "18",
+	})
+	for _, env := range []string{"OPENSUBTITLES_USERNAME", "OPENSUBTITLES_PASSWORD", "OPENSUBTITLES_API_KEY"} {
+		e := envOf(acquire, env)
+		if e == nil || e.ValueFrom == nil || e.ValueFrom.SecretKeyRef == nil || !e.ValueFrom.SecretKeyRef.Optional {
+			t.Errorf("acquire: %s must come from an optional secretKeyRef", env)
+		}
+	}
+	for name, keys := range secretData(t, objs) {
+		for key := range keys {
+			if strings.HasPrefix(key, "opensubtitles-") {
+				t.Errorf("Secret %s holds %s without the account", name, key)
+			}
+		}
+	}
+	checkSecretRefs(t, objs)
+	off := containerOf(t, mustFind(t, mustRender(t, "--set", "subtitles.enabled=false"), "Deployment", "acquire"))
+	wantEnv(t, "acquire", off, map[string]string{"ACQUIRE_SUBTITLES": "false"})
+	if _, err := helmTemplateOutput(t, release, testValues, "--set", "subtitles.dailyBudget=-1"); err == nil {
+		t.Error("a negative budget renders")
 	}
 }
 
@@ -895,6 +936,7 @@ func secretInputs(t *testing.T) []string {
 }
 
 type chartYAML struct {
+	Version     string            `yaml:"version"`
 	AppVersion  string            `yaml:"appVersion"`
 	Annotations map[string]string `yaml:"annotations"`
 }
