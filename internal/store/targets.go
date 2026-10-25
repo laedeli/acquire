@@ -266,6 +266,7 @@ func (s *Store) HoldTarget(ctx context.Context, h Hold) error {
 		UPDATE acquisition_targets
 		   SET held_playable = CASE WHEN held_item_id = $2 THEN held_playable OR $4 ELSE $4 END,
 		       held_at = CASE WHEN held_item_id = $2 AND held_at IS NOT NULL THEN held_at ELSE now() END,
+		       held_as = CASE WHEN held_item_id = $2 THEN held_as ELSE '' END,
 		       held_item_id = $2, held_via = $3, held_release = $5, held_source = $6,
 		       held_score_profile = $7, held_quality = $8, held_score = $9, held_scored_at = now(),
 		       state = 'held', ever_held = true, detail = $10, grab_requested_at = NULL, grab_claimed_until = NULL,
@@ -361,7 +362,8 @@ func (s *Store) ApplyHolding(ctx context.Context, targetID, itemID, release, pro
 	}
 	_, err = s.pool.Exec(ctx, `
 		UPDATE acquisition_targets
-		   SET held_item_id = $2, held_release = $3, held_quality = $4,
+		   SET held_as = CASE WHEN held_item_id = $2 THEN held_as ELSE '' END,
+		       held_item_id = $2, held_release = $3, held_quality = $4,
 		       held_score = $5, held_score_profile = $6, held_source = $7,
 		       held_scored_at = now(),
 		       held_at = COALESCE(held_at, now()),
@@ -376,7 +378,7 @@ func (s *Store) ApplyHolding(ctx context.Context, targetID, itemID, release, pro
 // detail says whether it is hunted again: only when it and its title are
 // monitored.
 const releaseHeldSQL = `
-		   SET held_item_id = '', held_via = '', held_playable = false, held_release = '',
+		   SET held_item_id = '', held_via = '', held_playable = false, held_release = '', held_as = '',
 		       held_quality = '{}'::jsonb, held_score = 0, held_score_profile = '', held_source = '',
 		       held_scored_at = NULL, held_at = NULL,
 		       state = 'wanted', ever_held = true,
@@ -664,6 +666,38 @@ func (s *Store) ApplySeriesHoldings(ctx context.Context, titleID, catalogID, pro
 // acquire hunts. A target in flight that the library now holds is held; one in
 // flight that it does not hold is left to its grab.
 func (s *Store) ApplySeriesHoldingsAt(ctx context.Context, titleID, catalogID, profileID string, held []HeldEpisode, asked time.Time) (HoldingsChange, error) {
+	// A file held at a number TMDB gave its episode anew is known to the
+	// catalog by the one before (held_as): it holds the episode at its new
+	// number, not the one now at the old.
+	placed := map[string][2]int{}
+	rows, err := s.pool.Query(ctx, `SELECT held_item_id, held_as, season_number, episode_number FROM acquisition_targets
+		 WHERE title_id = $1 AND state = 'held' AND held_as <> '' AND season_number IS NOT NULL`, titleID)
+	if err != nil {
+		return HoldingsChange{}, err
+	}
+	for rows.Next() {
+		var item, as string
+		var season, episode int
+		if err := rows.Scan(&item, &as, &season, &episode); err != nil {
+			rows.Close()
+			return HoldingsChange{}, err
+		}
+		placed[item+"\x00"+as] = [2]int{season, episode}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return HoldingsChange{}, err
+	}
+	if len(placed) > 0 {
+		moved := make([]HeldEpisode, len(held))
+		copy(moved, held)
+		for i, h := range moved {
+			if at, ok := placed[h.ItemID+"\x00"+fmt.Sprintf("S%02dE%02d", h.Season, h.Episode)]; ok {
+				moved[i].Season, moved[i].Episode = at[0], at[1]
+			}
+		}
+		held = moved
+	}
 	seasons := make([]int32, 0, len(held))
 	episodes := make([]int32, 0, len(held))
 	items := make([]string, 0, len(held))
@@ -727,6 +761,7 @@ func holdSet(profileParam string) string {
 			                                 THEN a.held_score_profile ELSE ` + profileParam + `::text END,
 			       held_scored_at = CASE WHEN ` + same + ` THEN a.held_scored_at ELSE now() END,
 			       held_at = CASE WHEN ` + same + ` AND a.held_at IS NOT NULL THEN a.held_at ELSE now() END,
+			       held_as = CASE WHEN ` + same + ` THEN a.held_as ELSE '' END,
 			       held_item_id = h.item, held_via = h.via, held_playable = h.playable,
 			       detail = CASE WHEN a.state = 'held' THEN a.detail ELSE 'in the library' END,
 			       state = 'held', ever_held = true, grab_requested_at = NULL, grab_claimed_until = NULL,

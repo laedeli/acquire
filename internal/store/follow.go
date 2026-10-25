@@ -309,35 +309,10 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		names, airs = append(names, clipText(strings.TrimSpace(e.Title))), append(airs, e.AirDate)
 		tids = append(tids, e.TMDBID)
 	}
-	// Where TMDB's ids of the episodes were before this read: an episode
-	// listed under other numbers now is one TMDB numbers anew.
-	before := map[int64]struct {
-		id    string
-		coord [2]int
-		held  bool
-	}{}
-	prev, err := tx.Query(ctx, `SELECT id, season_number, episode_number, state = 'held', tmdb_episode_id FROM acquisition_targets
-		 WHERE title_id = $1 AND kind = 'episode' AND tmdb_episode_id IS NOT NULL`, titleID)
+	// What the library holds of episodes TMDB lists under other numbers now,
+	// by TMDB's id of each: their holdings go with them (renumbered below).
+	moves, err := heldMoves(ctx, tx, titleID, es, en, tids)
 	if err != nil {
-		return ch, err
-	}
-	for prev.Next() {
-		var id string
-		var season, episode int
-		var held bool
-		var tid int64
-		if err := prev.Scan(&id, &season, &episode, &held, &tid); err != nil {
-			prev.Close()
-			return ch, err
-		}
-		before[tid] = struct {
-			id    string
-			coord [2]int
-			held  bool
-		}{id, [2]int{season, episode}, held}
-	}
-	prev.Close()
-	if err := prev.Err(); err != nil {
 		return ch, err
 	}
 	// Listed again: not gone; TMDB's id of each, as it says now.
@@ -400,26 +375,11 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	}
 
 	// An episode the library holds that TMDB numbers anew is held at its new
-	// number too: by the same file, never wanted again.
-	for i, tid := range tids {
-		was, ok := before[tid]
-		if tid == 0 || !ok || !was.held || was.coord == [2]int{int(es[i]), int(en[i])} {
-			continue
-		}
-		tag, err := tx.Exec(ctx, `
-			UPDATE acquisition_targets n
-			   SET state = 'held', ever_held = true, held_item_id = o.held_item_id, held_via = o.held_via,
-			       held_playable = o.held_playable, held_release = o.held_release, held_quality = o.held_quality,
-			       held_score = o.held_score, held_score_profile = o.held_score_profile, held_source = o.held_source,
-			       held_scored_at = o.held_scored_at, held_at = o.held_at,
-			       detail = $3, updated_at = now()
-			  FROM acquisition_targets o
-			 WHERE n.id = $1 AND o.id = $2 AND o.state = 'held' AND n.state IN ('wanted','failed') AND n.reserved_by = ''`,
-			ids[i], was.id, clipText(fmt.Sprintf("in the library, as S%02dE%02d before TMDB numbered it anew", was.coord[0], was.coord[1])))
-		if err != nil {
-			return ch, err
-		}
-		ch.Renumbered += int(tag.RowsAffected())
+	// number, by the same file, never wanted again; the number it leaves holds
+	// it no more — it is another episode now —, unless another holding moves
+	// there.
+	if ch.Renumbered, err = applyMoves(ctx, tx, titleID, moves); err != nil {
+		return ch, err
 	}
 
 	// What TMDB no longer lists. Without a season listed at all nothing is
@@ -463,6 +423,92 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		}
 	}
 	return ch, tx.Commit(ctx)
+}
+
+// heldMove is a holding of an episode TMDB lists under other numbers now:
+// the target it was held at, the number it moves to, and what it held.
+type heldMove struct {
+	fromID, as                          string
+	from, to                            [2]int
+	item, via, release, profile, source string
+	playable                            bool
+	quality                             []byte
+	score                               int
+	scoredAt, at                        *time.Time
+}
+
+// heldMoves reads, before a read of TMDB is applied, the holdings of the
+// episodes it lists under other numbers than the targets that hold them —
+// by TMDB's id of the episode, which a renumbering keeps.
+func heldMoves(ctx context.Context, tx pgx.Tx, titleID string, es, en []int32, tids []int64) ([]heldMove, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT o.id, o.season_number, o.episode_number, l.season, l.episode, o.held_item_id, o.held_via, o.held_playable,
+		       o.held_release, o.held_quality, o.held_score, o.held_score_profile, o.held_source, o.held_scored_at, o.held_at, o.held_as
+		  FROM acquisition_targets o
+		  JOIN unnest($2::int[], $3::int[], $4::bigint[]) AS l(season, episode, tid) ON l.tid <> 0 AND l.tid = o.tmdb_episode_id
+		 WHERE o.title_id = $1 AND o.kind = 'episode' AND o.state = 'held'
+		   AND (l.season, l.episode) <> (o.season_number, o.episode_number)`, titleID, es, en, tids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []heldMove
+	for rows.Next() {
+		var m heldMove
+		if err := rows.Scan(&m.fromID, &m.from[0], &m.from[1], &m.to[0], &m.to[1], &m.item, &m.via, &m.playable,
+			&m.release, &m.quality, &m.score, &m.profile, &m.source, &m.scoredAt, &m.at, &m.as); err != nil {
+			return nil, err
+		}
+		if m.as == "" {
+			// The catalog knows the file by the number it was held at.
+			m.as = fmt.Sprintf("S%02dE%02d", m.from[0], m.from[1])
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// applyMoves holds each moved holding at its new number, and releases the
+// numbers they left that no holding moved to: those are other episodes now.
+func applyMoves(ctx context.Context, tx pgx.Tx, titleID string, moves []heldMove) (int, error) {
+	to := map[[2]int]bool{}
+	moved := 0
+	for _, m := range moves {
+		to[m.to] = true
+		tag, err := tx.Exec(ctx, `
+			UPDATE acquisition_targets
+			   SET state = 'held', ever_held = true, held_item_id = $4, held_via = $5, held_playable = $6, held_release = $7,
+			       held_quality = $8, held_score = $9, held_score_profile = $10, held_source = $11, held_scored_at = $12,
+			       held_at = $13, held_as = $14, detail = $15, grab_requested_at = NULL, grab_claimed_until = NULL,
+			       grab_failures = 0, retry_at = NULL, updated_at = now()
+			 WHERE title_id = $1 AND season_number = $2 AND episode_number = $3 AND reserved_by = ''
+			   AND state IN ('wanted', 'failed', 'held')`,
+			titleID, m.to[0], m.to[1], m.item, m.via, m.playable, m.release, m.quality, m.score, m.profile, m.source,
+			m.scoredAt, m.at, m.as, clipText(fmt.Sprintf("in the library, as %s before TMDB numbered it anew", m.as)))
+		if err != nil {
+			return moved, err
+		}
+		moved += int(tag.RowsAffected())
+	}
+	for _, m := range moves {
+		if to[m.from] {
+			continue
+		}
+		// Another episode now, of which the library holds nothing: not held
+		// once either.
+		if _, err := tx.Exec(ctx, `
+			UPDATE acquisition_targets
+			   SET held_item_id = '', held_via = '', held_playable = false, held_release = '', held_as = '',
+			       held_quality = '{}'::jsonb, held_score = 0, held_score_profile = '', held_source = '',
+			       held_scored_at = NULL, held_at = NULL, state = 'wanted', ever_held = false,
+			       detail = $3, updated_at = now()
+			 WHERE id = $1 AND state = 'held' AND held_item_id = $2`, m.fromID, m.item,
+			clipText(fmt.Sprintf("TMDB numbers the episode the library held here %s now: this is another episode",
+				fmt.Sprintf("S%02dE%02d", m.to[0], m.to[1])))); err != nil {
+			return moved, err
+		}
+	}
+	return moved, nil
 }
 
 // ApplySeriesHead records what a read of TMDB's answer says of a series —

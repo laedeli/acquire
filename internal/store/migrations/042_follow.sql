@@ -101,6 +101,12 @@ ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_kind    text NO
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS air_stamp       timestamptz;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_country text NOT NULL DEFAULT '';
 
+-- acquisition_targets: held_as is the number the catalog knows a held file
+-- by when TMDB numbers its episode anew (S01E02 of a file held at S01E03):
+-- the catalog goes on naming the file by it, and a reconcile reads it as the
+-- episode the file holds ('' for a file held at its own number).
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS held_as text NOT NULL DEFAULT '';
+
 -- wanted_items: the title a request follows ('' for one that follows none: a
 -- request without a TMDB id, or one made before 042 and not asked again).
 -- approval is an admin's word on a request that follows a title: awaiting

@@ -279,8 +279,11 @@ func TestFollowingATitle(t *testing.T) {
 // TMDB no longer lists removed unless the library holds it or a grab is under
 // way — and nothing anyone decided (monitoring, state) touched.
 // An episode TMDB numbers anew — its TMDB id listed under other numbers —
-// that the library holds is held at its new number too, by the same file,
-// never wanted again; its old target keeps what it held, and goes nowhere.
+// that the library holds is held at its new number, by the same file, never
+// wanted again; the number it left is another episode now, held by nothing
+// and not held once. The library's file counts once. The catalog goes on
+// naming the file by its old number: a reconcile reads that as the episode
+// at its new one. Two episodes TMDB swaps swap their holdings.
 func TestAnEpisodeNumberedAnewKeepsItsHolding(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -290,7 +293,7 @@ func TestAnEpisodeNumberedAnewKeepsItsHolding(t *testing.T) {
 	if _, err := s.ApplySeriesInventory(ctx, ti.ID, read); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.HoldTarget(ctx, Hold{TargetID: ti.ID + ":s01e002", ItemID: "item-702", Playable: true}); err != nil {
+	if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", []HeldEpisode{{Season: 1, Episode: 2, ItemID: "item-702", Playable: true}}); err != nil {
 		t.Fatal(err)
 	}
 	// TMDB puts a new episode first: the held one is E03 now.
@@ -301,14 +304,52 @@ func TestAnEpisodeNumberedAnewKeepsItsHolding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := targetsByCoord(t, s, ti.ID)
-	three := got[ti.ID+":s01e003"]
-	if ch.Renumbered != 1 || three.State != TargetHeld || three.HeldItemID != "item-702" || !three.HeldPlayable || !three.EverHeld ||
-		!strings.Contains(three.Detail, "as S01E02 before TMDB numbered it anew") {
-		t.Errorf("the held episode at its new number: %+v (%+v)", three, ch)
+	heldAs := func(id string) string {
+		var as string
+		_ = s.pool.QueryRow(ctx, `SELECT held_as FROM acquisition_targets WHERE id = $1`, id).Scan(&as)
+		return as
 	}
-	if two := got[ti.ID+":s01e002"]; two.State != TargetHeld || two.HeldItemID != "item-702" {
-		t.Errorf("its old target: %+v", two)
+	check := func(when string) {
+		t.Helper()
+		got := targetsByCoord(t, s, ti.ID)
+		three, two := got[ti.ID+":s01e003"], got[ti.ID+":s01e002"]
+		if three.State != TargetHeld || three.HeldItemID != "item-702" || !three.HeldPlayable || !three.EverHeld || heldAs(three.ID) != "S01E02" {
+			t.Errorf("%s: the held episode at its new number: %+v", when, three)
+		}
+		if two.State != TargetWanted || two.HeldItemID != "" || two.EverHeld {
+			t.Errorf("%s: the number it left: %+v", when, two)
+		}
+		if p, _ := s.TitleProgress(ctx, []string{ti.ID}); p[ti.ID].Held != 1 {
+			t.Errorf("%s: %d held, want the one file once", when, p[ti.ID].Held)
+		}
+	}
+	if three, _ := s.GetTarget(ctx, ti.ID+":s01e003"); ch.Renumbered != 1 || !strings.Contains(three.Detail, "as S01E02 before TMDB numbered it anew") {
+		t.Errorf("renumbered: %+v %+v", ch, three)
+	}
+	check("renumbered")
+	// The catalog still names the file S01E02.
+	if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", []HeldEpisode{{Season: 1, Episode: 2, ItemID: "item-702", Playable: true}}); err != nil {
+		t.Fatal(err)
+	}
+	check("a reconcile after")
+
+	// TMDB swaps two held episodes.
+	tj := approvedFollow(t, s, Title{TMDBID: 78, Kind: "series", Title: "Other"})
+	swap := SeriesRead{Status: "Ended", Seasons: map[int]int{1: 2}, Read: []int{1},
+		Episodes: []EpisodeRead{{TMDBID: 801, Season: 1, Episode: 1, AirDate: day(-20)}, {TMDBID: 802, Season: 1, Episode: 2, AirDate: day(-13)}}}
+	if _, err := s.ApplySeriesInventory(ctx, tj.ID, swap); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySeriesHoldings(ctx, tj.ID, "", "default", []HeldEpisode{{Season: 1, Episode: 1, ItemID: "item-a"}, {Season: 1, Episode: 2, ItemID: "item-b"}}); err != nil {
+		t.Fatal(err)
+	}
+	swap.Episodes = []EpisodeRead{{TMDBID: 802, Season: 1, Episode: 1, AirDate: day(-20)}, {TMDBID: 801, Season: 1, Episode: 2, AirDate: day(-13)}}
+	if ch, err := s.ApplySeriesInventory(ctx, tj.ID, swap); err != nil || ch.Renumbered != 2 {
+		t.Fatalf("the swap: %+v %v", ch, err)
+	}
+	got := targetsByCoord(t, s, tj.ID)
+	if got[tj.ID+":s01e001"].HeldItemID != "item-b" || got[tj.ID+":s01e002"].HeldItemID != "item-a" {
+		t.Errorf("swapped: E01 %+v, E02 %+v", got[tj.ID+":s01e001"], got[tj.ID+":s01e002"])
 	}
 }
 
