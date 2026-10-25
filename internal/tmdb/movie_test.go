@@ -34,8 +34,9 @@ func movieServer(t *testing.T, body map[string]any) *httptest.Server {
 func TestMovieReadsItsReleases(t *testing.T) {
 	srv := movieServer(t, map[string]any{
 		"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": "2026-09-11",
-		"imdb_id":            "tt0000001",
-		"alternative_titles": map[string]any{"titles": []map[string]any{{"title": "Example Clay Film"}, {"title": "Clay Film"}}},
+		"imdb_id": "tt99000001", "original_title": "Example Clay Film", "production_countries": []map[string]any{{"iso_3166_1": "US"}},
+		"alternative_titles": map[string]any{"titles": []map[string]any{{"iso_3166_1": "US", "title": "Example Clay Film"},
+			{"iso_3166_1": "GB", "title": "Clay Film"}, {"iso_3166_1": "DE", "title": "Der Lehmfilm"}}},
 		"release_dates": map[string]any{"results": []map[string]any{
 			{"iso_3166_1": "US", "release_dates": []map[string]any{
 				{"type": 3, "release_date": "2026-09-11T00:00:00.000Z"},
@@ -53,11 +54,12 @@ func TestMovieReadsItsReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.TMDBID != 9100 || m.IMDBID != "tt0000001" || m.Title != "Example Clay Film" || m.Year() != 2026 || m.Status != "Released" {
+	if m.TMDBID != 9100 || m.IMDBID != "tt99000001" || m.Title != "Example Clay Film" || m.Year() != 2026 || m.Status != "Released" ||
+		strings.Join(m.Countries, ",") != "US" {
 		t.Errorf("movie = %+v", m)
 	}
 	if len(m.Aliases) != 1 || m.Aliases[0] != "Clay Film" {
-		t.Errorf("aliases = %v, want the other title once, not its own name", m.Aliases)
+		t.Errorf("aliases = %v, want the English title once, not its own name, not another country's", m.Aliases)
 	}
 	if len(m.Releases) != 4 {
 		t.Errorf("releases = %+v, want the four with a date", m.Releases)
@@ -127,20 +129,47 @@ func TestRunningStatuses(t *testing.T) {
 }
 
 // A series' answer is one call: its seasons with their episode counts, its
-// identities and its first air date. A season's episodes are one call each.
+// identities, its first air date, the countries it comes from and the names
+// releases may give it — its original name, its titles in English-speaking
+// countries and in its own, not every country's. A season's episodes are one
+// call each. The series and its ids are invented.
 func TestSeriesAndOneSeason(t *testing.T) {
-	srv, _ := invServer(t, -1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/tv/9900001":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": 9900001, "name": "Example Harbour", "original_name": "Exemplo Porto", "origin_country": []string{"pt"},
+				"status": "Ended", "first_air_date": "2020-03-01",
+				"external_ids": map[string]any{"tvdb_id": 9900002, "imdb_id": "tt99000003"},
+				"alternative_titles": map[string]any{"results": []map[string]any{
+					{"iso_3166_1": "US", "title": "Example Harbor"}, {"iso_3166_1": "GB", "title": "Example Harbour"},
+					{"iso_3166_1": "PT", "title": "O Porto"}, {"iso_3166_1": "FR", "title": "Le Port"},
+					{"iso_3166_1": "MX", "title": "El Puerto"}}},
+				"seasons": []map[string]any{{"season_number": 0, "episode_count": 2}, {"season_number": 1, "episode_count": 2}},
+			})
+		case "/tv/9900001/season/1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"episodes": []map[string]any{
+				{"season_number": 1, "episode_number": 1, "name": "Arrival", "air_date": "2020-03-01"},
+				{"season_number": 1, "episode_number": 2, "name": "No date", "air_date": ""}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 	defer srv.Close()
 	c := testClient(srv)
-	s, err := c.Series(context.Background(), 1396)
+	s, err := c.Series(context.Background(), 9900001)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Seasons) != 1 || s.Seasons[0].Number != 1 || s.Seasons[0].EpisodeCount != 4 || s.TVDBID != 81189 || s.Status != "Ended" {
+	if len(s.Seasons) != 1 || s.Seasons[0].Number != 1 || s.Seasons[0].EpisodeCount != 2 || s.TVDBID != 9900002 || s.Status != "Ended" ||
+		s.Year() != 2020 {
 		t.Errorf("series = %+v", s)
 	}
-	eps, err := c.Season(context.Background(), 1396, 1)
-	if err != nil || len(eps) != 4 || eps[0].Title != "Pilot" || eps[3].AirDate != nil {
+	if got := strings.Join(s.Aliases, "|"); got != "Exemplo Porto|Example Harbor|O Porto" || strings.Join(s.Countries, ",") != "PT" {
+		t.Errorf("aliases = %q, countries = %v", got, s.Countries)
+	}
+	eps, err := c.Season(context.Background(), 9900001, 1)
+	if err != nil || len(eps) != 2 || eps[0].Title != "Arrival" || eps[1].AirDate != nil {
 		t.Errorf("season = %+v %v", eps, err)
 	}
 	if _, err := (&Client{}).Series(context.Background(), 1); err == nil {

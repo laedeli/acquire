@@ -43,6 +43,9 @@ type Title struct {
 	TMDBStatus     string
 	InventoryAt    *time.Time
 	InventoryError string
+	// Countries are the countries TMDB says it comes from (ISO 3166-1);
+	// none before TMDB was read for it.
+	Countries []string
 }
 
 // OriginRequest is the origin of a title a request created.
@@ -58,14 +61,14 @@ func (t Title) Followed() bool { return t.FollowedAt != nil }
 const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.title, t.sort_title,
 	COALESCE(t.year,0), t.status, t.series_type, t.monitored, t.monitor_new, t.profile_id,
 	t.holdings_at, t.holdings_error, t.catalog_id,
-	t.followed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error`
+	t.followed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country`
 
 func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
 	err := r.Scan(append([]any{&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
 		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
 		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
-		&t.FollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError}, extra...)...)
+		&t.FollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries}, extra...)...)
 	return t, err
 }
 

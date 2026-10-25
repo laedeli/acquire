@@ -64,8 +64,14 @@ type Series struct {
 	Name         string
 	Status       string // Returning Series | In Production | Planned | Ended | Canceled | Pilot
 	FirstAirDate *time.Time
-	Aliases      []string
-	Seasons      []Season
+	// Aliases are the other names releases may give it: its original name,
+	// and its titles in English-speaking countries and in the countries it
+	// comes from (titlesOf) — not every country's.
+	Aliases []string
+	// Countries are the countries it comes from (ISO 3166-1, as TMDB's
+	// origin_country lists them).
+	Countries []string
+	Seasons   []Season
 }
 
 // Year is the year the series first aired, or 0.
@@ -191,18 +197,18 @@ func (c *Client) Series(ctx context.Context, tmdbID int64) (Series, error) {
 		return out, err
 	}
 	var head struct {
-		ID           int64  `json:"id"`
-		Name         string `json:"name"`
-		Status       string `json:"status"`
-		FirstAirDate string `json:"first_air_date"`
-		ExternalIDs  struct {
+		ID            int64    `json:"id"`
+		Name          string   `json:"name"`
+		OriginalName  string   `json:"original_name"`
+		OriginCountry []string `json:"origin_country"`
+		Status        string   `json:"status"`
+		FirstAirDate  string   `json:"first_air_date"`
+		ExternalIDs   struct {
 			TVDBID int64  `json:"tvdb_id"`
 			IMDBID string `json:"imdb_id"`
 		} `json:"external_ids"`
 		AlternativeTitles struct {
-			Results []struct {
-				Title string `json:"title"`
-			} `json:"results"`
+			Results []altTitle `json:"results"`
 		} `json:"alternative_titles"`
 		Seasons []struct {
 			SeasonNumber int    `json:"season_number"`
@@ -217,11 +223,8 @@ func (c *Client) Series(ctx context.Context, tmdbID int64) (Series, error) {
 		TMDBID: head.ID, TVDBID: head.ExternalIDs.TVDBID, IMDBID: strings.TrimSpace(head.ExternalIDs.IMDBID),
 		Name: strings.TrimSpace(head.Name), Status: strings.TrimSpace(head.Status), FirstAirDate: date(head.FirstAirDate),
 	}
-	out.Aliases = otherTitles(out.Name, func(yield func(string)) {
-		for _, a := range head.AlternativeTitles.Results {
-			yield(a.Title)
-		}
-	})
+	out.Countries = countries(head.OriginCountry)
+	out.Aliases = titlesOf(out.Name, head.OriginalName, out.Countries, head.AlternativeTitles.Results)
 	for _, s := range head.Seasons {
 		if s.SeasonNumber < 1 {
 			continue // specials; see SeriesInventory
@@ -231,17 +234,54 @@ func (c *Client) Series(ctx context.Context, tmdbID int64) (Series, error) {
 	return out, nil
 }
 
-// otherTitles are a title's other names, each once, without its own name.
-func otherTitles(name string, each func(yield func(string))) []string {
-	seen := map[string]bool{strings.ToLower(name): true}
+// altTitle is one of TMDB's alternative titles, with the country it is the
+// title in.
+type altTitle struct {
+	Title   string `json:"title"`
+	Country string `json:"iso_3166_1"`
+}
+
+// englishSpeaking are the countries whose titles of a title releases are
+// named with, besides those of the countries it comes from.
+var englishSpeaking = map[string]bool{"US": true, "GB": true, "CA": true, "AU": true, "NZ": true, "IE": true}
+
+// titlesOf are the other names a release may give a title: its original
+// name, and its alternative titles in English-speaking countries and in the
+// countries it comes from — each once, without its own name. A title in every
+// other country TMDB lists would only be a name some other title shares.
+func titlesOf(name, original string, from []string, alt []altTitle) []string {
+	seen := map[string]bool{strings.ToLower(strings.TrimSpace(name)): true}
+	origin := map[string]bool{}
+	for _, c := range from {
+		origin[c] = true
+	}
 	var out []string
-	each(func(t string) {
+	add := func(t string) {
 		t = strings.TrimSpace(t)
 		if k := strings.ToLower(t); t != "" && !seen[k] {
 			seen[k] = true
 			out = append(out, t)
 		}
-	})
+	}
+	add(original)
+	for _, a := range alt {
+		if c := strings.ToUpper(strings.TrimSpace(a.Country)); englishSpeaking[c] || origin[c] {
+			add(a.Title)
+		}
+	}
+	return out
+}
+
+// countries are TMDB's country codes, upper case, each once.
+func countries(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range in {
+		if c = strings.ToUpper(strings.TrimSpace(c)); c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
 	return out
 }
 

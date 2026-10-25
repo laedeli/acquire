@@ -18,12 +18,15 @@
 -- word on a series or a movie (Returning Series, In Production, Planned,
 -- Ended, Canceled, Released …), which decides how often a series is read
 -- again; inventory_at is when TMDB was last read for the title (NULL: never),
--- inventory_error why the last read failed.
+-- inventory_error why the last read failed. origin_country are the
+-- countries TMDB says the title comes from (ISO 3166-1): a release that names
+-- a series with a country after it (Show.Name.US) is of the series from there.
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS followed_at     timestamptz;
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin          text NOT NULL DEFAULT '';
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_status     text NOT NULL DEFAULT '';
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS inventory_at    timestamptz;
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS inventory_error text NOT NULL DEFAULT '';
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin_country  text[] NOT NULL DEFAULT '{}';
 
 -- acquisition_targets: added_at is when a follow or a read of TMDB on the
 -- clock made the target; NULL for every target made before, by the import or

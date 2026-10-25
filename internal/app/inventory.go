@@ -280,7 +280,7 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 		}
 		window, released, kind := movieWindow(m)
 		target, err := s.st.ApplyMovieInventory(ctx, t.ID, store.MovieRead{
-			IMDBID: m.IMDBID, Name: m.Title, Year: m.Year(), Status: m.Status, Aliases: m.Aliases,
+			IMDBID: m.IMDBID, Name: m.Title, Year: m.Year(), Status: m.Status, Aliases: m.Aliases, Countries: m.Countries,
 			Window: window, Released: released, Kind: kind,
 		})
 		if err != nil {
@@ -305,7 +305,7 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 	}
 	r := store.SeriesRead{
 		TVDBID: head.TVDBID, IMDBID: head.IMDBID, Name: head.Name, Year: head.Year(),
-		Status: head.Status, Running: tmdb.Running(head.Status), Aliases: head.Aliases,
+		Status: head.Status, Running: tmdb.Running(head.Status), Aliases: head.Aliases, Countries: head.Countries,
 		Seasons: listed, Read: toRead, MonitorAll: t.Followed() && t.InventoryAt == nil,
 	}
 	for _, n := range toRead {

@@ -112,6 +112,10 @@ type Query struct {
 	// Offset skips the newest releases a feed would answer first: the next
 	// page of them.
 	Offset int
+	// Extended asks for every attribute of each release (extended=1): a
+	// newznab source names the identities and categories of a release only
+	// then.
+	Extended bool
 }
 
 // Values renders the query as newznab parameters.
@@ -154,6 +158,9 @@ func (q Query) Values(apiKey string, cats []int) url.Values {
 	v.Set("limit", strconv.Itoa(limit))
 	if q.Offset > 0 {
 		v.Set("offset", strconv.Itoa(q.Offset))
+	}
+	if q.Extended {
+		v.Set("extended", "1")
 	}
 	return v
 }

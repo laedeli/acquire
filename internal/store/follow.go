@@ -89,6 +89,8 @@ type SeriesRead struct {
 	Status  string // TMDB's: Returning Series, Ended …
 	Running bool   // the status says episodes are still to come
 	Aliases []string
+	// Countries are the countries it comes from.
+	Countries []string
 	// Seasons are every season TMDB lists, season 1 on, with its episode
 	// count; Read are the seasons whose episodes were read this time, and
 	// Episodes those episodes.
@@ -148,7 +150,7 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	if r.Running {
 		status = "continuing"
 	}
-	if err := applyTitleRead(ctx, tx, titleID, r.TVDBID, r.IMDBID, r.Status, r.Name, r.Year, status); err != nil {
+	if err := applyTitleRead(ctx, tx, titleID, r.TVDBID, r.IMDBID, r.Status, r.Name, r.Year, status, r.Countries); err != nil {
 		return ch, err
 	}
 	if err := replaceAliasesTx(ctx, tx, titleID, aliasesOf(name, origin, r.Name, r.Aliases), tmdbAliasSource); err != nil {
@@ -267,11 +269,12 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 
 // MovieRead is what one read of TMDB says of a movie.
 type MovieRead struct {
-	IMDBID  string
-	Name    string
-	Year    int
-	Status  string // TMDB's: Released, Post Production …
-	Aliases []string
+	IMDBID    string
+	Name      string
+	Year      int
+	Status    string // TMDB's: Released, Post Production …
+	Aliases   []string
+	Countries []string
 	// Window is when the movie can have a release — its first release to
 	// watch at home, or one set from its theatrical release (Kind says
 	// which) —, nil while TMDB dates none. Released is the day it came out
@@ -306,7 +309,7 @@ func (s *Store) ApplyMovieInventory(ctx context.Context, titleID string, r Movie
 	if strings.EqualFold(r.Status, "Released") {
 		status = "released"
 	}
-	if err := applyTitleRead(ctx, tx, titleID, 0, r.IMDBID, r.Status, r.Name, r.Year, status); err != nil {
+	if err := applyTitleRead(ctx, tx, titleID, 0, r.IMDBID, r.Status, r.Name, r.Year, status, r.Countries); err != nil {
 		return Target{}, err
 	}
 	if err := replaceAliasesTx(ctx, tx, titleID, aliasesOf(name, origin, r.Name, r.Aliases), tmdbAliasSource); err != nil {
@@ -336,7 +339,7 @@ func (s *Store) ApplyMovieInventory(ctx context.Context, titleID string, r Movie
 // applyTitleRead records on a title what a read of TMDB says of it. status
 // is acquire's own word for a title a request created (continuing, ended,
 // released); the import's word stays on one it tracks.
-func applyTitleRead(ctx context.Context, tx pgx.Tx, titleID string, tvdb int64, imdb, tmdbStatus, name string, year int, status string) error {
+func applyTitleRead(ctx context.Context, tx pgx.Tx, titleID string, tvdb int64, imdb, tmdbStatus, name string, year int, status string, countries []string) error {
 	_, err := tx.Exec(ctx, `
 		UPDATE titles SET
 		  tvdb_id = COALESCE(tvdb_id, NULLIF($2::bigint, 0)),
@@ -346,9 +349,11 @@ func applyTitleRead(ctx context.Context, tx pgx.Tx, titleID string, tvdb int64, 
 		  sort_title = CASE WHEN origin = $9 AND $5 <> '' THEN $6 ELSE sort_title END,
 		  year = CASE WHEN origin = $9 AND $7::int > 0 THEN $7::int ELSE year END,
 		  status = CASE WHEN origin = $9 THEN $8 ELSE status END,
+		  origin_country = $10,
 		  inventory_at = now(), inventory_error = '', updated_at = now()
 		 WHERE id = $1`,
-		titleID, tvdb, strings.TrimSpace(imdb), tmdbStatus, strings.TrimSpace(name), SortTitle(name), year, status, OriginRequest)
+		titleID, tvdb, strings.TrimSpace(imdb), tmdbStatus, strings.TrimSpace(name), SortTitle(name), year, status, OriginRequest,
+		nonNil(countries))
 	return err
 }
 

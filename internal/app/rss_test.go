@@ -230,8 +230,9 @@ func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 		t.Errorf("the run: %+v", run)
 	}
 	reads := feedSrc.reads()
-	if len(reads) != 1 || reads[0].Get("t") != "tvsearch" || reads[0].Get("cat") != "5000" || reads[0].Get("q") != "" || reads[0].Get("limit") != "100" {
-		t.Errorf("reads = %v, want one tv read of the TV category (no movie is wanted)", reads)
+	if len(reads) != 1 || reads[0].Get("t") != "tvsearch" || reads[0].Get("cat") != "5000" || reads[0].Get("q") != "" || reads[0].Get("limit") != "100" ||
+		reads[0].Get("extended") != "1" {
+		t.Errorf("reads = %v, want one tv read of the TV category (no movie is wanted), every attribute asked for", reads)
 	}
 	for _, e := range []string{"s01e007", "s01e008", "s01e004"} {
 		if st := target(t, r.svc, "series:9001:"+e); st.State != store.TargetGrabbed {
@@ -623,11 +624,15 @@ func TestMatchingAReleaseToATitle(t *testing.T) {
 	saga := store.Title{ID: "series:9001", Title: "Example Saga: Seven Harbours", Year: 2026, TVDBID: 424242, Kind: "series"}
 	remake := store.Title{ID: "series:2", Title: "Twin Show", Year: 2019, Kind: "series"}
 	original := store.Title{ID: "series:3", Title: "Twin Show", Year: 1990, Kind: "series"}
-	bureau := store.Title{ID: "series:4", Title: "Example Bureau", Year: 2011, Kind: "series"}
+	bureau := store.Title{ID: "series:4", Title: "Example Bureau", Year: 2011, Kind: "series", Countries: []string{"GB"}, TVDBID: 77}
+	american := store.Title{ID: "series:5", Title: "Example Office", Year: 2005, Kind: "series", Countries: []string{"US"}}
+	named := store.Title{ID: "series:6", Title: "Example Clinic (US)", Year: 2001, Kind: "series"}
 	add(m.series, saga, "Seven Harbours")
 	add(m.series, remake)
 	add(m.series, original)
 	add(m.series, bureau)
+	add(m.series, american)
+	add(m.series, named)
 	clay := store.Title{ID: "movie:9100", Title: "Example Clay Film", Year: 2026, IMDBID: "tt0009100", Kind: "movie"}
 	add(m.movies, clay)
 	for _, tc := range []struct {
@@ -641,7 +646,12 @@ func TestMatchingAReleaseToATitle(t *testing.T) {
 		{"the other year", release.Release{Title: "Twin.Show.1990.S01E01.DVDRip"}, original.ID},
 		{"a name two share", release.Release{Title: "Twin.Show.S01E01.1080p.WEB"}, ""},
 		{"two told apart by the feed", release.Release{Title: "Twin.Show.S01E01.1080p.WEB", TVDBID: 0}, ""},
-		{"a country", release.Release{Title: "Example.Bureau.US.S02E01.720p.HDTV"}, bureau.ID},
+		{"another country's series of the name", release.Release{Title: "Example.Bureau.US.S02E01.720p.HDTV"}, ""},
+		{"its own country", release.Release{Title: "Example.Bureau.UK.S02E01.720p.HDTV"}, bureau.ID},
+		{"another country, the feed names it", release.Release{Title: "Example.Bureau.US.S02E01.720p.HDTV", TVDBID: 77}, bureau.ID},
+		{"its country, as TMDB says", release.Release{Title: "Example.Office.US.S02E01.720p.HDTV"}, american.ID},
+		{"a title that names its country", release.Release{Title: "Example.Clinic.US.S01E01.720p.HDTV"}, named.ID},
+		{"an episode's own IMDb id", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", IMDBID: "tt99000009"}, saga.ID},
 		{"the feed says another series", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", TVDBID: 7}, ""},
 		{"the feed agrees", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", TVDBID: 424242}, saga.ID},
 		{"a longer name", release.Release{Title: "Example.Saga.Seven.Harbours.Aftershow.S01E07.1080p"}, ""},

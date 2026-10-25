@@ -35,8 +35,12 @@ type Movie struct {
 	// ReleaseDate is TMDB's primary release date, usually the first
 	// theatrical one.
 	ReleaseDate *time.Time
-	Aliases     []string
-	Releases    []Release
+	// Aliases are its original title, and its titles in English-speaking
+	// countries and in the countries it comes from (titlesOf); Countries
+	// the countries it comes from.
+	Aliases   []string
+	Countries []string
+	Releases  []Release
 }
 
 // Release is one dated release of a movie in one country.
@@ -118,8 +122,13 @@ func (c *Client) Movie(ctx context.Context, tmdbID int64) (Movie, error) {
 		return out, err
 	}
 	var raw struct {
-		ID          int64  `json:"id"`
-		Title       string `json:"title"`
+		ID                  int64    `json:"id"`
+		Title               string   `json:"title"`
+		OriginalTitle       string   `json:"original_title"`
+		OriginCountry       []string `json:"origin_country"`
+		ProductionCountries []struct {
+			Country string `json:"iso_3166_1"`
+		} `json:"production_countries"`
 		Status      string `json:"status"`
 		ReleaseDate string `json:"release_date"`
 		IMDBID      string `json:"imdb_id"`
@@ -127,9 +136,7 @@ func (c *Client) Movie(ctx context.Context, tmdbID int64) (Movie, error) {
 			IMDBID string `json:"imdb_id"`
 		} `json:"external_ids"`
 		AlternativeTitles struct {
-			Titles []struct {
-				Title string `json:"title"`
-			} `json:"titles"`
+			Titles []altTitle `json:"titles"`
 		} `json:"alternative_titles"`
 		ReleaseDates struct {
 			Results []struct {
@@ -149,11 +156,14 @@ func (c *Client) Movie(ctx context.Context, tmdbID int64) (Movie, error) {
 	if out.IMDBID == "" {
 		out.IMDBID = strings.TrimSpace(raw.ExternalIDs.IMDBID)
 	}
-	out.Aliases = otherTitles(out.Title, func(yield func(string)) {
-		for _, a := range raw.AlternativeTitles.Titles {
-			yield(a.Title)
+	out.Countries = countries(raw.OriginCountry)
+	if len(out.Countries) == 0 {
+		for _, c := range raw.ProductionCountries {
+			out.Countries = append(out.Countries, c.Country)
 		}
-	})
+		out.Countries = countries(out.Countries)
+	}
+	out.Aliases = titlesOf(out.Title, raw.OriginalTitle, out.Countries, raw.AlternativeTitles.Titles)
 	for _, country := range raw.ReleaseDates.Results {
 		for _, d := range country.Dates {
 			at, err := time.Parse(time.RFC3339, strings.TrimSpace(d.Date))

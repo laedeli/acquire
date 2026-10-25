@@ -62,14 +62,14 @@ func TestNewestReleasesAreScopedAndPaged(t *testing.T) {
 	var got []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		got = append(got, q.Get("t")+" q="+q.Get("q")+" cat="+q.Get("cat")+" offset="+q.Get("offset")+" limit="+q.Get("limit"))
+		got = append(got, q.Get("t")+" q="+q.Get("q")+" cat="+q.Get("cat")+" offset="+q.Get("offset")+" limit="+q.Get("limit")+" extended="+q.Get("extended"))
 		_, _ = w.Write([]byte(`<rss><channel></channel></rss>`))
 	}))
 	defer srv.Close()
 	src = testSource(srv.URL)
 	_, _ = testClient(srv).Search(context.Background(), src, Query{Kind: "tvsearch", Media: "tv", Cats: []int{5000}, Limit: 100})
-	_, _ = testClient(srv).Search(context.Background(), src, Query{Kind: "search", Cats: []int{5000, 2000}, Limit: 100, Offset: 100})
-	want := []string{"tvsearch q= cat=5000 offset= limit=100", "search q= cat=5000,2000 offset=100 limit=100"}
+	_, _ = testClient(srv).Search(context.Background(), src, Query{Kind: "search", Cats: []int{5000, 2000}, Limit: 100, Offset: 100, Extended: true})
+	want := []string{"tvsearch q= cat=5000 offset= limit=100 extended=", "search q= cat=5000,2000 offset=100 limit=100 extended=1"}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("requests = %q, want %q", got, want)
 	}

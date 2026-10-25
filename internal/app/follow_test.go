@@ -39,8 +39,10 @@ type tmdbSeries struct {
 	name, status string
 	tvdb         int64
 	firstAir     *time.Time
-	aliases      []string
-	seasons      map[int][]tmdbEpisode
+	// aliases are its titles in the US; countries where it comes from.
+	aliases   []string
+	countries []string
+	seasons   map[int][]tmdbEpisode
 }
 
 // fakeTMDB answers /tv/{id}, /tv/{id}/season/{n} and /movie/{id} from what
@@ -100,10 +102,10 @@ func (f *fakeTMDB) client(t *testing.T) *tmdb.Client {
 			}
 			var alt []map[string]any
 			for _, a := range s.aliases {
-				alt = append(alt, map[string]any{"title": a})
+				alt = append(alt, map[string]any{"iso_3166_1": "US", "title": a})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": id, "name": s.name, "status": s.status, "first_air_date": dateOf(s.firstAir),
+				"id": id, "name": s.name, "status": s.status, "first_air_date": dateOf(s.firstAir), "origin_country": s.countries,
 				"external_ids":       map[string]any{"tvdb_id": s.tvdb},
 				"alternative_titles": map[string]any{"results": alt},
 				"seasons":            seasons,
@@ -131,7 +133,7 @@ func (f *fakeTMDB) client(t *testing.T) *tmdb.Client {
 // and airs in weekly batches — three, three, three, then four next week —,
 // returning. The name is invented.
 func sevenHarbours() *tmdbSeries {
-	s := &tmdbSeries{name: "Example Saga: Seven Harbours", status: "Returning Series", tvdb: 424242, firstAir: day(-16),
+	s := &tmdbSeries{name: "Example Saga: Seven Harbours", status: "Returning Series", tvdb: 424242, firstAir: day(-16), countries: []string{"US"},
 		aliases: []string{"Seven Harbours", "Example Saga: Seven Harbours"}, seasons: map[int][]tmdbEpisode{0: {{title: "Special", air: day(-30)}}}}
 	for i, d := range []int{-16, -16, -16, -9, -9, -9, -2, -2, -2, 5, 5, 5, 5} {
 		s.seasons[1] = append(s.seasons[1], tmdbEpisode{title: fmt.Sprintf("Harbour %d", i+1), air: day(d)})
@@ -247,7 +249,7 @@ func TestARequestFollowsTheSeries(t *testing.T) {
 	}
 	title, err := r.svc.st.TitleByID(ctx, "series:9001")
 	if err != nil || title.TVDBID != 424242 || !title.Followed() || title.Origin != store.OriginRequest || title.TMDBStatus != "Returning Series" ||
-		title.Year != 2026 || !title.HoldingsKnown() {
+		title.Year != 2026 || !title.HoldingsKnown() || strings.Join(title.Countries, ",") != "US" {
 		t.Fatalf("the title: %+v %v", title, err)
 	}
 	aliases, _ := r.svc.st.AliasesFor(ctx, title.ID)

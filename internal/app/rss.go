@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -223,6 +224,9 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 		}
 		items, err := s.ask(ctx, src, f.limits[src.ID], s.timing.typedPerSource, indexer.Query{
 			Kind: fd.kind, Media: fd.media, Cats: src.FeedCategories(fd.media), Limit: page, Offset: p * page,
+			// The identities and categories of each release: a newznab
+			// source names them only when asked.
+			Extended: true,
 		})
 		done()
 		if err != nil {
@@ -329,13 +333,18 @@ func (s *Service) loadMatcher(ctx context.Context) (matcher, error) {
 }
 
 // countryWords are the countries a series' name in a release may end with,
-// to tell a remake from its original (Show.US.S01E01).
-var countryWords = map[string]bool{"us": true, "uk": true, "au": true, "ca": true, "nz": true}
+// to tell a remake from its original (Show.US.S01E01), and the country each
+// is (ISO 3166-1).
+var countryWords = map[string]string{"us": "US", "uk": "GB", "au": "AU", "ca": "CA", "nz": "NZ"}
 
 // seriesOf finds the series a release's name names before the episodes it
-// holds: its title or an alias exactly, or followed by the series' year or a
-// country. One series, or none: a name several tracked series share, and the
-// feed's identities do not tell apart, matches none.
+// holds: its title or an alias exactly — one that names a country too, as
+// "Show Name (US)" does —, else followed by the series' year, else followed
+// by the country it comes from, as TMDB says, or the feed's TVDB or TMDB id
+// names it: a bare name with a country after it is that country's series,
+// not one of the same name from elsewhere. One series, or none: a name
+// several tracked series share, and the feed's identities do not tell apart,
+// matches none.
 func (m matcher) seriesOf(r release.Release, name string) (store.Title, bool) {
 	key := release.MatchKey(name)
 	cands := m.series[key]
@@ -348,8 +357,12 @@ func (m matcher) seriesOf(r release.Release, name string) (store.Title, bool) {
 					cands = append(cands, t)
 				}
 			}
-		} else if countryWords[last] {
-			cands = m.series[head]
+		} else if country := countryWords[last]; country != "" {
+			for _, t := range m.series[head] {
+				if slices.Contains(t.Countries, country) || (r.TVDBID > 0 && r.TVDBID == t.TVDBID) || (r.TMDBID > 0 && r.TMDBID == t.TMDBID) {
+					cands = append(cands, t)
+				}
+			}
 		}
 	}
 	return only(cands, r)
@@ -394,14 +407,15 @@ func only(cands []store.Title, r release.Release) (store.Title, bool) {
 
 // identitiesAgree reports whether what a feed says a release is of does not
 // name another title than t: no TVDB, TMDB or IMDb id both carry that
-// differs.
+// differs. The IMDb id only of a movie: of an episode a feed may carry the
+// episode's own.
 func identitiesAgree(t store.Title, r release.Release) bool {
 	switch {
 	case r.TVDBID > 0 && t.TVDBID > 0 && r.TVDBID != t.TVDBID:
 		return false
 	case r.TMDBID > 0 && t.TMDBID > 0 && r.TMDBID != t.TMDBID:
 		return false
-	case imdbNumber(r.IMDBID) > 0 && imdbNumber(t.IMDBID) > 0 && imdbNumber(r.IMDBID) != imdbNumber(t.IMDBID):
+	case t.Kind == "movie" && imdbNumber(r.IMDBID) > 0 && imdbNumber(t.IMDBID) > 0 && imdbNumber(r.IMDBID) != imdbNumber(t.IMDBID):
 		return false
 	}
 	return true
