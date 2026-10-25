@@ -461,7 +461,7 @@ export function mockSubtitlesApi(scenario: SubtitleScenario, chinese: SubtitleCh
     searchSettings: async () =>
       pause<SearchSettings>({ preferProtocol: 'usenet', storageFloorGb: 50, maxConcurrentGrabs: 3, autoGrab: false,
         autoGrabNew: true, newWithinDays: 14, airDelayHours: 30, airTimes: 'tvmaze', airDelayAfterAirstampMinutes: 60, revision: 1,
-        airTimesStatus: { on: true, running: 96, read: 88, unknown: 5, pending: 3, lastError: 'TVmaze did not answer: HTTP 503' } }),
+        airTimesStatus: { on: true, running: 96, read: 88, unknown: 5, pending: 3, lastError: 'TVmaze did not answer: HTTP 503', held: 2 } }),
     requestSettings: async () => pause<RequestSettings>({ autoApprove: false, revision: 1 }),
     saveRequestSettings: async (s: RequestSettings) => pause({ ...s, revision: s.revision + 1 }),
     profiles: async () =>

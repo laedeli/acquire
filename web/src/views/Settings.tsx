@@ -153,7 +153,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="wait after the air date (hours)"
           error={fields.airDelayHours}
-          hint="TMDB dates the day an episode airs, not the hour: for an episode whose air time is not known, an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out to watch at home. A release published before the day began where the series comes from — of a series streamed from the United States, before 03:00 in New York — is taken for a fake and skipped; a person may still pick it. 0: from the air date on."
+          hint="TMDB dates the day an episode airs, not the hour: for an episode whose air time is not known, an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out to watch at home. A release published before the day began where the series comes from — of a series streamed from the United States, before 21:00 in New York the evening before — is taken for a fake and skipped; a person may still pick it. 0: from the air date on."
         >
           <Input
             type="number"
@@ -166,7 +166,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="exact air times"
           error={fields.airTimes}
-          hint="TVmaze: acquire reads from TVmaze's public schedule how a series airs — broadcast on a network, or streamed — and when each episode airs and how long it runs, asking by the series' TVDB or IMDb id and nothing else; an automatic grab then takes nothing of a broadcast published before it ended, nothing of a streamed episode published more than 30 minutes before it streams, and nothing of a series before its air times are read. Off: an episode is told by its air date alone."
+          hint="TVmaze: acquire reads from TVmaze's public schedule how a series airs — broadcast on a network, or streamed — and when each episode airs and how long it runs, asking by the series' TVDB or IMDb id and nothing else; an automatic grab then takes nothing of a broadcast published before it ended — of one TVmaze gives no hour for, by its usual hour —, nothing of a streamed episode published more than 30 minutes before it streams, and nothing of a series before its air times are read. An episode TVmaze dates later than TMDB is told by TVmaze's date; one the two date apart and cannot tell the same is held until they agree. Off: an episode is told by its air date alone."
         >
           <Select
             value={draft.airTimes}
@@ -192,6 +192,11 @@ function SearchAndGrab({ api }: { api: Api }) {
       {airTimes && (
         <Text variant="muted" as="div">
           {airTimes}
+        </Text>
+      )}
+      {draft.airTimes === 'tvmaze' && draft.airTimesStatus?.on && draft.airTimesStatus.warning && (
+        <Text variant="muted" as="div">
+          {draft.airTimesStatus.warning}
         </Text>
       )}
       <Field
@@ -571,6 +576,10 @@ function airTimesLine(st: AirTimesStatus | undefined): string {
     parts.push(
       `${st.pending} not read yet — nothing of them is grabbed on its own until they are, on the next refreshes` +
         (st.lastError ? ` (${st.lastError})` : ''),
+    )
+  if (st.held)
+    parts.push(
+      `${st.held} ${st.held === 1 ? 'episode' : 'episodes'} held — not grabbed on its own until TVmaze and TMDB agree on ${st.held === 1 ? 'it' : 'them'}, or ${st.held === 1 ? 'it has' : 'they have'} an air time`,
     )
   return "TVmaze's air times: " + parts.join('; ')
 }

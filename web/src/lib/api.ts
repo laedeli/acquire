@@ -51,9 +51,11 @@ export interface RequestProgress {
   inventoryError?: string
   /** When a title TMDB did not know is read again. */
   inventoryRetryAt?: string
-  /** When a series' air times were last read from TVmaze (none: never), and why the last read failed. */
+  /** When a series' air times were last read from TVmaze (none: never), and why the last read failed; whether they were read by the rules of this version; how many of its episodes wait for TVmaze. */
   scheduleAt?: string
   scheduleError?: string
+  airTimesRead?: boolean
+  airTimeHolds?: number
   holdingsKnown: boolean
   /** Of a series' monitored episodes. */
   episodes: number
@@ -375,6 +377,10 @@ export interface AirTimesStatus {
   pending: number
   /** Why TVmaze last failed to give a pending series' air times. */
   lastError?: string
+  /** Their episodes not grabbed on their own until TVmaze and TMDB agree on them, or they have an air time. */
+  held: number
+  /** Set when more than a third of the series that run are not known to TVmaze. */
+  warning?: string
 }
 
 /** How requests are taken: autoApprove approves anyone's request at once; off, one from someone who is not an admin awaits an admin's approval. */
