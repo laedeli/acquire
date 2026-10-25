@@ -123,15 +123,12 @@ func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) 
 	return p.AutoGrab || (p.AutoGrabNew && isNew(title, t, p.newWithin(), now))
 }
 
-// handsOff reports whether no automatic grab takes anything of a series: one
-// the import says is anime, whose releases are mostly numbered by an
-// absolute episode number, or daily, whose releases are named by their air
-// date — neither names the season and episode acquire tracks, so a release
-// found for one cannot be told to be it. They are searched, and grabbed from
-// the missing tab.
-func handsOff(title store.Title) bool {
-	return title.Kind == "series" && (title.SeriesType == "anime" || title.SeriesType == "daily")
-}
+// handsOff reports whether no automatic grab takes anything of a series
+// (store.Title.HandsOff): its releases name no season and episode acquire
+// can tell — an anime numbered by an absolute episode number, a daily show
+// named by its date —, so a release found for one cannot be told to be it.
+// They are searched, and grabbed from the missing tab.
+func handsOff(title store.Title) bool { return title.HandsOff() }
 
 // grabbedWhen says when an automatic grab takes an episode, as the policy
 // has it: "an hour after it airs (TVmaze's air times), else 30 hours after

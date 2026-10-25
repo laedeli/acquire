@@ -60,7 +60,56 @@ type Title struct {
 	ScheduleID    int64
 	ScheduleAt    *time.Time
 	ScheduleError string
+	// Genres are TMDB's genre ids of a series, TMDBType its kind of show
+	// (Scripted, News, Talk Show …); LongSeason is set when one of its
+	// seasons holds more than longSeason episodes.
+	Genres     []int
+	TMDBType   string
+	LongSeason bool
 }
+
+// longSeason is the most episodes a season holds of a series whose releases
+// name the season and episode: one of more is numbered as a single run, or
+// named by its dates.
+const longSeason = 100
+
+// HandsOff reports whether no automatic grab takes anything of a series: its
+// releases name no season and episode acquire can tell. The import says it is
+// anime — numbered by an absolute episode number — or daily — named by its
+// date —; TMDB files it as animation from Japan, or as a talk or news show;
+// or a season of it holds more than longSeason episodes. It is searched, and
+// its episodes are grabbed from the missing tab.
+func (t Title) HandsOff() bool {
+	if t.Kind != "series" {
+		return false
+	}
+	switch {
+	case t.SeriesType == "anime", t.SeriesType == "daily":
+		return true
+	case t.TMDBType == "Talk Show", t.TMDBType == "News":
+		return true
+	case t.LongSeason:
+		return true
+	}
+	animation, japan := false, false
+	for _, g := range t.Genres {
+		animation = animation || g == genreAnimation
+	}
+	for _, c := range t.Countries {
+		japan = japan || c == "JP"
+	}
+	return animation && japan
+}
+
+// genreAnimation is TMDB's genre id of animation.
+const genreAnimation = 16
+
+// longSeasonSQL is Title.LongSeason of the title t (longSeason).
+const longSeasonSQL = `EXISTS (SELECT 1 FROM seasons s WHERE s.title_id = t.id AND s.episode_count > 100)`
+
+// handsOffSQL is Title.HandsOff of the title t.
+const handsOffSQL = `(t.kind = 'series' AND (t.series_type IN ('anime', 'daily') OR t.tmdb_type IN ('Talk Show', 'News')
+	OR (16 = ANY(t.genres) AND 'JP' = ANY(t.origin_country)) OR ` + longSeasonSQL + `))`
 
 // HeldForApproval reports whether nothing of a followed title may be grabbed
 // on its own: no request that follows it is approved yet, and it is monitored
@@ -92,7 +141,8 @@ const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.
 	COALESCE(t.year,0), t.status, t.series_type, t.monitored, t.monitor_new, t.profile_id,
 	t.holdings_at, t.holdings_error, t.catalog_id,
 	t.followed_at, t.unfollowed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country,
-	t.pre_monitored, ` + approvedSQL + `, COALESCE(t.schedule_id, 0), t.schedule_at, t.schedule_error`
+	t.pre_monitored, ` + approvedSQL + `, COALESCE(t.schedule_id, 0), t.schedule_at, t.schedule_error,
+	t.genres, t.tmdb_type, ` + longSeasonSQL
 
 func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
@@ -100,7 +150,8 @@ func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
 		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
 		&t.FollowedAt, &t.UnfollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries,
-		&t.PreMonitored, &t.Approved, &t.ScheduleID, &t.ScheduleAt, &t.ScheduleError}, extra...)...)
+		&t.PreMonitored, &t.Approved, &t.ScheduleID, &t.ScheduleAt, &t.ScheduleError,
+		&t.Genres, &t.TMDBType, &t.LongSeason}, extra...)...)
 	return t, err
 }
 

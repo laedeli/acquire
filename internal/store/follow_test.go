@@ -830,3 +830,53 @@ func TestRSSCursors(t *testing.T) {
 		t.Errorf("round trip: %+v", got)
 	}
 }
+
+// No automatic grab takes anything of a series whose releases name no season
+// and episode acquire can tell: one the import says is anime or daily, one
+// TMDB files as animation from Japan or as a talk or news show, one with a
+// season of more than a hundred episodes. The feeds are not read for them.
+func TestHandsOff(t *testing.T) {
+	for _, tc := range []struct {
+		title Title
+		want  bool
+	}{
+		{Title{Kind: "series", SeriesType: "anime"}, true},
+		{Title{Kind: "series", SeriesType: "daily"}, true},
+		{Title{Kind: "series", Genres: []int{16}, Countries: []string{"JP"}}, true},
+		{Title{Kind: "series", Genres: []int{16}, Countries: []string{"US"}}, false},
+		{Title{Kind: "series", Genres: []int{18}, Countries: []string{"JP"}}, false},
+		{Title{Kind: "series", TMDBType: "Talk Show"}, true},
+		{Title{Kind: "series", TMDBType: "News"}, true},
+		{Title{Kind: "series", TMDBType: "Scripted"}, false},
+		{Title{Kind: "series", LongSeason: true}, true},
+		{Title{Kind: "movie", Genres: []int{16}, Countries: []string{"JP"}}, false},
+	} {
+		if got := tc.title.HandsOff(); got != tc.want {
+			t.Errorf("%+v: %v", tc.title, got)
+		}
+	}
+
+	s := migrated(t)
+	ctx := context.Background()
+	for i, read := range []SeriesRead{
+		{Status: "Returning Series", Genres: []int{16}, Countries: []string{"JP"}, Seasons: map[int]int{1: 1}, Read: []int{1}, Episodes: episodesOf(1, day(-3))},
+		{Status: "Returning Series", Type: "Talk Show", Seasons: map[int]int{1: 1}, Read: []int{1}, Episodes: episodesOf(1, day(-3))},
+		{Status: "Returning Series", Seasons: map[int]int{1: 120}, Read: []int{1}, Episodes: episodesOf(1, day(-3))},
+		{Status: "Returning Series", Genres: []int{16}, Countries: []string{"US"}, Seasons: map[int]int{1: 1}, Read: []int{1}, Episodes: episodesOf(1, day(-3))},
+	} {
+		ti := approvedFollow(t, s, Title{TMDBID: int64(990800 + i), Kind: "series", Title: fmt.Sprintf("Show %d", i)})
+		if _, err := s.ApplySeriesInventory(ctx, ti.ID, read); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", nil); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := s.TitleByID(ctx, ti.ID)
+		if got.HandsOff() != (i < 3) {
+			t.Errorf("show %d: hands off %v (%+v)", i, got.HandsOff(), got)
+		}
+	}
+	if eps, _, _ := s.WantedForFeeds(ctx, FeedsWant{All: true}); eps != 1 {
+		t.Errorf("the feeds are read for %d episodes, want the one of the series acquire can tell", eps)
+	}
+}

@@ -146,6 +146,7 @@ func TestSeriesAndOneSeason(t *testing.T) {
 					{"iso_3166_1": "PT", "title": "O Porto"}, {"iso_3166_1": "FR", "title": "Le Port"},
 					{"iso_3166_1": "MX", "title": "El Puerto"}}},
 				"seasons": []map[string]any{{"season_number": 0, "episode_count": 2}, {"season_number": 1, "episode_count": 2}},
+				"genres":  []map[string]any{{"id": 18, "name": "Drama"}, {"id": 16, "name": "Animation"}}, "type": "Scripted",
 			})
 		case "/tv/9900001/season/1":
 			_ = json.NewEncoder(w).Encode(map[string]any{"episodes": []map[string]any{
@@ -164,6 +165,9 @@ func TestSeriesAndOneSeason(t *testing.T) {
 	if len(s.Seasons) != 1 || s.Seasons[0].Number != 1 || s.Seasons[0].EpisodeCount != 2 || s.TVDBID != 9900002 || s.Status != "Ended" ||
 		s.Year() != 2020 {
 		t.Errorf("series = %+v", s)
+	}
+	if len(s.Genres) != 2 || s.Genres[1] != GenreAnimation || s.Type != "Scripted" {
+		t.Errorf("genres %v, type %q", s.Genres, s.Type)
 	}
 	if got := strings.Join(s.Aliases, "|"); got != "Exemplo Porto|Example Harbor|O Porto" || strings.Join(s.Countries, ",") != "PT" {
 		t.Errorf("aliases = %q, countries = %v", got, s.Countries)

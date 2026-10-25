@@ -294,7 +294,7 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 			v.Progress = &p
 			status, detail := requestState(p, now, pol)
 			v.Status, v.Detail = approvalState(w.Approval, status, detail)
-			auto := grabs && w.Approval == store.ApprovalApproved && (p.Movie == nil || !guessedWindow(*p.Movie))
+			auto := grabs && w.Approval == store.ApprovalApproved && !p.HandsOff && (p.Movie == nil || !guessedWindow(*p.Movie))
 			v.AutoGrab = &auto
 		}
 		out = append(out, v)
@@ -381,6 +381,9 @@ func requestState(p store.Progress, now time.Time, pol SearchSettings) (status, 
 	}
 	if !p.Running {
 		detail += "; TMDB says it has ended"
+	}
+	if p.HandsOff {
+		detail += "; its releases name no season and episode (an anime, a daily show): grabbed from the missing tab only"
 	}
 	return "following", clip(detail, 300)
 }

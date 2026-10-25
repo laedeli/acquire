@@ -393,6 +393,7 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 	r := store.SeriesRead{
 		TVDBID: head.TVDBID, IMDBID: head.IMDBID, Name: head.Name, Year: head.Year(),
 		Status: head.Status, Running: tmdb.Running(head.Status), Aliases: head.Aliases, Countries: head.Countries,
+		Genres: head.Genres, Type: head.Type,
 		Seasons: listed, Read: toRead, MonitorAll: t.Followed() && t.InventoryAt == nil,
 	}
 	for _, n := range toRead {

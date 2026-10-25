@@ -46,6 +46,14 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_id    bigint;
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_at    timestamptz;
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_error text NOT NULL DEFAULT '';
 
+-- titles: genres are TMDB's genre ids of a series (16: animation) and
+-- tmdb_type its kind of show (Scripted, News, Talk Show …): an animation from
+-- Japan is numbered by an absolute episode number, a talk or news show named
+-- by its date — neither by the season and episode acquire tracks, so no
+-- automatic grab takes anything of them.
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS genres    int[] NOT NULL DEFAULT '{}';
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_type text  NOT NULL DEFAULT '';
+
 -- acquisition_targets: added_at is when a follow or a read of TMDB on the
 -- clock made the target; NULL for every target made before, by the import or
 -- a derivation — the old backlog. A target added after its title's holdings

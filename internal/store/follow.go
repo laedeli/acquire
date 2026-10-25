@@ -103,8 +103,11 @@ type SeriesRead struct {
 	Status  string // TMDB's: Returning Series, Ended …
 	Running bool   // the status says episodes are still to come
 	Aliases []string
-	// Countries are the countries it comes from.
+	// Countries are the countries it comes from; Genres TMDB's genre ids of
+	// it, and Type its kind of show.
 	Countries []string
+	Genres    []int
+	Type      string
 	// Seasons are every season TMDB lists, season 1 on, with its episode
 	// count; Read are the seasons whose episodes were read this time, and
 	// Episodes those episodes.
@@ -177,6 +180,13 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		status = "continuing"
 	}
 	if err := applyTitleRead(ctx, tx, titleID, r.TVDBID, r.IMDBID, r.Status, r.Name, r.Year, status, r.Countries); err != nil {
+		return ch, err
+	}
+	genres := make([]int32, 0, len(r.Genres))
+	for _, g := range r.Genres {
+		genres = append(genres, int32(g))
+	}
+	if _, err := tx.Exec(ctx, `UPDATE titles SET genres = $2, tmdb_type = $3 WHERE id = $1`, titleID, genres, strings.TrimSpace(r.Type)); err != nil {
 		return ch, err
 	}
 	if err := replaceAliasesTx(ctx, tx, titleID, aliasesOf(name, origin, r.Name, r.Aliases), tmdbAliasSource); err != nil {
@@ -686,10 +696,13 @@ func (s *Store) SeasonsToRead(ctx context.Context, titleID string, listed map[in
 
 // Progress is how far acquire is with a title a request follows.
 type Progress struct {
-	TitleID       string     `json:"-"`
-	Kind          string     `json:"kind"`
-	TMDBStatus    string     `json:"tmdbStatus,omitempty"`
-	Running       bool       `json:"running"`
+	TitleID    string `json:"-"`
+	Kind       string `json:"kind"`
+	TMDBStatus string `json:"tmdbStatus,omitempty"`
+	Running    bool   `json:"running"`
+	// HandsOff is a series no automatic grab takes anything of
+	// (Title.HandsOff).
+	HandsOff      bool       `json:"handsOff,omitempty"`
 	InventoryAt   *time.Time `json:"inventoryAt"`
 	InventoryErr  string     `json:"inventoryError,omitempty"`
 	HoldingsKnown bool       `json:"holdingsKnown"`
@@ -725,7 +738,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, t.inventory_at, t.inventory_error, t.holdings_at IS NOT NULL,
+		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, `+handsOffSQL+`, t.inventory_at, t.inventory_error, t.holdings_at IS NOT NULL,
 		       count(a.id) FILTER (WHERE a.monitored AND (a.tmdb_gone_at IS NULL OR a.state = 'held')),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held'),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held' AND a.held_playable),
@@ -752,7 +765,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		var season, episode *int
 		var title *string
 		var at *time.Time
-		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.InventoryAt, &p.InventoryErr, &p.HoldingsKnown,
+		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.HandsOff, &p.InventoryAt, &p.InventoryErr, &p.HoldingsKnown,
 			&p.Episodes, &p.Held, &p.Playable, &p.OnTheWay, &p.Missing, &p.Failed, &p.Unaired,
 			&season, &episode, &title, &at); err != nil {
 			rows.Close()
@@ -817,7 +830,7 @@ func (s *Store) WantedForFeeds(ctx context.Context, w FeedsWant) (episodes, movi
 		SELECT count(*) FILTER (WHERE a.kind = 'episode'), count(*) FILTER (WHERE a.kind = 'movie')
 		  FROM acquisition_targets a JOIN titles t ON t.id = a.title_id
 		 WHERE `+sweepableSQL(openParams{delay: "$1", stampDelay: "$2", stamps: "$3"})+` AND ($4 OR `+newSQL("$5")+`)
-		   AND NOT (a.kind = 'movie' AND a.release_kind = 'theatrical')`,
+		   AND NOT (a.kind = 'movie' AND a.release_kind = 'theatrical') AND NOT `+handsOffSQL,
 		args...).Scan(&episodes, &movies)
 	return episodes, movies, err
 }

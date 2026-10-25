@@ -39,9 +39,12 @@ type tmdbSeries struct {
 	name, status string
 	tvdb         int64
 	firstAir     *time.Time
-	// aliases are its titles in the US; countries where it comes from.
+	// aliases are its titles in the US; countries where it comes from;
+	// genres TMDB's genre ids of it, and kind its kind of show.
 	aliases   []string
 	countries []string
+	genres    []int
+	kind      string
 	seasons   map[int][]tmdbEpisode
 }
 
@@ -104,8 +107,13 @@ func (f *fakeTMDB) client(t *testing.T) *tmdb.Client {
 			for _, a := range s.aliases {
 				alt = append(alt, map[string]any{"iso_3166_1": "US", "title": a})
 			}
+			var genres []map[string]any
+			for _, g := range s.genres {
+				genres = append(genres, map[string]any{"id": g, "name": "genre"})
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": id, "name": s.name, "status": s.status, "first_air_date": dateOf(s.firstAir), "origin_country": s.countries,
+				"genres": genres, "type": s.kind,
 				"external_ids":       map[string]any{"tvdb_id": s.tvdb},
 				"alternative_titles": map[string]any{"results": alt},
 				"seasons":            seasons,
@@ -1056,5 +1064,50 @@ func TestFollowKind(t *testing.T) {
 	sort.Strings(m)
 	if strings.Join(m, ",") != "series,tv" {
 		t.Errorf("media types of a series: %v", m)
+	}
+}
+
+// A requested series TMDB files as animation from Japan is numbered by its
+// releases as one run, not by season and episode: nothing of it is grabbed on
+// its own — not from the feeds, not by the sweep —, and the request says so.
+// Its episodes are searched, and grabbed from the missing tab.
+func TestARequestedAnimeIsGrabbedFromTheMissingTabOnly(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[990751] = &tmdbSeries{name: "Example Harbour Anime", status: "Returning Series", tvdb: 9907751, firstAir: day(-30),
+			countries: []string{"JP"}, genres: []int{16}, kind: "Scripted",
+			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-10)}, {title: "Two", air: day(-3)}}}}
+	})
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990751, MediaType: "series", Title: "Example Harbour Anime"}, asAdmin("admin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	release := "Example.Harbour.Anime.S01E02.1080p.WEB.h264-GRP"
+	addFeed(t, r.svc, "feed", newFeedSource(t, true, tv(release, ago(time.Hour))))
+	src := newFakeSource(t, "usenet", "K", release)
+	addSource(t, r.svc, "example", src, nil)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Feeds != 0 || run.Grabbed != 0 {
+		t.Errorf("the feeds: %+v", run)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.gw.added()) != 0 {
+		t.Errorf("the sweep grabbed %d", len(r.gw.added()))
+	}
+	if st := target(t, r.svc, "series:990751:s01e002"); st.LastSearchAt == nil {
+		t.Errorf("not searched: %+v", st)
+	}
+	v := r.view(t, w.ID)
+	if v.AutoGrab == nil || *v.AutoGrab || !strings.Contains(v.Detail, "an anime, a daily show): grabbed from the missing tab only") {
+		t.Errorf("the request: %q %v", v.Detail, v.AutoGrab)
+	}
+	if _, err := r.svc.GrabTarget(ctx, "series:990751:s01e002", "missing"); err != nil || len(r.gw.added()) != 1 {
+		t.Errorf("grab now: %v (adds %d)", err, len(r.gw.added()))
 	}
 }

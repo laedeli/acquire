@@ -74,7 +74,15 @@ type Series struct {
 	// origin_country lists them).
 	Countries []string
 	Seasons   []Season
+	// Genres are TMDB's genre ids of it (GenreAnimation …); Type TMDB's
+	// kind of show: Scripted, Reality, Documentary, News, Talk Show,
+	// Miniseries, Video.
+	Genres []int
+	Type   string
 }
+
+// GenreAnimation is TMDB's genre id of animation.
+const GenreAnimation = 16
 
 // Year is the year the series first aired, or 0.
 func (s Series) Year() int {
@@ -217,6 +225,10 @@ func (c *Client) Series(ctx context.Context, tmdbID int64) (Series, error) {
 			EpisodeCount int    `json:"episode_count"`
 			AirDate      string `json:"air_date"`
 		} `json:"seasons"`
+		Genres []struct {
+			ID int `json:"id"`
+		} `json:"genres"`
+		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(body, &head); err != nil {
 		return out, fmt.Errorf("tmdb tv/%d: decode: %w", tmdbID, err)
@@ -227,6 +239,10 @@ func (c *Client) Series(ctx context.Context, tmdbID int64) (Series, error) {
 	}
 	out.Countries = countries(head.OriginCountry)
 	out.Aliases = titlesOf(out.Name, head.OriginalName, out.Countries, head.AlternativeTitles.Results)
+	out.Type = strings.TrimSpace(head.Type)
+	for _, g := range head.Genres {
+		out.Genres = append(out.Genres, g.ID)
+	}
 	for _, s := range head.Seasons {
 		if s.SeasonNumber < 1 {
 			continue // specials; see SeriesInventory
