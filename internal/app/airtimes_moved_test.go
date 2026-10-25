@@ -251,6 +251,33 @@ func TestManySeriesUnknownToTVmaze(t *testing.T) {
 	}
 }
 
+// A scheduled run starts minutes after acquire starts — not when the
+// schedule comes round, hours later —: the air times due are read.
+func TestARunStartsSoonAfterAcquireStarts(t *testing.T) {
+	r := newFollowRig(t)
+	f := newFakeSchedule(t, r.svc)
+	title, _ := track(t, r.svc, 990799, "Example Night Show", 1, true)
+	sqlExec(t, `UPDATE titles SET tvdb_id = 9907799 WHERE id = $1`, title.ID)
+	f.set(func(f *fakeSchedule) {
+		f.shows["thetvdb=9907799"] = 599
+		f.records[599] = map[string]any{"name": "Example Night Show"}
+		f.eps[599] = []map[string]any{airs(1, 1, local(-2, 21, 0, "America/New_York"))}
+	})
+	r.svc.inventoryStart = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.svc.RunInventory(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if ti, _ := r.svc.st.TitleByID(context.Background(), title.ID); ti.ScheduleAt != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Error("no run after the start")
+}
+
 // The broadcast rule by the feeds and the sweep alike: an hour-long
 // broadcast's release is refused before it ends, taken after; a two-hour
 // one's for its whole length. A streamed episode dated to the minute: refused

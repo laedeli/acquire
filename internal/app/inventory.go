@@ -77,6 +77,10 @@ const (
 	// scheduleCalls bounds the calls to the schedule source one run makes:
 	// at TVmaze's pace, under 20 minutes of the run's 30.
 	scheduleCalls = 2000
+	// inventoryAtStart is how soon after acquire starts a scheduled run
+	// reads TMDB and the air times due — not hours later, when the schedule
+	// comes round: an upgrade's new rules are read at once.
+	inventoryAtStart = 2 * time.Minute
 )
 
 // scheduleEveryOf is how often a series' air times are read again, as
@@ -145,20 +149,27 @@ func (s *Service) takeScheduled() bool {
 	return run
 }
 
-// RunInventory reads TMDB as it is asked to until ctx ends, and every
-// followRetry the follows TMDB could not be read for yet, and the air times
-// TVmaze did not give.
+// RunInventory reads TMDB as it is asked to until ctx ends — and as a
+// scheduled run inventoryAtStart after it starts —, and every followRetry
+// the follows TMDB could not be read for yet, and the air times TVmaze did
+// not give.
 func (s *Service) RunInventory(ctx context.Context) {
 	if s.st == nil {
 		return
 	}
 	retry := time.NewTicker(followRetry)
 	defer retry.Stop()
+	start := time.NewTimer(s.inventoryStart)
+	defer start.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.inventoryWake:
+		case <-start.C:
+			s.inventoryMu.Lock()
+			s.inventoryRun = true
+			s.inventoryMu.Unlock()
 		case <-retry.C:
 			s.retrySchedules(ctx)
 			if !s.retryFollows(ctx) {
