@@ -362,7 +362,7 @@ func TestAnEpisodeNumberedAnewKeepsItsHolding(t *testing.T) {
 func TestAHoldingMovesOnlyWhereNothingIsLost(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	ti := approvedFollow(t, s, Title{TMDBID: 57, Kind: "series", Title: "Example"})
+	ti := approvedFollow(t, s, Title{TMDBID: 990857, Kind: "series", Title: "Example"})
 	ep := func(e int, tid int64) EpisodeRead {
 		return EpisodeRead{TMDBID: tid, Season: 1, Episode: e, AirDate: day(-30 + e)}
 	}
@@ -410,7 +410,7 @@ func TestAHoldingMovesOnlyWhereNothingIsLost(t *testing.T) {
 	}
 
 	// A swap, one side in a grab: neither moves.
-	tj := approvedFollow(t, s, Title{TMDBID: 58, Kind: "series", Title: "Other"})
+	tj := approvedFollow(t, s, Title{TMDBID: 990858, Kind: "series", Title: "Other"})
 	swap := SeriesRead{Status: "Ended", Seasons: map[int]int{1: 2}, Read: []int{1},
 		Episodes: []EpisodeRead{{TMDBID: 801, Season: 1, Episode: 1, AirDate: day(-20)}, {TMDBID: 802, Season: 1, Episode: 2, AirDate: day(-13)}}}
 	if _, err := s.ApplySeriesInventory(ctx, tj.ID, swap); err != nil {
@@ -1142,40 +1142,40 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
 	for _, ti := range []Title{
-		{TMDBID: 1, Kind: "series", Title: "Never Read", Monitored: true, Status: "continuing"},
-		{TMDBID: 2, Kind: "series", Title: "Never Read, Airing", Monitored: true, Status: "continuing"},
-		{TMDBID: 3, Kind: "series", Title: "Running, Read A Day Ago", Monitored: true, Status: "continuing"},
-		{TMDBID: 4, Kind: "series", Title: "Running, Read An Hour Ago", Monitored: true, Status: "continuing"},
-		{TMDBID: 5, Kind: "series", Title: "Unknown A Week Ago", Monitored: true, Status: "continuing"},
-		{TMDBID: 6, Kind: "series", Title: "Ended, Read A Week Ago", Monitored: true, Status: "ended"},
-		{TMDBID: 7, Kind: "series", Title: "Ended, Read Two Months Ago", Monitored: true, Status: "ended"},
-		{TMDBID: 8, Kind: "series", Title: "Not Monitored", Status: "continuing"},
-		{TMDBID: 9, Kind: "series", Title: "Daily", Monitored: true, Status: "continuing", SeriesType: "daily"},
-		{TMDBID: 10, Kind: "series", Title: "Never Read, Failed", Monitored: true, Status: "continuing"},
+		{TMDBID: 990861, Kind: "series", Title: "Never Read", Monitored: true, Status: "continuing"},
+		{TMDBID: 990862, Kind: "series", Title: "Never Read, Airing", Monitored: true, Status: "continuing"},
+		{TMDBID: 990863, Kind: "series", Title: "Running, Read A Day Ago", Monitored: true, Status: "continuing"},
+		{TMDBID: 990864, Kind: "series", Title: "Running, Read An Hour Ago", Monitored: true, Status: "continuing"},
+		{TMDBID: 990865, Kind: "series", Title: "Unknown A Week Ago", Monitored: true, Status: "continuing"},
+		{TMDBID: 990866, Kind: "series", Title: "Ended, Read A Week Ago", Monitored: true, Status: "ended"},
+		{TMDBID: 990867, Kind: "series", Title: "Ended, Read Two Months Ago", Monitored: true, Status: "ended"},
+		{TMDBID: 990868, Kind: "series", Title: "Not Monitored", Status: "continuing"},
+		{TMDBID: 990869, Kind: "series", Title: "Daily", Monitored: true, Status: "continuing", SeriesType: "daily"},
+		{TMDBID: 990870, Kind: "series", Title: "Never Read, Failed", Monitored: true, Status: "continuing"},
 	} {
 		if err := s.UpsertTitle(ctx, ti); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err := s.RequestTitle(ctx, Title{TMDBID: 11, Kind: "series", Title: "Awaiting Approval"}); err != nil {
+	if _, _, err := s.RequestTitle(ctx, Title{TMDBID: 990871, Kind: "series", Title: "Awaiting Approval"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.pool.Exec(ctx, `
-		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 day' WHERE tmdb_id = 3;
-		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 hour' WHERE tmdb_id = 4;
-		UPDATE titles SET schedule_at = now() - interval '8 days' WHERE tmdb_id = 5;
-		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '7 days' WHERE tmdb_id = 6;
-		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '60 days' WHERE tmdb_id = 7;
-		UPDATE titles SET schedule_error = 'TVmaze did not answer: HTTP 503' WHERE tmdb_id = 10;
-		UPDATE titles SET monitored = true WHERE tmdb_id = 11;`); err != nil {
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 day' WHERE tmdb_id = 990863;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 hour' WHERE tmdb_id = 990864;
+		UPDATE titles SET schedule_at = now() - interval '8 days' WHERE tmdb_id = 990865;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '7 days' WHERE tmdb_id = 990866;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '60 days' WHERE tmdb_id = 990867;
+		UPDATE titles SET schedule_error = 'TVmaze did not answer: HTTP 503' WHERE tmdb_id = 990870;
+		UPDATE titles SET monitored = true WHERE tmdb_id = 990871;`); err != nil {
 		t.Fatal(err)
 	}
 	season, ep := 1, 1
-	if err := s.UpsertTarget(ctx, Target{ID: TargetID("series:2", &season, &ep), TitleID: "series:2", Kind: "episode",
+	if err := s.UpsertTarget(ctx, Target{ID: TargetID("series:990862", &season, &ep), TitleID: "series:990862", Kind: "episode",
 		SeasonNumber: &season, EpisodeNumber: &ep, Monitored: true, State: TargetWanted}); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.SetAirWindow(ctx, TargetID("series:2", &season, &ep), day(2), 0)
+	_ = s.SetAirWindow(ctx, TargetID("series:990862", &season, &ep), day(2), 0)
 	every := ScheduleEvery{Running: 5*time.Hour + 30*time.Minute, Unknown: 7 * 24 * time.Hour, Other: 30 * 24 * time.Hour}
 	names := func(failed bool) []string {
 		t.Helper()
