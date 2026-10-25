@@ -1327,3 +1327,35 @@ func TestLegacyStatus(t *testing.T) {
 		}
 	}
 }
+
+// A requested movie the library held, then lost — its item removed — is
+// wanted again, held once: not one of the new things, so not grabbed on its
+// own with only those grabbed so.
+func TestARequestedMovieHeldOnceIsNotNewAgain(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+				"release_dates": []map[string]any{{"type": 4, "release_date": day(-20).Format(time.RFC3339)}}}}}}
+	})
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("admin")); err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	if _, err := r.svc.st.ApplyMovieHolding(ctx, "movie:990100", "", "default", &store.HeldEpisode{ItemID: "item-9", Playable: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.OnItemRemoved(ctx, "item-9"); err != nil {
+		t.Fatal(err)
+	}
+	tg, _ := r.svc.st.TargetAt(ctx, "movie:990100", nil, nil)
+	title, _ := r.svc.st.TitleByID(ctx, "movie:990100")
+	pol := SearchSettings{AutoGrabNew: true, AirDelayHours: 30}
+	if tg.State != store.TargetWanted || !tg.EverHeld || pol.Grabs(title, tg, time.Now()) {
+		t.Errorf("a movie held once: %+v, grabbed on its own %v", tg, pol.Grabs(title, tg, time.Now()))
+	}
+	if !(SearchSettings{AutoGrab: true}).Grabs(title, tg, time.Now()) {
+		t.Error("with everything grabbed on its own, it is not")
+	}
+}
