@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -245,5 +247,89 @@ func TestMigrate043OverA060Install(t *testing.T) {
 	}
 	if tg, _ := s.GetTarget(ctx, "series:990882:s01e001"); tg.AirStamp == nil || tg.ScheduleHold != "" || tg.AirStampEstimated {
 		t.Errorf("the episode: %+v", tg)
+	}
+}
+
+// 042 over a database where requests follow one title more than once —
+// asked at once before the index —: one keeps following it, the approved one
+// else the newest, the others follow none, and the index is made; a second
+// boot changes nothing. Requests that follow nothing are left as they are.
+func TestMigrate042OverRequestsMadeTwice(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	if err := migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP INDEX IF EXISTS wanted_follow_uq;
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, title_id, approval, requested_at) VALUES
+		  ('w_a', 990001, 'series', 'A', 'following', 'series:990001', 'awaiting', now() - interval '3 days'),
+		  ('w_b', 990001, 'tv',     'A', 'following', 'series:990001', 'approved', now() - interval '2 days'),
+		  ('w_c', 990001, 'series', 'A', 'following', 'series:990001', 'declined', now() - interval '1 day'),
+		  ('w_d', 990002, 'movie',  'B', 'pending',   'movie:990002',  'awaiting', now() - interval '2 days'),
+		  ('w_e', 990002, 'movie',  'B', 'pending',   'movie:990002',  'awaiting', now() - interval '2 days'),
+		  ('w_f', 990003, 'movie',  'C', 'failed',    '',              '',         now()),
+		  ('w_g', 990003, 'movie',  'C', 'failed',    '',              '',         now()),
+		  ('w_h', NULL,   'movie',  'D', 'pending',   '',              '',         now());`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := migrate(ctx, pool); err != nil {
+			t.Fatalf("boot %d over requests made twice: %v", i+1, err)
+		}
+	}
+	rows, err := pool.Query(ctx, `SELECT id, approval FROM wanted_items WHERE title_id <> '' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked := map[string]string{}
+	for rows.Next() {
+		var id, approval string
+		_ = rows.Scan(&id, &approval)
+		linked[id] = approval
+	}
+	rows.Close()
+	var idx, all int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE indexname = 'wanted_follow_uq' AND schemaname = current_schema()`).Scan(&idx)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM wanted_items`).Scan(&all)
+	if len(linked) != 2 || linked["w_b"] != ApprovalApproved || linked["w_e"] != ApprovalAwaiting || idx != 1 || all != 8 {
+		t.Errorf("following after: %v (index %d, %d requests)", linked, idx, all)
+	}
+}
+
+// Of an approval and a decline at once, one is taken and the other refused,
+// round after round.
+func TestOneDecisionAtOnce(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	for round := 0; round < 20; round++ {
+		id := "w_race"
+		if _, err := s.pool.Exec(ctx, `DELETE FROM wanted_items WHERE id = $1;`, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.pool.Exec(ctx, `INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, title_id, approval)
+			VALUES ($1, 990009, 'series', 'X', 'following', 'series:990009', 'awaiting')`, id); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i, to := range []string{ApprovalApproved, ApprovalDeclined} {
+			wg.Add(1)
+			go func(i int, to string) {
+				defer wg.Done()
+				errs[i] = s.DecideWanted(ctx, id, ApprovalAwaiting, to, "admin")
+			}(i, to)
+		}
+		wg.Wait()
+		taken := 0
+		for _, err := range errs {
+			if err == nil {
+				taken++
+			} else if !errors.Is(err, ErrDecided) {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		if taken != 1 {
+			t.Fatalf("round %d: %d decisions taken (%v)", round, taken, errs)
+		}
 	}
 }
