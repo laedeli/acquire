@@ -290,7 +290,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.0/acquire-0.6.0.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.1/acquire-0.6.1.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -502,6 +502,40 @@ schedules are registered: `inventory-refresh` (every six hours) and
   — a movie in cinemas only, an anime, a daily show — too.
   Migration `042` only adds, so nothing is lost; 0.5.x leaves the new columns
   and the `rss_cursors` table alone.
+
+**To 0.6.1.** Nothing to set; both grab switches can stay as they are.
+Migration `043` only adds columns. Exact air times are read by new rules:
+
+- **An episode moved.** When TVmaze dates an episode more than a day after
+  TMDB — TMDB has not caught up with a move —, it is told by TVmaze's day and
+  hour, for what is refused as published too early and for when it is
+  grabbed; when TVmaze dates it more than a day earlier, by TMDB's, the later.
+  An episode the two date days apart and cannot tell the same is held — not
+  grabbed on its own, saying so — until they agree. TMDB moving an episode
+  holds it until TVmaze is read again, at once.
+- **A broadcast without an hour.** An episode TVmaze does not list, or dates
+  to the day alone, is told by the usual hour of its season's broadcasts (else
+  the show's schedule); without one, a recent one is held until it has an air
+  time.
+- **TVmaze refusing.** A `403` — any 4xx but `404` — counts as TVmaze not
+  answering: the series stays unread and is tried again, and grabbing on its
+  own cannot be switched on past it without confirming. An answer that cannot
+  be read leaves its series unread too. Settings → search and grab warns when
+  more than a third of the series that run are not known to TVmaze.
+- **Streamed from the United States.** An episode dated to the day alone is
+  taken from 21:00 in New York the evening before, not from 03:00 on the day.
+
+Every series read by 0.6.0 counts as not read by these rules until it is read
+again, and nothing of it is grabbed on its own until then. acquire makes a
+run two minutes after it starts, whenever the schedule comes round next: it
+reads what TMDB has due, then the air times of every series that runs — one
+call each, their TVmaze ids known, about 8 minutes for 800 series —, and the
+ones that ended over the next runs, at most 2,000 calls a run. Settings →
+search and grab says how many series that run are not read yet. A schedule an
+upgrade adds is due at once — the clock runs it on its next tick, within ten
+seconds, and every interval after —, one already there keeps its time:
+0.6.1 adds none, so its first run of `inventory-refresh` is the one two
+minutes after the start, and the schedule's own runs come round as before.
 
 ### Moving an existing deployment to the chart
 
