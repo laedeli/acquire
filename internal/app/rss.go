@@ -38,6 +38,11 @@ import (
 //
 // A source that fails or limits backs off as it does for any search (its
 // health) and never fails the run; the others are read.
+//
+// A read spends a query of the source's daily allowance, so no feed is read
+// while nothing could be grabbed — every download slot taken, no room for a
+// download, the gateway out of reach —, and the feeds leave rssReserve of a
+// source's daily limit to the sweep and to people's searches.
 
 const (
 	// rssPage is how many releases one read of a feed asks for, and
@@ -47,20 +52,38 @@ const (
 	rssPages = 3
 	// rssRunTime bounds one run, its reads and its grabs.
 	rssRunTime = 15 * time.Minute
+	// rssReserve is the part of a source's daily query limit, in percent,
+	// the feeds leave to the sweep and to people's searches.
+	rssReserve = 30
 )
+
+// rssLimit is the part of a source's daily query limit the feeds may spend:
+// all but rssReserve; nil, no limit, for a source without one.
+func rssLimit(limit *int) *int {
+	if limit == nil {
+		return nil
+	}
+	n := *limit * (100 - rssReserve) / 100
+	return &n
+}
 
 // RSSRun is what one run read, matched and grabbed.
 type RSSRun struct {
-	Feeds   int `json:"feeds"`
-	Failed  int `json:"failed"`
+	Feeds  int `json:"feeds"`
+	Failed int `json:"failed"`
+	// Limited are the feeds not read as their source spent the part of its
+	// daily limit the feeds may spend.
+	Limited int `json:"limited"`
 	Read    int `json:"read"`
 	New     int `json:"new"`
 	Matched int `json:"matched"`
 	Grabbed int `json:"grabbed"`
 	// Stopped is why grabbing stopped for the rest of the run (no slot, no
-	// room, no client); Halted why the run stopped (the gateway).
+	// room, no client); Halted why the run stopped (the gateway); Skipped why
+	// no feed was read at all, as nothing could be grabbed.
 	Stopped string `json:"stopped,omitempty"`
 	Halted  string `json:"halted,omitempty"`
+	Skipped string `json:"skipped,omitempty"`
 }
 
 func (s *Service) wakeRSS() {
@@ -132,6 +155,12 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 	if err != nil || (episodes == 0 && movies == 0) {
 		return run, err
 	}
+	if why := s.cannotGrabNow(ctx); why != "" {
+		run.Skipped = why
+		s.noteRSSSkipped(why)
+		return run, nil
+	}
+	s.noteRSSSkipped("")
 	f, err := s.loadFleet(ctx, nil)
 	if err != nil {
 		return run, err
@@ -147,7 +176,11 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 			run.Feeds++
 			items, read, err := s.readFeed(ctx, f, src, fd)
 			run.Read += read
-			if err != nil {
+			switch {
+			case errors.Is(err, errQueryLimit):
+				run.Limited++
+				continue
+			case err != nil:
 				run.Failed++
 				continue
 			}
@@ -165,8 +198,9 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 		if run.Feeds == 0 {
 			return
 		}
-		line := fmt.Sprintf("acquire rss-sync: %d feed(s) read (%d failed), %d release(s), %d new, %d matched to what is wanted, %d grabbed",
-			run.Feeds, run.Failed, run.Read, run.New, run.Matched, run.Grabbed)
+		line := fmt.Sprintf("acquire rss-sync: %d feed(s) read (%d failed, %d left for today: their source keeps the rest of its daily limit for the sweep and searches), "+
+			"%d release(s), %d new, %d matched to what is wanted, %d grabbed",
+			run.Feeds, run.Failed, run.Limited, run.Read, run.New, run.Matched, run.Grabbed)
 		if run.Stopped != "" {
 			line += "; stopped grabbing: " + run.Stopped
 		}
@@ -188,6 +222,52 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 	groups := s.matchFresh(ctx, m, pol, fresh, &run)
 	s.grabMatched(ctx, pol, groups, &run)
 	return run, nil
+}
+
+// cannotGrabNow says why no grab could be handed over now, or "": every
+// download slot is taken, the gateway is out of reach, or no download client
+// has room for a download.
+func (s *Service) cannotGrabNow(ctx context.Context) string {
+	if full, why := s.slotsFull(ctx); full {
+		return why
+	}
+	if st := s.syncStatus(ctx); st.Configured && st.Checked && !st.Reachable {
+		return "the gateway does not answer: " + st.LastError
+	}
+	routes := s.clientRoutes(ctx)
+	why := "no download client is enabled"
+	for _, p := range []string{"usenet", "torrent"} {
+		id, ok := routes[p]
+		if !ok {
+			continue
+		}
+		c, err := s.resolveClient(ctx, id, p)
+		if err == nil {
+			// The smallest grab there is: the floor, and the headroom any
+			// grab keeps.
+			err = s.AdmitGrab(ctx, c, 1, p)
+		}
+		if err == nil {
+			return ""
+		}
+		why = err.Error()
+	}
+	return why
+}
+
+// noteRSSSkipped logs why rss-sync reads nothing, once while the reason
+// lasts, and once when it reads again.
+func (s *Service) noteRSSSkipped(why string) {
+	s.rssMu.Lock()
+	prev := s.rssSkipped
+	s.rssSkipped = why
+	s.rssMu.Unlock()
+	switch {
+	case why != "" && why != prev:
+		log.Printf("acquire rss-sync: no feed read while nothing can be grabbed: %s", why)
+	case why == "" && prev != "":
+		log.Print("acquire rss-sync: grabs can be handed over again; the feeds are read")
+	}
 }
 
 // releaseKey is what tells two releases of a feed apart: its guid, else its
@@ -222,7 +302,7 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 		if err != nil {
 			return nil, read, err
 		}
-		items, err := s.ask(ctx, src, f.limits[src.ID], s.timing.typedPerSource, indexer.Query{
+		items, err := s.ask(ctx, src, rssLimit(f.limits[src.ID]), s.timing.typedPerSource, indexer.Query{
 			Kind: fd.kind, Media: fd.media, Cats: src.FeedCategories(fd.media), Limit: page, Offset: p * page,
 			// The identities and categories of each release: a newznab
 			// source names them only when asked.

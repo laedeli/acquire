@@ -188,6 +188,8 @@ type fakeGateway struct {
 	// jobs is what GET /api/v1/downloads lists; cancels what was cancelled.
 	jobs    []gateway.Job
 	cancels []string
+	// down answers every request 503, as a gateway out of service.
+	down bool
 }
 
 func (g *fakeGateway) added() []map[string]any {
@@ -200,6 +202,10 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
+		if g.down {
+			http.Error(w, `{"error":"out of service"}`, http.StatusServiceUnavailable)
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/downloads":
 			var body map[string]any

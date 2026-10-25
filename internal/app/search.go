@@ -57,6 +57,9 @@ var (
 	errGrabLimit = errors.New("daily release download limit reached")
 	// errStaleRelease: a search result sealed by an earlier process, or too old.
 	errStaleRelease = errors.New("this search result is no longer valid — search again")
+	// errQueryLimit: a source has no queries left today, of the part of its
+	// allowance the asker may spend.
+	errQueryLimit = errors.New("daily query limit reached")
 )
 
 // Candidate is one release offered by a search, already scored by the active
@@ -229,7 +232,7 @@ func (s *Service) ask(ctx context.Context, src indexer.Source, limit *int, perSo
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("%s: daily query limit reached", src.Name)
+		return nil, fmt.Errorf("%s: %w", src.Name, errQueryLimit)
 	}
 	cctx, cancel := context.WithTimeout(ctx, perSource)
 	items, err := s.ixc.Search(cctx, src, q)

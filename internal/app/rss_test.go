@@ -506,6 +506,83 @@ func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
 	}
 }
 
+// No feed is read while nothing could be grabbed — every download slot
+// taken, the gateway out of reach, no room for a download —: a read spends a
+// query of the source's daily allowance and moves its cursor past what it
+// matched. Once a grab can be handed over the feeds are read, and what turned
+// up meanwhile is grabbed. The feeds leave 30 % of a source's daily limit to
+// the sweep and to people's searches.
+func TestTheFeedsAreNotReadWhileNothingCanBeGrabbed(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	for _, e := range eps {
+		_ = r.svc.st.SetAirWindow(ctx, e.ID, day(-1), 0)
+	}
+	feedSrc := newFeedSource(t, true, tv("Show.Name.S01E01.1080p.WEB.h264-GRP", ago(time.Hour)))
+	res := addFeed(t, r.svc, "feed", feedSrc)
+	save := func(floor int64) {
+		t.Helper()
+		if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 1, AutoGrabNew: true,
+			StorageFloorGB: floor}, 0, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(0)
+	skipped := func(want string) {
+		t.Helper()
+		run, err := r.svc.SyncRSS(ctx)
+		if err != nil || !strings.Contains(run.Skipped, want) || run.Feeds != 0 || len(feedSrc.reads()) != 0 {
+			t.Errorf("%s: %+v %v (reads %d)", want, run, err, len(feedSrc.reads()))
+		}
+	}
+	sqlExec(t, `INSERT INTO downloads (adapter, client_job_id, state, title) VALUES ('nzbget', 'job-1', 'downloading', 'other')`)
+	skipped("1 download(s) already in flight (cap 1)")
+	sqlExec(t, `UPDATE downloads SET state = 'completed'`)
+
+	r.gw.mu.Lock()
+	r.gw.down = true
+	r.gw.mu.Unlock()
+	_ = r.svc.sync.Check(ctx)
+	skipped("the gateway does not answer")
+	r.gw.mu.Lock()
+	r.gw.down = false
+	r.gw.mu.Unlock()
+	_ = r.svc.sync.Check(ctx)
+
+	r.svc.freeSpace = func(string) (int64, error) { return 10 << 30, nil }
+	save(5)
+	skipped("but only 10.0 GB free")
+	save(100)
+	skipped("below the 100.0 GB floor")
+	save(0)
+	r.svc.freeSpace = func(string) (int64, error) { return 1 << 40, nil }
+
+	run, err := r.svc.SyncRSS(ctx)
+	if err != nil || run.Grabbed != 1 || len(feedSrc.reads()) != 1 {
+		t.Fatalf("once a grab can be handed over: %+v %v (reads %d)", run, err, len(feedSrc.reads()))
+	}
+
+	// A daily limit of three: the feeds spend two, the third is the
+	// sweep's.
+	three := 3
+	if _, err := r.svc.UpdateSource(ctx, res.ID, SourceInput{Name: "feed", Protocol: "usenet", BaseURL: feedSrc.srv.URL,
+		QueryLimitDay: OptionalInt{Set: true, Value: &three}}, 0, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	sqlExec(t, `UPDATE downloads SET state = 'completed'`)
+	sqlExec(t, `UPDATE target_grabs SET state = 'failed'`)
+	sqlExec(t, `UPDATE indexer_usage SET queries = 1 WHERE indexer_id = $1`, res.ID)
+	feedSrc.add(tv("Show.Name.S01E02.1080p.WEB.h264-GRP", ago(time.Minute)))
+	if run, _ := r.svc.SyncRSS(ctx); run.Limited != 0 || len(feedSrc.reads()) != 2 {
+		t.Errorf("the second read of the day: %+v (reads %d)", run, len(feedSrc.reads()))
+	}
+	sqlExec(t, `UPDATE target_grabs SET state = 'failed'`)
+	if run, _ := r.svc.SyncRSS(ctx); run.Limited != 1 || run.Failed != 0 || len(feedSrc.reads()) != 2 {
+		t.Errorf("the third, the sweep's: %+v (reads %d)", run, len(feedSrc.reads()))
+	}
+}
+
 // A source that fails backs off as for any search and fails nothing: the
 // others are read and grabbed from, and the next run leaves it alone while
 // it backs off. Its cursor stays where it was.

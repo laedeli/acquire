@@ -84,12 +84,14 @@ type Service struct {
 	// TMDB read for what acquire tracks (inventory.go): the worker's
 	// wake-up, whether a scheduled run is asked for, and the titles a
 	// request follows that are read first. The sources' newest releases
-	// (rss.go): their worker's wake-up.
+	// (rss.go): their worker's wake-up, and why the last run read nothing.
 	inventoryWake chan struct{}
 	inventoryMu   sync.Mutex
 	inventoryRun  bool
 	inventoryIDs  map[string]bool
 	rssWake       chan struct{}
+	rssMu         sync.Mutex
+	rssSkipped    string
 	// inventoryBudget is the TMDB calls one run of the refresh starts titles
 	// with (inventory.go).
 	inventoryBudget int

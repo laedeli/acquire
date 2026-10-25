@@ -436,12 +436,17 @@ fifteen minutes) — see [schedules](./acquire.md#schedules).
   themselves, switch it on in settings → search and grab; the old backlog
   stays with **everything missing** (`search.autoGrab`), which keeps its
   meaning.
-- **The sources' allowance.** With a switch on, every source is read once or
-  twice every fifteen minutes (its TV and movie feeds, only while something
-  of the kind can be grabbed), and up to three pages when a feed moved
-  further than a page since its last read: a hundred to two hundred queries
-  a day per source. Set a source's queries per day if its allowance is
-  tighter: a source at its limit is not asked.
+- **The sources' allowance.** With a switch on, every source is read every
+  fifteen minutes — its TV feed and its movie feed, each only while
+  something of its kind can be grabbed, or one search over both for a source
+  that offers neither —: one query a feed, up to three when a feed moved
+  further than a page since its last read. That is 96 queries a day per
+  source and feed (192 with both), and at most three times that on a day
+  busy enough that every read needs three pages. No feed is read while
+  nothing could be grabbed: every download slot taken, no room for a
+  download, the gateway out of reach. Set a source's queries per day if its
+  allowance is tighter: the feeds stop at 70 % of it and leave the rest to
+  the sweep and to your searches, and a source at its limit is not asked.
 - **TMDB.** The first runs read every tracked series once — a few thousand
   calls for a large library, at most 300 a run, so it takes a few days —;
   after that a run reads only what runs, the ended series weekly. It needs
