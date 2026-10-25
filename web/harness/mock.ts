@@ -11,6 +11,7 @@ import {
   type MissingAnswer,
   type MissingRow,
   type QualityProfile,
+  type RequestSettings,
   type SearchSettings,
   type SeriesRow,
   type SubtitleCandidate,
@@ -174,6 +175,7 @@ export function mockApi(scenario: Scenario): Api {
         autoGrab: false,
         autoGrabNew: scenario === 'backlog',
         newWithinDays: 14,
+        airDelayHours: 30,
       }
       return pause(answer, 120)
     },
@@ -456,7 +458,9 @@ export function mockSubtitlesApi(scenario: SubtitleScenario, chinese: SubtitleCh
     // the rest of the settings view, so it renders whole
     searchSettings: async () =>
       pause<SearchSettings>({ preferProtocol: 'usenet', storageFloorGb: 50, maxConcurrentGrabs: 3, autoGrab: false,
-        autoGrabNew: true, newWithinDays: 14, revision: 1 }),
+        autoGrabNew: true, newWithinDays: 14, airDelayHours: 30, revision: 1 }),
+    requestSettings: async () => pause<RequestSettings>({ autoApprove: false, revision: 1 }),
+    saveRequestSettings: async (s: RequestSettings) => pause({ ...s, revision: s.revision + 1 }),
     profiles: async () =>
       pause<QualityProfile[]>([{ id: 'standard', name: 'standard', isDefault: true, config: { preferProtocol: 'usenet',
         resolutions: ['1080p', '720p'], preferredCodecs: ['h264', 'hevc'], rejectTerms: [], minSizeMb: 0, maxSizeMb: 0, minSeeders: 1,

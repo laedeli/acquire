@@ -37,6 +37,7 @@ export function statusTone(s: string): Tone {
     case 'completed':
       return 'green'
     case 'failed':
+    case 'awaiting':
       return 'amber'
     case 'downloading':
     case 'packaging':

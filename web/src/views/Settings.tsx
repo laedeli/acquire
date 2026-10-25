@@ -12,6 +12,7 @@ import {
   ApiError,
   type Api,
   type QualityProfile,
+  type RequestSettings,
   type SearchSettings,
   type SubtitleOverview,
   type SubtitleSettings,
@@ -23,6 +24,7 @@ export function Settings({ api, admin }: { api: Api; admin: boolean }) {
   return (
     <div className="acq__settings-stack">
       {admin && <SearchAndGrab api={api} />}
+      {admin && <Requests api={api} />}
       {admin && <Subtitles api={api} />}
       <QualityProfileSettings api={api} admin={admin} />
     </div>
@@ -116,7 +118,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="new episodes and requests"
           error={fields.autoGrabNew}
-          hint={`on: an episode that aired in the last ${newDays(draft)} days, the episodes of a series someone requested, and a requested movie once it is out are grabbed as soon as a release turns up — in a source's newest releases, or when the backlog sweep finds one. off: they wait in the missing tab like the rest.`}
+          hint={`on: an episode that aired in the last ${newDays(draft)} days, the episodes of a series someone requested, and a requested movie once it is out are grabbed once the wait after the air date has passed and a release turns up — in a source's newest releases, or when the backlog sweep finds one; a request that awaits an admin's approval waits for it. off: they wait in the missing tab like the rest.`}
         >
           <Switch
             checked={draft.autoGrabNew}
@@ -131,6 +133,17 @@ function SearchAndGrab({ api }: { api: Api }) {
             onChange={(e) => setDraft({ ...draft, newWithinDays: Number(e.currentTarget.value) || 0 })}
           />
         </Field>
+        <Field
+          label="wait after the air date (hours)"
+          error={fields.airDelayHours}
+          hint="TMDB dates the day an episode airs, not the hour: an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out —, so the broadcast has happened. A release published before the air date is taken for a fake and blocked for the episode. 0: from the air date on."
+        >
+          <Input
+            type="number"
+            value={String(draft.airDelayHours)}
+            onChange={(e) => setDraft({ ...draft, airDelayHours: Number(e.currentTarget.value) || 0 })}
+          />
+        </Field>
       </div>
       <Field
         label="everything missing"
@@ -141,6 +154,71 @@ function SearchAndGrab({ api }: { api: Api }) {
           checked={draft.autoGrab}
           onChange={(e) => setDraft({ ...draft, autoGrab: e.currentTarget.checked })}
           label={draft.autoGrab ? 'grabbed on its own' : 'only searched'}
+        />
+      </Field>
+      <Divider />
+    </div>
+  )
+}
+
+/**
+ * How requests are taken: approved at once whoever makes them, or — the
+ * default — awaiting an admin's approval when someone who is not an admin
+ * makes one.
+ */
+function Requests({ api }: { api: Api }) {
+  const [draft, setDraft] = useState<RequestSettings | null>(null)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    api
+      .requestSettings()
+      .then(setDraft)
+      .catch((e) => setError(String(e.message || e)))
+  }, [api])
+
+  if (error && !draft) return <Text variant="muted">{error}</Text>
+  if (!draft) return null
+
+  async function save() {
+    if (!draft) return
+    setSaving(true)
+    setError('')
+    try {
+      setDraft(await api.saveRequestSettings(draft))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      setError(String((e as Error).message || e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="acq__settings">
+      <div className="acq__settings-head">
+        <div>
+          <span className="acq__mono">requests</span>
+          <Text variant="muted" as="div">
+            whether a request from someone who is not an admin is approved at once.
+          </Text>
+        </div>
+        <Button variant="primary" loading={saving} leading={<Save size={14} />} onClick={() => void save()}>
+          {saved ? 'saved' : 'save'}
+        </Button>
+      </div>
+      {error && <Text variant="muted">{error}</Text>}
+      <Field
+        label="approve requests"
+        hint="on: anyone's request is approved at once, and what it asks for is grabbed as the search and grab settings say. off: a request from someone who is not an admin awaits an admin's approval in the requests tab — its title is followed meanwhile, nothing of it searched or grabbed on its own. An admin's own request is always approved at once; turning this on does not approve the requests already waiting."
+      >
+        <Switch
+          checked={draft.autoApprove}
+          onChange={(e) => setDraft({ ...draft, autoApprove: e.currentTarget.checked })}
+          label={draft.autoApprove ? 'approved at once' : 'an admin approves each'}
         />
       </Field>
       <Divider />

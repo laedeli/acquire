@@ -6,10 +6,12 @@
 // holds and what comes next, and its episodes are grabbed one by one — on
 // their own, or from the missing tab —, never the series as a whole. A
 // request for a movie waits for the movie to come out, and its grab is the
-// movie's.
+// movie's. A request from someone who is not an admin may await an admin's
+// approval: its title is followed meanwhile, nothing of it searched or
+// grabbed on its own, and an admin approves or declines it here.
 import { useState } from 'react'
 import { Button, Table, Text, type TableColumn } from '@nalet/design-system'
-import { Download as DownloadIcon, Link2, Search, Trash2 } from 'lucide-react'
+import { Check, Download as DownloadIcon, Link2, Search, Trash2, X } from 'lucide-react'
 import type { Api, Download, Wanted } from '../lib/api'
 import { ProgressBar, StatusBadge, TelemetryLine } from '../components/Bits'
 import { ReleasePicker } from '../components/ReleasePicker'
@@ -20,14 +22,15 @@ const followsSeries = (w: Wanted) => w.progress?.kind === 'series'
 
 /** What a request that follows its title says of what is grabbed on its own. */
 function onItsOwn(w: Wanted): string {
-  if (!w.progress || w.status === 'fulfilled') return ''
+  if (!w.progress || w.status === 'fulfilled' || w.approval === 'declined') return ''
+  if (w.approval === 'awaiting') return 'an admin approves or declines it in the requests tab'
   if (w.progress.kind === 'series')
     return w.autoGrab
-      ? 'new episodes are grabbed on their own as releases turn up'
+      ? 'new episodes are grabbed on their own after they air, as releases turn up'
       : 'its episodes are grabbed from the missing tab — grabbing on its own is off in settings'
   if (w.status === 'waiting' || w.status === 'pending')
     return w.autoGrab
-      ? 'grabbed on its own once a release turns up'
+      ? 'grabbed on its own once it is out and a release turns up'
       : 'grabbed from here or the missing tab — grabbing on its own is off in settings'
   return ''
 }
@@ -120,6 +123,28 @@ export function Requests({
         const grabbable = (w.status === 'pending' || w.status === 'failed') && !followsSeries(w)
         return (
           <div className="acq__actions">
+            {(w.approval === 'awaiting' || w.approval === 'declined') && (
+              <Button
+                size="sm"
+                variant="primary"
+                loading={busy === w.id + ':approve'}
+                leading={<Check size={14} />}
+                onClick={() => void act(w.id + ':approve', () => api.approve(w.id))}
+              >
+                approve
+              </Button>
+            )}
+            {w.approval === 'awaiting' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={busy === w.id + ':decline'}
+                leading={<X size={14} />}
+                onClick={() => void act(w.id + ':decline', () => api.decline(w.id))}
+              >
+                decline
+              </Button>
+            )}
             {grabbable && autoGrab && (
               <>
                 <Button

@@ -18,15 +18,18 @@ export interface Wanted {
   posterUrl: string
   requestedBy: string
   requestedAt: string
-  /** For a request that follows its title: following, waiting, pending, downloading, packaging, fulfilled, failed. */
+  /** For a request that follows its title: following, waiting, pending, downloading, packaging, fulfilled, failed, awaiting (an admin's approval), declined. */
   status: string
   detail: string
   itemId: string
   updatedAt: string
   /** The title the request follows: a series' episodes or a movie acquire tracks because it was asked for. */
   titleId?: string
+  /** An admin's word on a request that follows its title; none for one that follows nothing. */
+  approval?: 'awaiting' | 'approved' | 'declined'
+  decidedAt?: string
   progress?: RequestProgress
-  /** Whether what the request waits for is grabbed on its own, as the search and grab settings say. */
+  /** Whether what the request waits for is grabbed on its own: the search and grab settings, and the request approved. */
   autoGrab?: boolean
 }
 
@@ -49,7 +52,7 @@ export interface RequestProgress {
   unaired: number
   next?: { season: number; episode: number; title?: string; airDate: string }
   /** A movie's one target: its state, and the grab under way for it (grabId). */
-  movie?: { state: string; grabId?: string; windowAt?: string; releaseKind?: string; releasePending?: boolean }
+  movie?: { state: string; grabId?: string; windowAt?: string; airDate?: string; releaseKind?: string; releasePending?: boolean }
 }
 
 export interface Download {
@@ -112,6 +115,8 @@ export interface Candidate {
   /** For a target's search: the episodes the release holds (S04E07, S04E07-E08, S01) and whether it is a season pack. */
   covers?: string
   pack?: boolean
+  /** When the source says it published the release. */
+  pubDate?: string
 }
 
 /** A search's answer: what arrived, and which sources did not answer. */
@@ -335,8 +340,16 @@ export interface SearchSettings {
   /** The new things are grabbed on their own: what aired in the last newWithinDays days, and what was requested. */
   autoGrabNew: boolean
   newWithinDays: number
+  /** How long an automatic grab waits after an air date (00:00 UTC of the day TMDB dates); 0: from the air date on. */
+  airDelayHours: number
   revision: number
   updatedAt?: string
+}
+
+/** How requests are taken: autoApprove approves anyone's request at once; off, one from someone who is not an admin awaits an admin's approval. */
+export interface RequestSettings {
+  autoApprove: boolean
+  revision: number
 }
 
 export interface SetupSection {
@@ -411,6 +424,9 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
         }),
       }),
     remove: (id: string) => call<void>('wanted/' + encodeURIComponent(id), { method: 'DELETE' }),
+    /** An admin's word on a request that follows its title. */
+    approve: (id: string) => call<Wanted>('wanted/' + encodeURIComponent(id) + '/approve', { method: 'POST' }),
+    decline: (id: string) => call<Wanted>('wanted/' + encodeURIComponent(id) + '/decline', { method: 'POST' }),
     autograb: (id: string) =>
       call<unknown>('wanted/' + encodeURIComponent(id) + '/autograb', { method: 'POST' }),
     // No client named: the server routes by what the source turns out to be.
@@ -493,8 +509,8 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
       call<SearchSettings>('settings/search', {
         method: 'PUT',
         headers: ifMatch(s.revision),
-        // The server replaces the whole document: every field goes, or the
-        // ones left out read as their defaults.
+        // The server reads the document over the policy stored: every field
+        // the console edits goes.
         body: JSON.stringify({
           preferProtocol: s.preferProtocol,
           storageFloorGb: s.storageFloorGb,
@@ -502,7 +518,15 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
           autoGrab: s.autoGrab,
           autoGrabNew: s.autoGrabNew,
           newWithinDays: s.newWithinDays,
+          airDelayHours: s.airDelayHours,
         }),
+      }),
+    requestSettings: () => call<RequestSettings>('settings/requests'),
+    saveRequestSettings: (s: RequestSettings) =>
+      call<RequestSettings>('settings/requests', {
+        method: 'PUT',
+        headers: ifMatch(s.revision),
+        body: JSON.stringify({ autoApprove: s.autoApprove }),
       }),
     // The WANT model's read side. `missing` is the backlog: monitored, aired,
     // not held, of titles whose holdings are known — including rows in search
@@ -579,6 +603,8 @@ export type MissingAnswer = {
   /** Whether the new things are grabbed on their own (search.autoGrabNew): aired in the last newWithinDays days, or requested. */
   autoGrabNew: boolean
   newWithinDays: number
+  /** How long an automatic grab waits after an air date (search.airDelayHours). */
+  airDelayHours?: number
 }
 
 // MissingRow is one thing we want and do not have, and what is under way for it.
