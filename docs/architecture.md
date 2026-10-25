@@ -172,6 +172,7 @@ flowchart TB
         DC["download clients<br/><i>NZBGet · qBittorrent · oDownloader</i>"]
         OS["OpenSubtitles.com<br/><i>the deployment's account</i>"]
         TM["TMDB<br/><i>the deployment's key</i>"]
+        TVM["TVmaze<br/><i>public schedule, no key</i>"]
     end
     subgraph coreapp["zaentrum core"]
         POR["portal-api<br/><i>addon install · components · setup checklist · proxy</i>"]
@@ -186,6 +187,7 @@ flowchart TB
     ACQ --> DB
     ACQ -->|"search · newest releases · fetch release files"| SRC
     ACQ -->|"discover · a request's episodes and release dates, read again"| TM
+    ACQ -->|"air times, by a series' TVDB or IMDb id"| TVM
     ACQ -->|"push clients · add downloads"| GW
     GW --> DC
     GW --> MDC

@@ -127,18 +127,20 @@ movie categories — 5000 and 2000 when it names none —, or `t=search` over th
 for a source whose caps offer neither, a hundred at a time (the source's
 maximum page size, when its caps name a smaller one), with `extended=1`: a
 newznab source names a release's identities and categories only then. A
-cursor per source and feed — the releases looked at, by their guid — makes
-each release looked at once, however the source dates it; a feed that moved
-further than a page since its last read is read back with `offset`, up to
-three pages. Each read is a query against the source's daily allowance — the
-feeds spend at most 70 % of a source's daily query limit, the rest is the
-sweep's and yours — and goes through the same health rules: a source that
-fails or limits backs off, and the others are read. Nothing is read while
-nothing is grabbed on its own or nothing could be grabbed now (every download
-slot taken, no room, the gateway out of reach), nor a feed of a kind nothing
-could be grabbed for now. A release read there is matched by name — the title
-or an alias, the episodes it holds or a movie's year, then tags only — as the
-kind the feed files it under, and the `tvdbid`, `tmdbid` and, of a movie,
+cursor per source and feed — the releases looked at, by their guid, the last
+thousand acquire saw, by its own clock — makes each release looked at once,
+however the source dates it; a feed that moved further than a page since its
+last read is read back with `offset`, up to three pages. Each read is a query
+against the source's daily allowance — the feeds spend at most 70 % of a
+source's daily query limit, the rest is the sweep's and yours — and goes
+through the same health rules: a source that fails or limits backs off, and
+the others are read. Nothing is read while nothing is grabbed on its own or
+nothing could be grabbed now (every download slot taken, no room, the gateway
+out of reach), nor a feed of a kind nothing could be grabbed for now, nor a
+source that has used its release downloads for today. A release read there is
+matched by name — the title or an alias, the episodes it holds or a movie's
+year, then tags only, an edition named as one — as the kind the feed files it
+under, and the `tvdbid`, `tmdbid` and, of a movie,
 `imdbid` (or `imdb`) attributes a feed carries reject a match they
 contradict; what matches is ranked and grabbed as a typed search's result is
 (see [the newest releases](./acquire.md#the-sources-newest-releases)).

@@ -52,7 +52,7 @@ flowchart LR
 | **Understand how it fits together** (seams, events, the whole loop) | [Architecture](./architecture.md) |
 | **Understand the request → play lifecycle** and the acquire service | [The acquire service](./acquire.md) |
 | **Fill missing episodes**: grabs bound to episodes, what the library holds, the backlog sweep | [Episodes and movies acquire tracks](./acquire.md#episodes-and-movies-acquire-tracks) |
-| **Have a series' new episodes arrive by themselves**: a request that follows its title, TMDB read again, the sources' newest releases, what is grabbed on its own | [A request that follows its title](./acquire.md#a-request-that-follows-its-title) |
+| **Have a series' new episodes arrive by themselves**: a request that follows its title, its approval, TMDB read again, exact air times, the sources' newest releases, what is grabbed on its own | [A request that follows its title](./acquire.md#a-request-that-follows-its-title) |
 | **Understand the download plane** (the gateway + its clients) | [Download gateway & clients](./download-gateway.md) |
 | **Add search sources and set up NZB-first auto-grab** | [Search sources & NZB-first](./indexers-and-nzb.md) |
 | **Install the addon on a platform** | [Deploying the addon](./deploying.md) |

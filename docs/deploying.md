@@ -435,17 +435,28 @@ schedules are registered: `inventory-refresh` (every six hours) and
   read at all. To have new episodes and what is requested arrive by
   themselves, switch it on in settings → search and grab; the old backlog
   stays with **everything missing** (`search.autoGrab`), which keeps its
-  meaning. Either way an automatic grab now waits `search.airDelayHours` (30)
-  after an air date — TMDB dates the day, not the hour —, takes no release
-  published before the day its episode aired, and leaves a series the import
-  says is anime or daily to the missing tab: their releases name an absolute
-  number or a date, not the season and episode acquire tracks.
+  meaning. Either way an automatic grab now waits an hour after an episode
+  airs, by TVmaze's air times (`search.airDelayAfterAirstampMinutes`, 60), or
+  `search.airDelayHours` (30) after its air date when TVmaze gives none —
+  TMDB dates the day, not the hour —; it takes no release published before
+  the episode aired (skipped, never blocked: a person may still pick it); and
+  it leaves to the missing tab a movie TMDB dates in cinemas only, and a
+  series whose releases name no season and episode acquire can tell: one the
+  import says is anime or daily, one TMDB files as animation from Japan or as
+  a talk or news show.
+- **TVmaze.** acquire now asks TVmaze's public schedule (`api.tvmaze.com`,
+  HTTPS, no key) for the moment an episode airs, sending a series' TVDB or
+  IMDb id and nothing else, again with every read of TMDB, at under 20 calls
+  in 10 seconds — the first runs look every series up once, a few minutes for
+  a large library. Without a way out to it, episodes are told by their air
+  date, as with **exact air times** off in settings → search and grab.
 - **Requests now wait for an admin.** A request someone who is not an admin
-  makes awaits an admin's approval (`requests.autoApprove`, off): its title is
-  followed, but nothing of it is searched or grabbed on its own until an admin
-  approves it in the requests tab. An admin's own request is approved at once.
-  Switch on **approve requests** in settings → requests to approve everyone's
-  at once, as requests were before.
+  makes awaits an admin's approval (`requests.autoApprove`, off), and changes
+  nothing until an admin approves it in the requests tab: a title acquire
+  tracks stays as it is, one it does not is only read from TMDB, nothing of
+  it searched or grabbed. An admin's own request is approved at once. Switch
+  on **approve requests** in settings → requests to approve everyone's at
+  once, as requests were before.
 - **The sources' allowance.** With a switch on, every source is read every
   fifteen minutes — its TV feed and its movie feed, each only while
   something of its kind can be grabbed, or one search over both for a source
@@ -466,9 +477,10 @@ schedules are registered: `inventory-refresh` (every six hours) and
   answers the request there is and makes it follow its title.
 - **Rolling back to 0.5.x.** Switch **new episodes and requests** and
   **everything missing** off in settings → search and grab before you roll
-  back. 0.5.x knows nothing of follows, approvals or the air delay: with
-  `search.autoGrab` on, its sweep would grab the episodes a follow added —
-  those of a request awaiting an admin's approval too — as soon as they air.
+  back. 0.5.x knows nothing of follows, approvals, air times or the air
+  delay: with `search.autoGrab` on, its sweep would grab the episodes a
+  follow added as soon as they air, and what 0.6.0 leaves to the missing tab
+  — a movie in cinemas only, an anime, a daily show — too.
   Migration `042` only adds, so nothing is lost; 0.5.x leaves the new columns
   and the `rss_cursors` table alone.
 
