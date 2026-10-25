@@ -232,6 +232,41 @@ func (s *Server) getSearchSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, doc)
 }
 
+// getRequestSettings returns how requests are taken: whether a request from
+// someone who is not an admin is approved at once (autoApprove).
+//
+//	GET /api/settings/requests
+func (s *Server) getRequestSettings(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.svc.RequestSettings(r.Context()))
+}
+
+// putRequestSettings stores them.
+//
+//	PUT /api/settings/requests   If-Match: <revision>
+func (s *Server) putRequestSettings(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	rev, err := ifMatch(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	in := s.svc.RequestSettings(r.Context())
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	doc, err := s.svc.PutRequestSettings(r.Context(), in, rev, actorFrom(r.Context()))
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, doc)
+}
+
 // putSearchSettings stores the search and grab policy. The document is read
 // over the policy stored: a field it does not name — one a console from
 // before it does not know — keeps its value.

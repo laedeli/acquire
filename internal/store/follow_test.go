@@ -40,6 +40,84 @@ func targetsByCoord(t *testing.T, s *Store, titleID string) map[string]Target {
 // A request follows a title: a new one is created from what the request
 // says, monitored, and followed from now; one the import tracks is not made
 // twice, but monitored again, and keeps when it was first followed.
+// approvedFollow follows a title for a request an admin approved.
+func approvedFollow(t *testing.T, s *Store, ti Title) Title {
+	t.Helper()
+	ctx := context.Background()
+	f, _, err := s.FollowTitle(ctx, ti)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateWanted(ctx, Wanted{ID: "w-" + f.ID, TMDBID: f.TMDBID, MediaType: f.Kind, Title: f.Title, TitleID: f.ID,
+		Approval: ApprovalApproved, DecidedBy: "admin"}); err != nil {
+		t.Fatal(err)
+	}
+	f, err = s.TitleByID(ctx, f.ID)
+	if err != nil || !f.Approved {
+		t.Fatalf("an approved follow: %+v %v", f, err)
+	}
+	return f
+}
+
+// A title followed for requests no admin approved yet is held for their
+// approval when the requests are what monitors it: nothing of it is
+// searched or grabbed on its own. One an admin monitored before is not.
+func TestAFollowHeldForApproval(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	requested, _, _ := s.FollowTitle(ctx, Title{TMDBID: 1, Kind: "series", Title: "Requested"})
+	if err := s.UpsertTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "Monitored", Monitored: true}); err != nil {
+		t.Fatal(err)
+	}
+	monitored, _, _ := s.FollowTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "Monitored"})
+	for _, ti := range []Title{requested, monitored} {
+		if err := s.CreateWanted(ctx, Wanted{ID: "w-" + ti.ID, TMDBID: ti.TMDBID, MediaType: "series", Title: ti.Title, TitleID: ti.ID,
+			Approval: ApprovalAwaiting}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ApplySeriesInventory(ctx, ti.ID, SeriesRead{Seasons: map[int]int{1: 1}, Read: []int{1},
+			Episodes: episodesOf(1, day(-3)), MonitorAll: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	due := func() []string {
+		ts, _ := s.DueTargetsBy(ctx, 10, DueOrder{NewWithinDays: 14})
+		var ids []string
+		for _, x := range ts {
+			ids = append(ids, x.TitleID)
+		}
+		return ids
+	}
+	a, _ := s.TitleByID(ctx, requested.ID)
+	b, _ := s.TitleByID(ctx, monitored.ID)
+	if !a.HeldForApproval() || b.HeldForApproval() || a.Approved || b.Approved {
+		t.Errorf("held for approval: %v %v", a.HeldForApproval(), b.HeldForApproval())
+	}
+	if got := due(); len(got) != 1 || got[0] != monitored.ID {
+		t.Errorf("due = %v, want the one an admin monitored", got)
+	}
+	if err := s.DecideWanted(ctx, "w-"+requested.ID, ApprovalApproved, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if got := due(); len(got) != 2 {
+		t.Errorf("due once approved = %v", got)
+	}
+	// A declined request does not keep a follow: the last one that is not
+	// declined gone, the follow ends.
+	if err := s.DecideWanted(ctx, "w-"+monitored.ID, ApprovalDeclined, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UnfollowTitle(ctx, monitored.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.TitleByID(ctx, monitored.ID); got.Followed() || !got.Monitored {
+		t.Errorf("declined: %+v", got)
+	}
+}
+
 func TestFollowingATitle(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -276,7 +354,7 @@ func TestATargetAddedSinceTheHoldingsWaitsForTheNextReconcile(t *testing.T) {
 func TestARequestedMovieWaitsForItsRelease(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	m, _, _ := s.FollowTitle(ctx, Title{TMDBID: 9100, Kind: "movie", Title: "Example Clay Film", Year: 2026})
+	m := approvedFollow(t, s, Title{TMDBID: 9100, Kind: "movie", Title: "Example Clay Film", Year: 2026})
 	if _, err := s.ApplyMovieHolding(ctx, m.ID, "", "default", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +598,7 @@ func TestNewThingsFirst(t *testing.T) {
 	_ = s.SetAirWindow(ctx, old, day(-300), 0)
 	_ = s.SetAirWindow(ctx, fresh, day(-3), 0)
 	// A followed series' episode from long ago, added by its follow.
-	f, _, _ := s.FollowTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "Followed"})
+	f := approvedFollow(t, s, Title{TMDBID: 2, Kind: "series", Title: "Followed"})
 	if _, err := s.ApplySeriesInventory(ctx, f.ID, SeriesRead{Seasons: map[int]int{1: 1}, Read: []int{1},
 		Episodes: episodesOf(1, day(-500)), MonitorAll: true}); err != nil {
 		t.Fatal(err)
@@ -617,7 +695,7 @@ func TestTheAirDelay(t *testing.T) {
 		3: {Window: day(0), Released: day(0), Kind: "digital"},       // out today
 		4: {Window: day(-1), Released: day(-91), Kind: "theatrical"}, // 90 days after cinemas
 	} {
-		f, _, _ := s.FollowTitle(ctx, Title{TMDBID: id, Kind: "movie", Title: "Film"})
+		f := approvedFollow(t, s, Title{TMDBID: id, Kind: "movie", Title: "Film"})
 		if _, err := s.ApplyMovieInventory(ctx, f.ID, w); err != nil {
 			t.Fatal(err)
 		}

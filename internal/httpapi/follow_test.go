@@ -80,8 +80,8 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	if p, _ := created["progress"].(map[string]any); p == nil || p["kind"] != "series" || created["autoGrab"] != false {
 		t.Errorf("the created request's progress: %s", w.Body.String())
 	}
-	if w, again := call(t, h, http.MethodPost, "/api/wanted", `{"tmdbId":9001,"mediaType":"tv","title":"Example Saga"}`); w.Code != http.StatusCreated || again["id"] != created["id"] {
-		t.Errorf("asked again: %d %s", w.Code, w.Body.String())
+	if w, again := call(t, h, http.MethodPost, "/api/wanted", `{"tmdbId":9001,"mediaType":"tv","title":"Example Saga"}`); w.Code != http.StatusOK || again["id"] != created["id"] {
+		t.Errorf("asked again: %d %s, want 200 and the request there is", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/wanted", nil))
@@ -141,5 +141,58 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	}
 	if ti, err := s.st.TitleByID(context.Background(), "series:9001"); err != nil || ti.Monitored || ti.Followed() {
 		t.Errorf("the title after its request: %+v %v", ti, err)
+	}
+}
+
+// A request from someone who is not an admin awaits an admin's approval, and
+// says so; an admin approves or declines it. Whether such a request is
+// approved at once is requests.autoApprove, an admin's setting.
+func TestRequestsAwaitAnAdminsApproval(t *testing.T) {
+	s, _ := testServer(t)
+	h := s.Handler()
+	asUser := func(method, target, body string) (*httptest.ResponseRecorder, map[string]any) {
+		ctx := context.WithValue(context.WithValue(context.Background(), roleKey, []string{"zaentrum-user"}), subKey, "user-1")
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(method, target, strings.NewReader(body)).WithContext(ctx)
+		switch target {
+		case "/api/wanted":
+			s.createWanted(rec, r)
+		case "/api/settings/requests":
+			s.putRequestSettings(rec, r)
+		}
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec, out
+	}
+	w, created := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":9001,"mediaType":"series","title":"Example Saga"}`)
+	if w.Code != http.StatusCreated || created["approval"] != "awaiting" || created["status"] != "awaiting" || created["requestedBy"] != "user-1" {
+		t.Fatalf("a user's request -> %d %s", w.Code, w.Body.String())
+	}
+	id := created["id"].(string)
+	if w, out := call(t, h, http.MethodPost, "/api/wanted/"+id+"/approve", ""); w.Code != 200 || out["approval"] != "approved" || out["status"] != "following" {
+		t.Errorf("approve -> %d %s", w.Code, w.Body.String())
+	}
+	if w, out := call(t, h, http.MethodPost, "/api/wanted/"+id+"/decline", ""); w.Code != 200 || out["approval"] != "declined" || out["status"] != "declined" {
+		t.Errorf("decline -> %d %s", w.Code, w.Body.String())
+	}
+	if w, _ := call(t, h, http.MethodPost, "/api/wanted/w_none/approve", ""); w.Code != http.StatusNotFound {
+		t.Errorf("approve no request -> %d", w.Code)
+	}
+	_, plain := asUser(http.MethodPost, "/api/wanted", `{"mediaType":"movie","title":"Some Film"}`)
+	if w, _ := call(t, h, http.MethodPost, "/api/wanted/"+plain["id"].(string)+"/approve", ""); w.Code != http.StatusConflict {
+		t.Errorf("approve a request that follows nothing -> %d %s", w.Code, w.Body.String())
+	}
+
+	if w, doc := call(t, h, http.MethodGet, "/api/settings/requests", ""); w.Code != 200 || doc["autoApprove"] != false {
+		t.Errorf("GET /api/settings/requests -> %d %s", w.Code, w.Body.String())
+	}
+	if w, _ := asUser(http.MethodPut, "/api/settings/requests", `{"autoApprove":true}`); w.Code != http.StatusForbidden {
+		t.Errorf("a user's PUT /api/settings/requests -> %d", w.Code)
+	}
+	if w, doc := call(t, h, http.MethodPut, "/api/settings/requests", `{"autoApprove":true}`); w.Code != 200 || doc["autoApprove"] != true {
+		t.Errorf("PUT /api/settings/requests -> %d %s", w.Code, w.Body.String())
+	}
+	if _, auto := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":9002,"mediaType":"movie","title":"Example Film"}`); auto["approval"] != "approved" {
+		t.Errorf("a user's request with autoApprove -> %v", auto)
 	}
 }

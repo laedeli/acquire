@@ -189,7 +189,7 @@ func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, "user"); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, asAdmin("user")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
@@ -364,7 +364,7 @@ func TestTheFeedsGrabARequestedMovieOnceOut(t *testing.T) {
 			"imdb_id": "tt0009100", "release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 				"release_dates": []map[string]any{{"type": 4, "release_date": out.Format(time.RFC3339)}}}}}}
 	})
-	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, "friend"); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
@@ -486,7 +486,7 @@ func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
 	})
 	for _, w := range []store.Wanted{{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"},
 		{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}} {
-		if _, err := r.svc.Request(ctx, w, "user"); err != nil {
+		if _, _, err := r.svc.Request(ctx, w, asAdmin("user")); err != nil {
 			t.Fatal(err)
 		}
 	}

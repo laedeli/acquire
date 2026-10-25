@@ -52,12 +52,12 @@ func (s *Store) FollowTitle(ctx context.Context, t Title) (Title, bool, error) {
 	return out, created, err
 }
 
-// UnfollowTitle ends a follow once no request follows the title any more: it
-// is followed no longer, and its monitoring is what it was before the follow
-// began — a title a request created is not monitored any more, nothing of it
-// hunted and TMDB not read for it; one an admin had stopped monitoring is
-// stopped again. Monitoring an admin turned off while the follow lasted stays
-// off.
+// UnfollowTitle ends a follow once no request follows the title any more —
+// none but declined ones —: it is followed no longer, and its monitoring is
+// what it was before the follow began — a title a request created is not
+// monitored any more, nothing of it hunted and TMDB not read for it; one an
+// admin had stopped monitoring is stopped again. Monitoring an admin turned
+// off while the follow lasted stays off.
 func (s *Store) UnfollowTitle(ctx context.Context, titleID string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE titles t
@@ -66,7 +66,8 @@ func (s *Store) UnfollowTitle(ctx context.Context, titleID string) error {
 		       monitor_new = t.monitor_new AND COALESCE(t.pre_monitor_new, t.origin <> $2),
 		       pre_monitored = NULL, pre_monitor_new = NULL, updated_at = now()
 		 WHERE t.id = $1 AND `+followedSQL+`
-		   AND NOT EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id)`, titleID, OriginRequest)
+		   AND NOT EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval <> $3)`,
+		titleID, OriginRequest, ApprovalDeclined)
 	return err
 }
 

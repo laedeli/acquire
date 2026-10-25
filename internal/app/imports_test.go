@@ -139,7 +139,7 @@ func (rig *importRig) finished(t *testing.T, client, job string, files map[strin
 			t.Fatal(err)
 		}
 	}
-	w, err := rig.svc.Request(ctx, store.Wanted{Title: "Film", Year: 2020, MediaType: "movie"}, "user")
+	w, _, err := rig.svc.Request(ctx, store.Wanted{Title: "Film", Year: 2020, MediaType: "movie"}, asAdmin("user"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestARequestSaysWhyItsReleaseWaits(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(rig.downloads, "qbittorrent", "complete"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	w, err := rig.svc.Request(ctx, store.Wanted{Title: "Film", MediaType: "movie"}, "user")
+	w, _, err := rig.svc.Request(ctx, store.Wanted{Title: "Film", MediaType: "movie"}, asAdmin("user"))
 	if err != nil {
 		t.Fatal(err)
 	}

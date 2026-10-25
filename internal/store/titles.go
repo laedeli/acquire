@@ -48,7 +48,26 @@ type Title struct {
 	// Countries are the countries TMDB says it comes from (ISO 3166-1);
 	// none before TMDB was read for it.
 	Countries []string
+	// PreMonitored is whether it was monitored before a follow began; nil
+	// for a title a request created, or one not followed. Approved is set
+	// when an admin approved a request that follows it, or one was approved
+	// at once.
+	PreMonitored *bool
+	Approved     bool
 }
+
+// HeldForApproval reports whether nothing of a followed title may be grabbed
+// on its own: no request that follows it is approved yet, and it is monitored
+// only because of them — a request made it, or it was not monitored before.
+func (t Title) HeldForApproval() bool {
+	return t.Followed() && !t.Approved && (t.Origin == OriginRequest || t.PreMonitored == nil || !*t.PreMonitored)
+}
+
+// approvedSQL is Title.Approved of the title t.
+const approvedSQL = `EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval = 'approved')`
+
+// heldForApprovalSQL is Title.HeldForApproval of the title t.
+const heldForApprovalSQL = `(` + followedSQL + ` AND NOT ` + approvedSQL + ` AND (t.origin = 'request' OR NOT COALESCE(t.pre_monitored, false)))`
 
 // OriginRequest is the origin of a title a request created.
 const OriginRequest = "request"
@@ -66,14 +85,16 @@ const followedSQL = `(t.followed_at IS NOT NULL AND t.unfollowed_at IS NULL)`
 const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.title, t.sort_title,
 	COALESCE(t.year,0), t.status, t.series_type, t.monitored, t.monitor_new, t.profile_id,
 	t.holdings_at, t.holdings_error, t.catalog_id,
-	t.followed_at, t.unfollowed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country`
+	t.followed_at, t.unfollowed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country,
+	t.pre_monitored, ` + approvedSQL
 
 func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
 	err := r.Scan(append([]any{&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
 		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
 		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
-		&t.FollowedAt, &t.UnfollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries}, extra...)...)
+		&t.FollowedAt, &t.UnfollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries,
+		&t.PreMonitored, &t.Approved}, extra...)...)
 	return t, err
 }
 

@@ -961,7 +961,7 @@ func (s *Service) GrabAdHoc(ctx context.Context, c Candidate, title string, sub 
 	if title == "" {
 		title = c.Title
 	}
-	w, err := s.Request(ctx, store.Wanted{Title: title, MediaType: "movie"}, sub)
+	w, _, err := s.Request(ctx, store.Wanted{Title: title, MediaType: "movie"}, Requester{Sub: sub, Admin: true})
 	if err != nil {
 		return err
 	}

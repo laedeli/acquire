@@ -441,10 +441,12 @@ func autoOpenSQL(delay string) string {
 
 // sweepableSQL is what the backlog sweep may look at, and a source's newest
 // release be grabbed for: wanted (not failed, not in flight), monitored with
-// its title, of holdings acquire knows, and open to an automatic grab
-// (autoOpenSQL, with the air delay in the parameter named).
+// its title, of holdings acquire knows, open to an automatic grab
+// (autoOpenSQL, with the air delay in the parameter named), and not of a
+// title held for an admin's approval (heldForApprovalSQL).
 func sweepableSQL(delay string) string {
-	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + autoOpenSQL(delay)
+	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + autoOpenSQL(delay) +
+		` AND NOT ` + heldForApprovalSQL
 }
 
 // recentSQL is the condition "this target aired in the last days days" (the
@@ -454,10 +456,11 @@ func recentSQL(days string) string {
 	return `COALESCE(NOT a.ever_held AND a.air_date >= (now() AT TIME ZONE 'UTC')::date - ` + days + `::int, false)`
 }
 
-// requestedSQL is the condition "a request asked for this target": a
-// requested movie, or an episode a follow or a read of TMDB added after its
-// title was first followed — never one the library held once.
-const requestedSQL = `COALESCE(NOT a.ever_held AND ` + followedSQL + ` AND (a.kind = 'movie' OR a.added_at >= t.followed_at), false)`
+// requestedSQL is the condition "an approved request asked for this
+// target": a requested movie, or an episode a follow or a read of TMDB added
+// after its title was first followed — never one the library held once.
+const requestedSQL = `COALESCE(NOT a.ever_held AND ` + followedSQL + ` AND ` + approvedSQL +
+	` AND (a.kind = 'movie' OR a.added_at >= t.followed_at), false)`
 
 // newSQL is the condition "this target is one of the new things": an episode
 // aired in the last days days (the parameter named), or what a request asked

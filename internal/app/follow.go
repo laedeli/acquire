@@ -57,15 +57,30 @@ func mediaTypesOf(kind string) []string {
 	return []string{kind}
 }
 
+// Requester is who asks for a title: their subject, and whether they are an
+// admin.
+type Requester struct {
+	Sub   string
+	Admin bool
+}
+
 // Request records a new WantedItem. A request for a series or a movie with a
 // TMDB id follows the title (follow); one without stays a request of its own,
-// as before: pending until an admin grabs it.
-func (s *Service) Request(ctx context.Context, w store.Wanted, sub string) (store.Wanted, error) {
+// as before: pending until an admin grabs it. created reports whether the
+// request is new: asking for a title again answers the request there is.
+//
+// A request that follows a title is approved at once when an admin makes it,
+// or requests.autoApprove is on; otherwise it awaits an admin's approval —
+// its title is followed meanwhile, its episodes read from TMDB, but nothing
+// of it is grabbed on its own (store.Title.HeldForApproval). An admin asking
+// again for a title that awaits approval approves its request.
+func (s *Service) Request(ctx context.Context, w store.Wanted, by Requester) (out store.Wanted, created bool, err error) {
 	// What a request says of itself is what was asked for; what it is now,
 	// acquire says.
 	w.Status, w.Detail, w.ItemID, w.TitleID = "", "", "", ""
+	w.Approval, w.DecidedBy, w.DecidedAt = "", "", nil
 	w.ID = newID()
-	w.RequestedBy = sub
+	w.RequestedBy = by.Sub
 	if w.MediaType == "" {
 		w.MediaType = "movie"
 	}
@@ -74,34 +89,105 @@ func (s *Service) Request(ctx context.Context, w store.Wanted, sub string) (stor
 		w.MediaType = "series"
 	}
 	if kind == "" || w.TMDBID <= 0 || s.st == nil {
-		return s.createRequest(ctx, w)
+		out, err := s.createRequest(ctx, w)
+		return out, err == nil, err
+	}
+	approval, decidedBy := store.ApprovalAwaiting, ""
+	if by.Admin || s.RequestSettings(ctx).AutoApprove {
+		approval, decidedBy = store.ApprovalApproved, by.Sub
+		if decidedBy == "" {
+			decidedBy = "acquire"
+		}
 	}
 	// One request per title: asking again finds the request there is.
 	if prev, err := s.st.FindRequestFor(ctx, w.TMDBID, mediaTypesOf(kind)); err == nil {
 		if prev.TitleID != "" {
-			return prev, nil
+			if by.Admin && prev.Approval != store.ApprovalApproved {
+				out, err := s.ApproveRequest(ctx, prev.ID, decidedBy)
+				return out, false, err
+			}
+			return prev, false, nil
 		}
 		title, err := s.follow(ctx, kind, w)
 		if err != nil {
-			return store.Wanted{}, err
+			return store.Wanted{}, false, err
 		}
 		status, detail := followStarted(kind)
-		if err := s.st.LinkWanted(ctx, prev.ID, title.ID, status, detail); err != nil {
-			return store.Wanted{}, err
+		if err := s.st.LinkWanted(ctx, prev.ID, title.ID, status, detail, approval, decidedBy); err != nil {
+			return store.Wanted{}, false, err
 		}
 		s.notify()
-		return s.st.GetWanted(ctx, prev.ID)
+		out, err := s.st.GetWanted(ctx, prev.ID)
+		return out, false, err
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return store.Wanted{}, err
+		return store.Wanted{}, false, err
 	}
 	title, err := s.follow(ctx, kind, w)
 	if err != nil {
-		return store.Wanted{}, err
+		return store.Wanted{}, false, err
 	}
 	w.TitleID = title.ID
 	w.Status, w.Detail = followStarted(kind)
-	return s.createRequest(ctx, w)
+	w.Approval, w.DecidedBy = approval, decidedBy
+	if approval == store.ApprovalApproved {
+		now := time.Now()
+		w.DecidedAt = &now
+	}
+	out, err = s.createRequest(ctx, w)
+	return out, err == nil, err
 }
+
+// errNoFollow: approving or declining a request that follows no title.
+var errNoFollow = errors.New("this request follows no title: there is nothing to approve or decline")
+
+// ApproveRequest approves a request that follows a title — awaiting
+// approval, or declined before —: what it follows is grabbed on its own as
+// the search and grab policy allows. A title whose follow ended when the
+// request was declined is followed again.
+func (s *Service) ApproveRequest(ctx context.Context, id, by string) (store.Wanted, error) {
+	w, err := s.st.GetWanted(ctx, id)
+	if err != nil {
+		return store.Wanted{}, err
+	}
+	if w.TitleID == "" {
+		return store.Wanted{}, errNoFollow
+	}
+	if err := s.st.DecideWanted(ctx, id, store.ApprovalApproved, by); err != nil {
+		return store.Wanted{}, err
+	}
+	if title, err := s.st.TitleByID(ctx, w.TitleID); err == nil && !title.Followed() {
+		if _, err := s.follow(ctx, title.Kind, store.Wanted{TMDBID: title.TMDBID, Title: title.Title, Year: title.Year}); err != nil {
+			return store.Wanted{}, err
+		}
+	}
+	s.notify()
+	return s.st.GetWanted(ctx, id)
+}
+
+// DeclineRequest declines a request that follows a title: it stays, saying
+// so, and the follow ends unless another request that is not declined
+// follows the title (store.UnfollowTitle).
+func (s *Service) DeclineRequest(ctx context.Context, id, by string) (store.Wanted, error) {
+	w, err := s.st.GetWanted(ctx, id)
+	if err != nil {
+		return store.Wanted{}, err
+	}
+	if w.TitleID == "" {
+		return store.Wanted{}, errNoFollow
+	}
+	if err := s.st.DecideWanted(ctx, id, store.ApprovalDeclined, by); err != nil {
+		return store.Wanted{}, err
+	}
+	if err := s.st.UnfollowTitle(ctx, w.TitleID); err != nil {
+		return store.Wanted{}, err
+	}
+	s.notify()
+	return s.st.GetWanted(ctx, id)
+}
+
+// IsNoFollow reports whether an approval was refused because the request
+// follows no title.
+func IsNoFollow(err error) bool { return errors.Is(err, errNoFollow) }
 
 func (s *Service) createRequest(ctx context.Context, w store.Wanted) (store.Wanted, error) {
 	if err := s.st.CreateWanted(ctx, w); err != nil {
@@ -205,12 +291,39 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 		if p, ok := progress[w.TitleID]; ok && w.TitleID != "" {
 			p := p
 			v.Progress = &p
-			v.Status, v.Detail = requestState(p, now)
-			v.AutoGrab = &grabs
+			v.Status, v.Detail = approvalState(w.Approval, p, now)
+			auto := grabs && w.Approval == store.ApprovalApproved
+			v.AutoGrab = &auto
 		}
 		out = append(out, v)
 	}
 	return out, nil
+}
+
+// approvalState is a request's status and detail as an admin's word on it
+// leaves them: one awaiting approval says so before how far acquire is with
+// its title — nothing of it is grabbed on its own meanwhile —; a declined one
+// says so alone.
+func approvalState(approval string, p store.Progress, now time.Time) (status, detail string) {
+	status, detail = requestState(p, now)
+	switch {
+	case approval == store.ApprovalDeclined:
+		return "declined", "an admin declined it: acquire does not follow it for this request"
+	case approval == store.ApprovalAwaiting && status != "fulfilled":
+		return "awaiting", clip("waiting for an admin's approval; until then nothing of it is grabbed on its own · "+detail, 300)
+	}
+	return status, detail
+}
+
+// ApproveForGrab approves a request awaiting approval that an admin grabs —
+// a find & grab, or a release picked for it —: the grab is their word on it.
+func (s *Service) ApproveForGrab(ctx context.Context, id, by string) error {
+	w, err := s.st.GetWanted(ctx, id)
+	if err != nil || w.TitleID == "" || w.Approval != store.ApprovalAwaiting {
+		return nil
+	}
+	_, err = s.ApproveRequest(ctx, id, by)
+	return err
 }
 
 // RequestStatus is the newest request for a TMDB id, as it reads now, or

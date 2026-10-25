@@ -91,15 +91,31 @@ type Wanted struct {
 	// TitleID is the title the request follows (a series or a movie acquire
 	// tracks because it was asked for); "" when it follows none.
 	TitleID string `json:"titleId,omitempty"`
+	// Approval is an admin's word on a request that follows a title:
+	// awaiting, approved or declined (the Approval* constants); "" for one
+	// that follows none. DecidedBy and DecidedAt are who approved or declined
+	// it, and when.
+	Approval  string     `json:"approval,omitempty"`
+	DecidedBy string     `json:"decidedBy,omitempty"`
+	DecidedAt *time.Time `json:"decidedAt,omitempty"`
 }
 
-const wantedCols = `id, tmdb_id, media_type, title, year, poster_url, requested_by, requested_at, status, detail, item_id, updated_at, title_id`
+// What an admin says of a request that follows a title.
+const (
+	ApprovalAwaiting = "awaiting"
+	ApprovalApproved = "approved"
+	ApprovalDeclined = "declined"
+)
+
+const wantedCols = `id, tmdb_id, media_type, title, year, poster_url, requested_by, requested_at, status, detail, item_id, updated_at, title_id,
+	approval, decided_by, decided_at`
 
 func scanWanted(r interface{ Scan(...any) error }) (Wanted, error) {
 	var w Wanted
 	var tmdb, year *int64
 	err := r.Scan(&w.ID, &tmdb, &w.MediaType, &w.Title, &year, &w.PosterURL,
-		&w.RequestedBy, &w.RequestedAt, &w.Status, &w.Detail, &w.ItemID, &w.UpdatedAt, &w.TitleID)
+		&w.RequestedBy, &w.RequestedAt, &w.Status, &w.Detail, &w.ItemID, &w.UpdatedAt, &w.TitleID,
+		&w.Approval, &w.DecidedBy, &w.DecidedAt)
 	if tmdb != nil {
 		w.TMDBID = *tmdb
 	}
@@ -123,10 +139,27 @@ func (s *Store) CreateWanted(ctx context.Context, w Wanted) error {
 		status = "pending"
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO wanted_items (id, tmdb_id, media_type, title, year, poster_url, requested_by, status, detail, title_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		w.ID, tmdb, w.MediaType, w.Title, year, w.PosterURL, w.RequestedBy, status, w.Detail, w.TitleID)
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, year, poster_url, requested_by, status, detail, title_id,
+		                          approval, decided_by, decided_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		w.ID, tmdb, w.MediaType, w.Title, year, w.PosterURL, w.RequestedBy, status, w.Detail, w.TitleID,
+		w.Approval, w.DecidedBy, w.DecidedAt)
 	return err
+}
+
+// DecideWanted records an admin's word on a request — approved or declined —
+// and who said it.
+func (s *Store) DecideWanted(ctx context.Context, id, approval, by string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE wanted_items SET approval = $2, decided_by = $3, decided_at = now(), updated_at = now() WHERE id = $1`,
+		id, approval, by)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // FindRequestFor returns the newest request for a TMDB id whose media type is
@@ -143,11 +176,14 @@ func (s *Store) FindRequestFor(ctx context.Context, tmdbID int64, kinds []string
 }
 
 // LinkWanted records the title a request follows, with the status and detail
-// it reads as when nothing more is known.
-func (s *Store) LinkWanted(ctx context.Context, id, titleID, status, detail string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE wanted_items SET title_id = $2, status = $3, detail = $4, updated_at = now() WHERE id = $1`,
-		id, titleID, status, clipText(detail))
+// it reads as when nothing more is known, and its approval (decided by whom,
+// when it is approved at once).
+func (s *Store) LinkWanted(ctx context.Context, id, titleID, status, detail, approval, by string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE wanted_items SET title_id = $2, status = $3, detail = $4, approval = $5,
+		       decided_by = $6, decided_at = CASE WHEN $6 = '' THEN NULL ELSE now() END, updated_at = now()
+		 WHERE id = $1`,
+		id, titleID, status, clipText(detail), approval, by)
 	return err
 }
 

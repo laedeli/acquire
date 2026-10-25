@@ -222,6 +222,8 @@ func capabilityDoc(cfg config.Config) capability {
 			{Name: "request", Summary: "request a title (tmdb id)", Method: "POST", Path: "/api/wanted", Role: "user"},
 			{Name: "grab", Summary: "grab a specific release for a request", Method: "POST", Path: "/api/wanted/{id}/grab", Role: "admin"},
 			{Name: "autograb", Summary: "search the search sources and grab the best release", Method: "POST", Path: "/api/wanted/{id}/autograb", Role: "admin"},
+			{Name: "approve", Summary: "approve a request awaiting approval: what it follows is grabbed on its own as the policy allows", Method: "POST", Path: "/api/wanted/{id}/approve", Role: "admin"},
+			{Name: "decline", Summary: "decline a request: its title is not followed for it", Method: "POST", Path: "/api/wanted/{id}/decline", Role: "admin"},
 			{Name: "discover", Summary: "search for titles to request", Method: "GET", Path: "/api/discover"},
 			{Name: "downloads", Summary: "list in-flight downloads", Method: "GET", Path: "/api/downloads"},
 			{Name: "missing", Summary: "the backlog: monitored, aired, not held, of titles whose holdings are known", Method: "GET", Path: "/api/missing"},

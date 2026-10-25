@@ -75,8 +75,12 @@ func (p SearchSettings) dueOrder() store.DueOrder {
 
 // Grabs reports whether the policy lets an automatic grab — the sweep's, a
 // newest release's — take a target: any with AutoGrab, a new one with
-// AutoGrabNew. Whether the target can be grabbed at all is the caller's.
+// AutoGrabNew; nothing of a title held for an admin's approval. Whether the
+// target can be grabbed at all is the caller's.
 func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) bool {
+	if title.HeldForApproval() {
+		return false
+	}
 	return p.AutoGrab || (p.AutoGrabNew && isNew(title, t, p.newWithin(), now))
 }
 
@@ -92,23 +96,24 @@ func (p SearchSettings) newWithin() int {
 }
 
 // isNew reports whether a target is one of the new things: an episode aired
-// in the last days days (by its air date, as TMDB dates it), an episode a
-// follow or a read of TMDB added after its series was first requested, or a
-// requested movie — never one the library held once: a deletion, or a
-// reconcile that missed it, does not have it grabbed again on its own.
-// Everything else is the old backlog.
+// in the last days days (by its air date, as TMDB dates it), and what an
+// approved request asked for — an episode a follow or a read of TMDB added
+// after its series was first requested, or a requested movie —; never one
+// the library held once: a deletion, or a reconcile that missed it, does not
+// have it grabbed again on its own. Everything else is the old backlog.
 func isNew(title store.Title, t store.Target, days int, now time.Time) bool {
 	if t.EverHeld {
 		return false
 	}
+	requested := title.Followed() && title.Approved
 	if t.Kind == "movie" {
-		return title.Followed()
+		return requested
 	}
 	today := now.UTC().Truncate(24 * time.Hour)
 	if t.AirDate != nil && !t.AirDate.Before(today.AddDate(0, 0, -days)) {
 		return true
 	}
-	return title.Followed() && t.AddedAt != nil && !t.AddedAt.Before(*title.FollowedAt)
+	return requested && t.AddedAt != nil && !t.AddedAt.Before(*title.FollowedAt)
 }
 
 // SearchSettingsDoc is the stored policy with the revision an editor sends
@@ -218,6 +223,48 @@ func validateSearchSettings(in SearchSettings) []FieldError {
 		add("airDelayHours", fmt.Sprintf("must be between 0 and %d", MaxAirDelayHours))
 	}
 	return fe
+}
+
+// requestSettingsKey is the acquire_settings row holding how requests are
+// taken.
+const requestSettingsKey = "requests"
+
+// RequestSettings say how requests are taken: AutoApprove approves a request
+// at once whoever makes it; off — the default — a request from someone who
+// is not an admin awaits an admin's approval, its title followed but nothing
+// of it grabbed on its own until then.
+type RequestSettings struct {
+	AutoApprove bool  `json:"autoApprove"`
+	Revision    int64 `json:"revision"`
+}
+
+// RequestSettings reads the stored settings; nothing approved on its own when
+// none are stored.
+func (s *Service) RequestSettings(ctx context.Context) RequestSettings {
+	var out RequestSettings
+	if s.st == nil {
+		return out
+	}
+	row, err := s.st.GetSetting(ctx, requestSettingsKey)
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(row.Value, &out)
+	out.Revision = row.Revision
+	return out
+}
+
+// PutRequestSettings replaces them (ifRevision > 0: only over that revision,
+// store.ErrStale otherwise). A request awaiting approval stays so: turning
+// autoApprove on approves the requests made from then on.
+func (s *Service) PutRequestSettings(ctx context.Context, in RequestSettings, ifRevision int64, actor string) (RequestSettings, error) {
+	row, err := s.st.PutSetting(ctx, requestSettingsKey, map[string]bool{"autoApprove": in.AutoApprove}, ifRevision, actor)
+	if err != nil {
+		return RequestSettings{}, err
+	}
+	out := RequestSettings{Revision: row.Revision}
+	_ = json.Unmarshal(row.Value, &out)
+	return out, nil
 }
 
 // FieldError is one invalid field in a configuration write.

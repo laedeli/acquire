@@ -58,7 +58,15 @@ ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_kind    text NO
 
 -- wanted_items: the title a request follows ('' for one that follows none: a
 -- request without a TMDB id, or one made before 042 and not asked again).
-ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS title_id text NOT NULL DEFAULT '';
+-- approval is an admin's word on a request that follows a title: awaiting
+-- (made by someone who is not an admin, with requests.autoApprove off: its
+-- title is followed, nothing of it grabbed on its own), approved or declined;
+-- '' for one that follows none. decided_by and decided_at are who approved or
+-- declined it, and when.
+ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS title_id   text NOT NULL DEFAULT '';
+ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS approval   text NOT NULL DEFAULT '';
+ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS decided_by text NOT NULL DEFAULT '';
+ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS decided_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS wanted_title_idx     ON wanted_items (title_id) WHERE title_id <> '';
 CREATE INDEX IF NOT EXISTS titles_inventory_idx ON titles (inventory_at NULLS FIRST) WHERE monitored;

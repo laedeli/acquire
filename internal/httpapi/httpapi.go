@@ -200,10 +200,12 @@ func (s *Server) Handler() http.Handler {
 		r.Use(s.ver.middleware)
 		r.Get("/api/events", s.br.Handler)
 		r.Get("/api/wanted", s.listWanted)
-		r.Post("/api/wanted", s.createWanted)                 // user role
-		r.Delete("/api/wanted/{id}", s.deleteWanted)          // admin
-		r.Post("/api/wanted/{id}/grab", s.grabWanted)         // admin (manual magnet)
-		r.Post("/api/wanted/{id}/autograb", s.autograbWanted) // admin (search + best)
+		r.Post("/api/wanted", s.createWanted)                    // user role
+		r.Delete("/api/wanted/{id}", s.deleteWanted)             // admin
+		r.Post("/api/wanted/{id}/grab", s.grabWanted)            // admin (manual magnet)
+		r.Post("/api/wanted/{id}/autograb", s.autograbWanted)    // admin (search + best)
+		r.Post("/api/wanted/{id}/approve", s.decideWanted(true)) // admin
+		r.Post("/api/wanted/{id}/decline", s.decideWanted(false))
 		r.Get("/api/discover", s.discover)
 		r.Get("/api/status", s.status)
 		r.Get("/api/downloads", s.listDownloads)
@@ -265,6 +267,8 @@ func (s *Server) Handler() http.Handler {
 		r.Put("/api/settings/search", s.putSearchSettings)
 		r.Get("/api/settings/subtitles", s.getSubtitleSettings)
 		r.Put("/api/settings/subtitles", s.putSubtitleSettings)
+		r.Get("/api/settings/requests", s.getRequestSettings)
+		r.Put("/api/settings/requests", s.putRequestSettings)
 	})
 
 	// The console, as the portal loads it through its app proxy: the federated
@@ -554,7 +558,7 @@ func (s *Server) createWanted(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return
 	}
-	out, err := s.svc.Request(r.Context(), in, subFrom(r.Context()))
+	out, created, err := s.svc.Request(r.Context(), in, app.Requester{Sub: subFrom(r.Context()), Admin: hasRole(r.Context(), s.cfg.AdminRole)})
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -563,7 +567,46 @@ func (s *Server) createWanted(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		view = app.RequestView{Wanted: out}
 	}
-	writeJSON(w, http.StatusCreated, view)
+	code := http.StatusCreated
+	if !created {
+		code = http.StatusOK
+	}
+	writeJSON(w, code, view)
+}
+
+// decideWanted approves or declines a request that follows a title (admin).
+// An approved request's title is grabbed on its own as the search and grab
+// policy allows; a declined one stays, saying so, and its follow ends.
+//
+//	POST /api/wanted/{id}/approve
+//	POST /api/wanted/{id}/decline
+func (s *Server) decideWanted(approve bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireAdmin(w, r) {
+			return
+		}
+		decide := s.svc.DeclineRequest
+		if approve {
+			decide = s.svc.ApproveRequest
+		}
+		out, err := decide(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context()))
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		case app.IsNoFollow(err):
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		case err != nil:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		view, err := s.svc.RequestView(r.Context(), out)
+		if err != nil {
+			view = app.RequestView{Wanted: out}
+		}
+		writeJSON(w, http.StatusOK, view)
+	}
 }
 
 // deleteWanted removes a request; the last one that follows a title ends its
@@ -604,6 +647,10 @@ func (s *Server) grabWanted(w http.ResponseWriter, r *http.Request) {
 	if client == "" {
 		client = body.Adapter
 	}
+	if err := s.svc.ApproveForGrab(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context())); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if err := s.svc.Grab(r.Context(), chi.URLParam(r, "id"), body.Source, client); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -615,6 +662,10 @@ func (s *Server) grabWanted(w http.ResponseWriter, r *http.Request) {
 func (s *Server) autograbWanted(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
+		return
+	}
+	if err := s.svc.ApproveForGrab(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context())); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := s.svc.AutoGrab(r.Context(), chi.URLParam(r, "id")); err != nil {

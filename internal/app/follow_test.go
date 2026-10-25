@@ -231,9 +231,9 @@ func TestARequestFollowsTheSeries(t *testing.T) {
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
 
-	w, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "tv", Title: "Example Saga: Seven Harbours", Year: 2026,
-		Status: "fulfilled", TitleID: "series:1"}, "user-1")
-	if err != nil {
+	w, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "tv", Title: "Example Saga: Seven Harbours", Year: 2026,
+		Status: "fulfilled", TitleID: "series:1"}, asAdmin("user-1"))
+	if err != nil || !created {
 		t.Fatal(err)
 	}
 	if w.TitleID != "series:9001" || w.MediaType != "series" || w.Status != "following" || w.RequestedBy != "user-1" {
@@ -274,7 +274,7 @@ func TestARequestFollowsTheSeries(t *testing.T) {
 		t.Errorf("missing = %d, want the 9 aired", len(miss))
 	}
 
-	again, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Seven Harbours"}, "user-2")
+	again, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Seven Harbours"}, asAdmin("user-2"))
 	if err != nil || again.ID != w.ID {
 		t.Errorf("asked again: %+v %v", again, err)
 	}
@@ -297,7 +297,7 @@ func TestARequestFromBeforeFollowsOnceAskedAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = r.svc.st.SetStatus(ctx, "w_old", "failed", "a series request cannot be handed over")
-	w, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user")
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	if err != nil || w.ID != "w_old" || w.TitleID != "series:9001" || w.Status != "following" {
 		t.Fatalf("asked again: %+v %v", w, err)
 	}
@@ -314,7 +314,7 @@ func TestARequestForATrackedSeriesFollowsIt(t *testing.T) {
 		f.series[4711] = &tmdbSeries{name: "Show Name", status: "Returning Series", tvdb: 362753,
 			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-2)}, {title: "Two", air: day(-2)}, {title: "Three", air: day(-1)}}}}
 	})
-	w, err := r.svc.Request(ctx, store.Wanted{TMDBID: 4711, MediaType: "series", Title: "Show Name"}, "user")
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 4711, MediaType: "series", Title: "Show Name"}, asAdmin("user"))
 	if err != nil || w.TitleID != title.ID {
 		t.Fatalf("request: %+v %v", w, err)
 	}
@@ -347,7 +347,7 @@ func TestARequestAgainKeepsTheFirstFollow(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	w, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user")
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	r.settle(t, false)
 	if err := r.svc.RemoveRequest(ctx, w.ID); err != nil {
 		t.Fatal(err)
@@ -355,7 +355,7 @@ func TestARequestAgainKeepsTheFirstFollow(t *testing.T) {
 	if got, _ := r.svc.st.TitleByID(ctx, "series:9001"); got.Monitored || got.Followed() {
 		t.Fatalf("after its request was removed: %+v", got)
 	}
-	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user"); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
@@ -378,7 +378,7 @@ func TestRemovingTheLastRequestEndsTheFollow(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	w, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user")
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	r.settle(t, false)
 	if err := r.svc.RemoveRequest(ctx, w.ID); err != nil {
 		t.Fatal(err)
@@ -394,6 +394,107 @@ func TestRemovingTheLastRequestEndsTheFollow(t *testing.T) {
 	}
 }
 
+// A request from someone who is not an admin awaits an admin's approval: its
+// series is followed — its episodes read from TMDB, kept up to date — but
+// nothing of it is grabbed on its own, by the sweep or the feeds, until an
+// admin approves it. A declined request stays, saying so, and its follow
+// ends. An admin's own request is approved at once, as everyone's is with
+// requests.autoApprove.
+func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[9001] = sevenHarbours()
+		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
+	})
+	user := Requester{Sub: "user"}
+	w, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, user)
+	if err != nil || !created || w.Approval != store.ApprovalAwaiting || w.TitleID != "series:9001" {
+		t.Fatalf("a user's request: %+v %v", w, err)
+	}
+	r.settle(t, false)
+	if targets, _ := r.svc.st.TitleTargets(ctx, "series:9001"); len(targets) != 13 {
+		t.Errorf("its episodes, read from TMDB meanwhile: %d", len(targets))
+	}
+	v := r.view(t, w.ID)
+	if v.Status != "awaiting" || !strings.HasPrefix(v.Detail, "waiting for an admin's approval; until then nothing of it is grabbed on its own · 13 episodes") ||
+		v.AutoGrab == nil || *v.AutoGrab {
+		t.Errorf("awaiting approval: %s %q %v", v.Status, v.Detail, v.AutoGrab)
+	}
+	feedSrc := newFeedSource(t, true, tv("Example.Saga.Seven.Harbours.S01E07.1080p.WEB.h264-GRP", ago(time.Hour)))
+	addFeed(t, r.svc, "feed", feedSrc)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Feeds != 0 || len(r.gw.added()) != 0 {
+		t.Errorf("the feeds, awaiting approval: %+v", run)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil || len(feedSrc.reads()) != 0 || len(r.gw.added()) != 0 {
+		t.Errorf("the sweep, awaiting approval: %v (reads %d, adds %d)", err, len(feedSrc.reads()), len(r.gw.added()))
+	}
+
+	// Asked again by the user: the same request, still awaiting.
+	if again, created, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "x"}, user); again.ID != w.ID || created ||
+		again.Approval != store.ApprovalAwaiting {
+		t.Errorf("asked again by the user: %+v", again)
+	}
+	// Approved: grabbed on its own as the policy allows.
+	if ok, err := r.svc.ApproveRequest(ctx, w.ID, "admin"); err != nil || ok.Approval != store.ApprovalApproved || ok.DecidedBy != "admin" || ok.DecidedAt == nil {
+		t.Fatalf("approved: %+v %v", ok, err)
+	}
+	if v := r.view(t, w.ID); v.Status != "following" || !*v.AutoGrab {
+		t.Errorf("approved: %s %q", v.Status, v.Detail)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Grabbed != 1 {
+		t.Errorf("the feeds once approved: %+v", run)
+	}
+
+	// Declined: it stays, saying so, and its movie is not followed.
+	m, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, user)
+	r.settle(t, false)
+	if _, err := r.svc.DeclineRequest(ctx, m.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.view(t, m.ID); v.Status != "declined" || v.Detail != "an admin declined it: acquire does not follow it for this request" {
+		t.Errorf("declined: %s %q", v.Status, v.Detail)
+	}
+	if title, _ := r.svc.st.TitleByID(ctx, "movie:9100"); title.Followed() || title.Monitored {
+		t.Errorf("the declined request's movie: %+v", title)
+	}
+	// An admin asking for it approves it, and it is followed again.
+	if again, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film"}, asAdmin("admin")); err != nil ||
+		created || again.ID != m.ID || again.Approval != store.ApprovalApproved {
+		t.Errorf("an admin asking for it: %+v %v", again, err)
+	}
+	if title, _ := r.svc.st.TitleByID(ctx, "movie:9100"); !title.Followed() || !title.Monitored || !title.Approved {
+		t.Errorf("approved by an admin's asking: %+v", title)
+	}
+	if _, err := r.svc.ApproveRequest(ctx, "w_none", "admin"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("approving no request: %v", err)
+	}
+
+	// requests.autoApprove: a user's request is approved at once.
+	if _, err := r.svc.PutRequestSettings(ctx, RequestSettings{AutoApprove: true}, 0, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.svc.RequestSettings(ctx); !got.AutoApprove || got.Revision == 0 {
+		t.Errorf("the request settings: %+v", got)
+	}
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[9002] = &tmdbSeries{name: "Another Saga", status: "Ended", seasons: map[int][]tmdbEpisode{}}
+	})
+	if auto, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9002, MediaType: "series", Title: "Another Saga"}, user); auto.Approval != store.ApprovalApproved {
+		t.Errorf("with autoApprove: %+v", auto)
+	}
+	// A request that follows nothing has nothing to approve.
+	plain, _, _ := r.svc.Request(ctx, store.Wanted{Title: "Some Film", MediaType: "movie"}, user)
+	if _, err := r.svc.ApproveRequest(ctx, plain.ID, "admin"); !IsNoFollow(err) || plain.Approval != "" {
+		t.Errorf("approving a request that follows nothing: %v %+v", err, plain)
+	}
+}
+
 // ── reading TMDB again ─────────────────────────────────────────────────────
 
 // The refresh reads a series that runs again on every run: what TMDB
@@ -404,7 +505,7 @@ func TestTheRefreshAddsWhatTMDBAnnounces(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	w, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user")
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	r.settle(t, false)
 	if run := r.settle(t, true); run.Titles != 0 {
 		t.Errorf("read again right away: %+v", run)
@@ -485,7 +586,7 @@ func TestTMDBNotAnswering(t *testing.T) {
 		f.series[9001] = sevenHarbours()
 		f.down = true
 	})
-	w, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user")
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	run := r.settle(t, false)
 	if run.Error == "" || run.Titles != 0 {
 		t.Errorf("a run against TMDB down: %+v", run)
@@ -500,7 +601,7 @@ func TestTMDBNotAnswering(t *testing.T) {
 
 	// A title TMDB does not know is the title's fault: recorded, and the
 	// run goes on.
-	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 404, MediaType: "series", Title: "Nobody Knows"}, "user"); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 404, MediaType: "series", Title: "Nobody Knows"}, asAdmin("user")); err != nil {
 		t.Fatal(err)
 	}
 	if run := r.settle(t, false); run.Failed != 1 || run.Error != "" {
@@ -513,7 +614,7 @@ func TestTMDBNotAnswering(t *testing.T) {
 
 	off := e2eService(t, &fakeGateway{}, testBox(t))
 	off.tm = tmdb.New("", "")
-	w2, err := off.Request(ctx, store.Wanted{TMDBID: 1, MediaType: "series", Title: "Anything"}, "user")
+	w2, _, err := off.Request(ctx, store.Wanted{TMDBID: 1, MediaType: "series", Title: "Anything"}, asAdmin("user"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +643,7 @@ func TestARequestedMovie(t *testing.T) {
 			"release_dates": []map[string]any{{"type": 3, "release_date": theatrical.Format(time.RFC3339)}}}}},
 	}
 	r.tmdb.set(func(f *fakeTMDB) { f.movies[9100] = movie })
-	w, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, "friend")
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend"))
 	if err != nil || w.TitleID != "movie:9100" || w.Status != "pending" {
 		t.Fatalf("the request: %+v %v", w, err)
 	}
@@ -611,7 +712,7 @@ func TestAMovieInCinemasIsReadUntilItIsOutAtHome(t *testing.T) {
 		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(festival),
 			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US", "release_dates": dates}}}}
 	})
-	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, "friend"); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
@@ -645,7 +746,8 @@ func TestWhatIsNew(t *testing.T) {
 	followed := now.Add(-48 * time.Hour)
 	before, after := followed.Add(-time.Hour), followed.Add(time.Hour)
 	tracked := store.Title{Kind: "series"}
-	requested := store.Title{Kind: "series", FollowedAt: &followed}
+	requested := store.Title{Kind: "series", FollowedAt: &followed, Approved: true}
+	awaiting := store.Title{Kind: "series", FollowedAt: &followed}
 	ep := func(aired *time.Time, added *time.Time) store.Target {
 		return store.Target{Kind: "episode", AirDate: aired, AddedAt: added}
 	}
@@ -663,9 +765,11 @@ func TestWhatIsNew(t *testing.T) {
 		{"an old episode from before the follow", requested, ep(day(-400), &before), false},
 		{"an old episode of the import", requested, ep(day(-400), nil), false},
 		{"a refresh added it, nobody follows", tracked, ep(day(-400), &after), false},
-		{"a requested movie", store.Title{Kind: "movie", FollowedAt: &followed}, store.Target{Kind: "movie"}, true},
+		{"a requested movie", store.Title{Kind: "movie", FollowedAt: &followed, Approved: true}, store.Target{Kind: "movie"}, true},
+		{"a requested movie awaiting approval", store.Title{Kind: "movie", FollowedAt: &followed}, store.Target{Kind: "movie"}, false},
+		{"an old episode a follow added, awaiting approval", awaiting, ep(day(-400), &after), false},
 		{"the import's movie", store.Title{Kind: "movie"}, store.Target{Kind: "movie", AddedAt: &after}, false},
-		{"a requested movie the library held once", store.Title{Kind: "movie", FollowedAt: &followed}, store.Target{Kind: "movie", EverHeld: true}, false},
+		{"a requested movie the library held once", store.Title{Kind: "movie", FollowedAt: &followed, Approved: true}, store.Target{Kind: "movie", EverHeld: true}, false},
 		{"aired yesterday, held once", tracked, store.Target{Kind: "episode", AirDate: day(-1), EverHeld: true}, false},
 		{"a follow added it, held once", requested, store.Target{Kind: "episode", AirDate: day(-400), AddedAt: &after, EverHeld: true}, false},
 	} {
@@ -688,6 +792,10 @@ func TestWhatIsNew(t *testing.T) {
 	} {
 		if tc.pol.Grabs(tracked, old, now) != tc.old || tc.pol.Grabs(tracked, fresh, now) != tc.fresh || tc.pol.GrabsAnything() != tc.grabsAnyThng {
 			t.Errorf("%s: old %v fresh %v anything %v", tc.name, tc.pol.Grabs(tracked, old, now), tc.pol.Grabs(tracked, fresh, now), tc.pol.GrabsAnything())
+		}
+		// A title held for an admin's approval: nothing on its own.
+		if tc.pol.Grabs(store.Title{Kind: "series", FollowedAt: &followed, Origin: store.OriginRequest}, fresh, now) {
+			t.Errorf("%s: a title held for approval is grabbed on its own", tc.name)
 		}
 	}
 }
@@ -852,7 +960,7 @@ func TestTheSweepTakesNothingFromBeforeTheAirDate(t *testing.T) {
 			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
 	})
-	if _, err := m.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, "friend"); err != nil {
+	if _, _, err := m.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
 		t.Fatal(err)
 	}
 	m.settle(t, false)
@@ -889,6 +997,9 @@ func handedOver(t *testing.T, r *targetRig) []string {
 	}
 	return out
 }
+
+// asAdmin is a request an admin makes: approved at once.
+func asAdmin(sub string) Requester { return Requester{Sub: sub, Admin: true} }
 
 func TestFollowKind(t *testing.T) {
 	got := []string{followKind("series"), followKind("tv"), followKind("TV"), followKind("movie"), followKind("episode"), followKind("")}
