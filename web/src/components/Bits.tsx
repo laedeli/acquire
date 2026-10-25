@@ -42,6 +42,7 @@ export function statusTone(s: string): Tone {
     case 'packaging':
     case 'queued':
     case 'pending':
+    case 'following':
       return 'blue'
     default:
       return 'neutral'

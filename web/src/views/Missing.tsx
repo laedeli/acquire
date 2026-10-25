@@ -49,7 +49,7 @@ import {
   type StateSpec,
 } from '@nalet/design-system'
 import { Download, RefreshCw } from 'lucide-react'
-import type { Api, Counts, HoldingsSummary, MissingRow, SeriesRow } from '../lib/api'
+import type { Api, Counts, HoldingsSummary, MissingAnswer, MissingRow, SeriesRow } from '../lib/api'
 import { ReleasePicker } from '../components/ReleasePicker'
 import { ago, until } from '../lib/format'
 
@@ -148,6 +148,14 @@ function holdingsReason(reason: string | undefined, one = false): string {
   return `the catalog couldn't say what the library holds of ${them}`
 }
 
+/** What is grabbed on its own, as the search and grab settings say: the header's line. */
+function onItsOwn(p: Pick<MissingAnswer, 'autoGrab' | 'autoGrabNew' | 'newWithinDays'>): string {
+  if (p.autoGrab) return 'everything missing is grabbed on its own, within the limits in settings'
+  if (p.autoGrabNew)
+    return `episodes that aired in the last ${formatCount(p.newWithinDays || 14)} days and what was requested are grabbed on their own; the rest is grabbed from here`
+  return 'nothing is grabbed on its own — the sweep only searches; settings can switch it on'
+}
+
 /** "8 episodes queued", "2 movies queued", "8 episodes and 2 movies queued". */
 function queuedLabel(rows: MissingRow[]): string {
   const movies = rows.filter((r) => r.kind === 'movie').length
@@ -162,7 +170,7 @@ export function Missing({ api, admin, tick }: { api: Api; admin: boolean; tick: 
   const [rows, setRows] = useState<MissingRow[]>([])
   const [counts, setCounts] = useState<Counts | null>(null)
   const [holdings, setHoldings] = useState<HoldingsSummary | null>(null)
-  const [sweepGrabs, setSweepGrabs] = useState(false)
+  const [policy, setPolicy] = useState<Pick<MissingAnswer, 'autoGrab' | 'autoGrabNew' | 'newWithinDays'> | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState('')
   const [picking, setPicking] = useState<MissingRow | null>(null)
@@ -185,7 +193,7 @@ export function Missing({ api, admin, tick }: { api: Api; admin: boolean; tick: 
       const [m, c] = await Promise.all([api.missing(LIMIT), api.counts()])
       setRows(m.missing)
       setHoldings(m.holdings)
-      setSweepGrabs(m.autoGrab)
+      setPolicy({ autoGrab: m.autoGrab, autoGrabNew: !!m.autoGrabNew, newWithinDays: m.newWithinDays })
       setCounts(c)
       setLoadError('')
       setLoadedAt(new Date().toISOString())
@@ -440,7 +448,7 @@ export function Missing({ api, admin, tick }: { api: Api; admin: boolean; tick: 
       <IllustratedMessage
         illustration="empty"
         title={`${formatCount(counts?.unaired ?? 0)} not yet aired`}
-        description="episodes that haven't aired aren't missing yet. each joins this list on the day it airs."
+        description="episodes that haven't aired and requested movies that aren't out yet aren't missing. each joins this list on the day it comes out."
         headingLevel={3}
       />
     )
@@ -606,11 +614,7 @@ export function Missing({ api, admin, tick }: { api: Api; admin: boolean; tick: 
               </span>
             )}
             {holdings?.lastAt && <span>{`holdings last asked ${ago(holdings.lastAt)}`}</span>}
-            <span>
-              {sweepGrabs
-                ? 'the sweep grabs what it finds missing, within the limits in settings'
-                : 'the sweep only searches — grabbing on its own is off in settings'}
-            </span>
+            {policy && <span>{onItsOwn(policy)}</span>}
             {counts && rows.length < counts.missing && (
               <span>{`the list holds the newest ${formatCount(rows.length)} of ${formatCount(counts.missing)}`}</span>
             )}

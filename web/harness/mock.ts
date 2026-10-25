@@ -172,6 +172,8 @@ export function mockApi(scenario: Scenario): Api {
           lastAt: scenario === 'unknown' ? null : iso(NOW - 3 * 3600_000),
         },
         autoGrab: false,
+        autoGrabNew: scenario === 'backlog',
+        newWithinDays: 14,
       }
       return pause(answer, 120)
     },
@@ -453,7 +455,8 @@ export function mockSubtitlesApi(scenario: SubtitleScenario, chinese: SubtitleCh
     subtitleSettings: async () => pause({ auto: true, allowMachineTranslated: false, revision: 1 }),
     // the rest of the settings view, so it renders whole
     searchSettings: async () =>
-      pause<SearchSettings>({ preferProtocol: 'usenet', storageFloorGb: 50, maxConcurrentGrabs: 3, autoGrab: false, revision: 1 }),
+      pause<SearchSettings>({ preferProtocol: 'usenet', storageFloorGb: 50, maxConcurrentGrabs: 3, autoGrab: false,
+        autoGrabNew: true, newWithinDays: 14, revision: 1 }),
     profiles: async () =>
       pause<QualityProfile[]>([{ id: 'standard', name: 'standard', isDefault: true, config: { preferProtocol: 'usenet',
         resolutions: ['1080p', '720p'], preferredCodecs: ['h264', 'hevc'], rejectTerms: [], minSizeMb: 0, maxSizeMb: 0, minSeeders: 1,

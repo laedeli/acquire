@@ -31,7 +31,9 @@ export function Settings({ api, admin }: { api: Api; admin: boolean }) {
 
 /**
  * The search and grab policy. It used to be deployment environment only; the
- * environment now just seeds it.
+ * environment now just seeds it. Two switches say what is grabbed on its own:
+ * the new things (what aired in the last days, what was requested), and
+ * everything missing.
  */
 function SearchAndGrab({ api }: { api: Api }) {
   const [draft, setDraft] = useState<SearchSettings | null>(null)
@@ -73,8 +75,8 @@ function SearchAndGrab({ api }: { api: Api }) {
         <div>
           <span className="acq__mono">search and grab</span>
           <Text variant="muted" as="div">
-            which protocol is searched first, when acquire refuses to start a download, and whether the
-            backlog sweep grabs.
+            which protocol is searched first, when acquire refuses to start a download, and what is
+            grabbed on its own.
           </Text>
         </div>
         <Button variant="primary" loading={saving} leading={<Save size={14} />} onClick={() => void save()}>
@@ -110,15 +112,35 @@ function SearchAndGrab({ api }: { api: Api }) {
           />
         </Field>
       </div>
+      <div className="acq__settings-row">
+        <Field
+          label="new episodes and requests"
+          error={fields.autoGrabNew}
+          hint={`on: an episode that aired in the last ${newDays(draft)} days, the episodes of a series someone requested, and a requested movie once it is out are grabbed as soon as a release turns up — in a source's newest releases, or when the backlog sweep finds one. off: they wait in the missing tab like the rest.`}
+        >
+          <Switch
+            checked={draft.autoGrabNew}
+            onChange={(e) => setDraft({ ...draft, autoGrabNew: e.currentTarget.checked })}
+            label={draft.autoGrabNew ? 'grabbed on their own' : 'grabbed from the missing tab'}
+          />
+        </Field>
+        <Field label="new means aired in the last (days)" error={fields.newWithinDays} hint="how recently an episode aired to count as new">
+          <Input
+            type="number"
+            value={String(draft.newWithinDays)}
+            onChange={(e) => setDraft({ ...draft, newWithinDays: Number(e.currentTarget.value) || 0 })}
+          />
+        </Field>
+      </div>
       <Field
-        label="the backlog sweep"
+        label="everything missing"
         error={fields.autoGrab}
-        hint="on: it grabs the best release of what it finds missing, within the floor and the downloads at once above — never a season pack for one episode, never a title whose holdings the catalog has not told. off: it only searches, and missing episodes are grabbed from the missing tab."
+        hint="on: the backlog sweep and the sources' newest releases grab the best release of whatever is missing, the older backlog too, within the floor and the downloads at once above — never a season pack for one episode, never a title whose holdings the catalog has not told. off: the sweep only searches, and the rest of the backlog is grabbed from the missing tab."
       >
         <Switch
           checked={draft.autoGrab}
           onChange={(e) => setDraft({ ...draft, autoGrab: e.currentTarget.checked })}
-          label={draft.autoGrab ? 'grabs on its own' : 'only searches'}
+          label={draft.autoGrab ? 'grabbed on its own' : 'only searched'}
         />
       </Field>
       <Divider />
@@ -406,6 +428,11 @@ function QualityProfileSettings({ api, admin }: { api: Api; admin: boolean }) {
       />
     </div>
   )
+}
+
+/** How recently an episode aired to count as new, as the draft says or, while it says none, as the server does. */
+function newDays(s: SearchSettings): number {
+  return s.newWithinDays > 0 ? s.newWithinDays : 14
 }
 
 function splitList(v: string): string[] {

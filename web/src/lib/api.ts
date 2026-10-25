@@ -18,10 +18,38 @@ export interface Wanted {
   posterUrl: string
   requestedBy: string
   requestedAt: string
+  /** For a request that follows its title: following, waiting, pending, downloading, packaging, fulfilled, failed. */
   status: string
   detail: string
   itemId: string
   updatedAt: string
+  /** The title the request follows: a series' episodes or a movie acquire tracks because it was asked for. */
+  titleId?: string
+  progress?: RequestProgress
+  /** Whether what the request waits for is grabbed on its own, as the search and grab settings say. */
+  autoGrab?: boolean
+}
+
+/** How far acquire is with the title a request follows. */
+export interface RequestProgress {
+  kind: 'series' | 'movie'
+  tmdbStatus?: string
+  /** The series still runs: more episodes are to come. */
+  running: boolean
+  inventoryAt: string | null
+  inventoryError?: string
+  holdingsKnown: boolean
+  /** Of a series' monitored episodes. */
+  episodes: number
+  held: number
+  playable: number
+  onTheWay: number
+  missing: number
+  failed: number
+  unaired: number
+  next?: { season: number; episode: number; title?: string; airDate: string }
+  /** A movie's one target: its state, and the grab under way for it (grabId). */
+  movie?: { state: string; grabId?: string; windowAt?: string; releaseKind?: string; releasePending?: boolean }
 }
 
 export interface Download {
@@ -302,8 +330,11 @@ export interface SearchSettings {
   preferProtocol: 'usenet' | 'torrent'
   storageFloorGb: number
   maxConcurrentGrabs: number
-  /** The backlog sweep grabs what it finds missing (off: it only searches). */
+  /** Everything missing is grabbed on its own: by the sweep and from the sources' newest releases (off: only searched). */
   autoGrab: boolean
+  /** The new things are grabbed on their own: what aired in the last newWithinDays days, and what was requested. */
+  autoGrabNew: boolean
+  newWithinDays: number
   revision: number
   updatedAt?: string
 }
@@ -469,6 +500,8 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
           storageFloorGb: s.storageFloorGb,
           maxConcurrentGrabs: s.maxConcurrentGrabs,
           autoGrab: s.autoGrab,
+          autoGrabNew: s.autoGrabNew,
+          newWithinDays: s.newWithinDays,
         }),
       }),
     // The WANT model's read side. `missing` is the backlog: monitored, aired,
@@ -541,8 +574,11 @@ export type HoldingsSummary = {
 export type MissingAnswer = {
   missing: MissingRow[]
   holdings: HoldingsSummary
-  /** Whether the backlog sweep grabs on its own (search.autoGrab). */
+  /** Whether everything missing is grabbed on its own (search.autoGrab). */
   autoGrab: boolean
+  /** Whether the new things are grabbed on their own (search.autoGrabNew): aired in the last newWithinDays days, or requested. */
+  autoGrabNew: boolean
+  newWithinDays: number
 }
 
 // MissingRow is one thing we want and do not have, and what is under way for it.
@@ -592,6 +628,8 @@ export type SeriesRow = {
   holdingsKnown: boolean
   holdingsAt: string | null
   holdingsError?: string
+  /** A request follows the series: what TMDB announces becomes its episodes. */
+  followed?: boolean
 }
 
 export type Counts = {

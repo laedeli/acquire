@@ -1,6 +1,12 @@
 // Requests: what was asked for, what it is doing now, and what an admin can do
 // about it. A downloading request shows its live bar inline, so you do not have
 // to cross-reference the downloads view.
+//
+// A request for a series follows it: the row says how much of it the library
+// holds and what comes next, and its episodes are grabbed one by one — on
+// their own, or from the missing tab —, never the series as a whole. A
+// request for a movie waits for the movie to come out, and its grab is the
+// movie's.
 import { useState } from 'react'
 import { Button, Table, Text, type TableColumn } from '@nalet/design-system'
 import { Download as DownloadIcon, Link2, Search, Trash2 } from 'lucide-react'
@@ -8,6 +14,23 @@ import type { Api, Download, Wanted } from '../lib/api'
 import { ProgressBar, StatusBadge, TelemetryLine } from '../components/Bits'
 import { ReleasePicker } from '../components/ReleasePicker'
 import { ago } from '../lib/format'
+
+/** A request that follows a series: grabbed episode by episode, never as a whole. */
+const followsSeries = (w: Wanted) => w.progress?.kind === 'series'
+
+/** What a request that follows its title says of what is grabbed on its own. */
+function onItsOwn(w: Wanted): string {
+  if (!w.progress || w.status === 'fulfilled') return ''
+  if (w.progress.kind === 'series')
+    return w.autoGrab
+      ? 'new episodes are grabbed on their own as releases turn up'
+      : 'its episodes are grabbed from the missing tab — grabbing on its own is off in settings'
+  if (w.status === 'waiting' || w.status === 'pending')
+    return w.autoGrab
+      ? 'grabbed on its own once a release turns up'
+      : 'grabbed from here or the missing tab — grabbing on its own is off in settings'
+  return ''
+}
 
 export function Requests({
   api,
@@ -28,8 +51,13 @@ export function Requests({
   const [picking, setPicking] = useState<Wanted | null>(null)
   const [error, setError] = useState('')
 
-  const activeFor = (id: string) =>
-    downloads.find((d) => d.wantedId === id && (d.state === 'downloading' || d.state === 'queued'))
+  // A followed movie downloads as its target's grab: the download names the grab.
+  const activeFor = (w: Wanted) =>
+    downloads.find(
+      (d) =>
+        (d.wantedId === w.id || (!!w.progress?.movie?.grabId && d.wantedId === w.progress.movie.grabId)) &&
+        (d.state === 'downloading' || d.state === 'queued'),
+    )
 
   async function act(id: string, fn: () => Promise<unknown>) {
     setBusy(id)
@@ -63,18 +91,22 @@ export function Requests({
       key: 'detail',
       header: 'detail',
       render: (w) => {
-        const d = activeFor(w.id)
+        const d = activeFor(w)
+        const p = w.progress
+        const own = onItsOwn(w)
         return (
           <div>
             <Text variant="muted" as="div">
               {w.detail}
             </Text>
+            {p?.kind === 'series' && p.episodes > 0 && <ProgressBar value={Math.round((p.held / p.episodes) * 100)} />}
             {d && (
               <>
                 <ProgressBar value={d.progressPct} />
                 <TelemetryLine d={d} />
               </>
             )}
+            {own && <div className="acq__sub">{own}</div>}
           </div>
         )
       },
@@ -85,7 +117,7 @@ export function Requests({
       align: 'right',
       render: (w) => {
         if (!admin) return null
-        const grabbable = w.status === 'pending' || w.status === 'failed'
+        const grabbable = (w.status === 'pending' || w.status === 'failed') && !followsSeries(w)
         return (
           <div className="acq__actions">
             {grabbable && autoGrab && (

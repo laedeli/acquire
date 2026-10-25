@@ -44,6 +44,7 @@ export function Series({ api }: { api: Api }) {
         <div>
           <Text>{r.title}</Text> {r.year > 0 && <Text variant="dim">{r.year}</Text>}
           {r.type === 'anime' && <Text variant="dim"> · anime</Text>}
+          {r.followed && <Text variant="dim"> · requested</Text>}
         </div>
       ),
     },
@@ -99,7 +100,7 @@ export function Series({ api }: { api: Api }) {
       {error && <Text variant="muted">could not load series: {error}</Text>}
       {loading && !rows.length && <Text variant="muted">loading…</Text>}
       {!loading && !rows.length && !error && (
-        <Text variant="muted">no series tracked yet — import intent to populate this</Text>
+        <Text variant="muted">no series tracked yet — a series requested in discover is followed here</Text>
       )}
       {rows.length > 0 && <Table columns={cols} rows={rows} />}
     </div>
