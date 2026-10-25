@@ -125,6 +125,11 @@ func scanWanted(r interface{ Scan(...any) error }) (Wanted, error) {
 	return w, err
 }
 
+// CreateWanted records a request. A request that follows a title (TitleID)
+// is made once per TMDB id and kind of title — a series asked for as tv is a
+// series (wanted_follow_uq) —: when one is there already, nothing is written
+// and ErrExists is returned, so of two made at once one is made, and the
+// other finds it.
 func (s *Store) CreateWanted(ctx context.Context, w Wanted) error {
 	var tmdb, year *int64
 	if w.TMDBID != 0 {
@@ -138,13 +143,21 @@ func (s *Store) CreateWanted(ctx context.Context, w Wanted) error {
 	if status == "" {
 		status = "pending"
 	}
-	_, err := s.pool.Exec(ctx, `
+	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO wanted_items (id, tmdb_id, media_type, title, year, poster_url, requested_by, status, detail, title_id,
 		                          approval, decided_by, decided_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		ON CONFLICT (tmdb_id, (CASE WHEN media_type IN ('series', 'tv') THEN 'series' ELSE media_type END)) WHERE title_id <> ''
+		DO NOTHING`,
 		w.ID, tmdb, w.MediaType, w.Title, year, w.PosterURL, w.RequestedBy, status, w.Detail, w.TitleID,
 		w.Approval, w.DecidedBy, w.DecidedAt)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrExists
+	}
+	return nil
 }
 
 // DecideWanted records an admin's word on a request — approved or declined —

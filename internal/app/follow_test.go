@@ -1375,3 +1375,38 @@ func TestARequestedMovieHeldOnceIsNotNewAgain(t *testing.T) {
 		t.Error("with everything grabbed on its own, it is not")
 	}
 }
+
+// Asked for at once — by users and admins, as series and as tv —, a title
+// gets one request, and every one asking finds it; an admin among them
+// approves it.
+func TestATitleAskedForAtOnceGetsOneRequest(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990801] = sevenHarbours() })
+	const n = 8
+	ids, errs := make([]string, n), make([]error, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			media := map[bool]string{true: "series", false: "tv"}[i%3 == 0]
+			w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990801, MediaType: media, Title: "Example Saga"},
+				Requester{Sub: fmt.Sprintf("someone-%d", i), Admin: i%2 == 0})
+			ids[i], errs[i] = w.ID, err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i := range ids {
+		if errs[i] != nil || ids[i] != ids[0] {
+			t.Errorf("asker %d: %s %v, want %s", i, ids[i], errs[i], ids[0])
+		}
+	}
+	all, _ := r.svc.st.ListWanted(ctx)
+	if len(all) != 1 || all[0].Approval != store.ApprovalApproved || all[0].TitleID != "series:990801" {
+		t.Errorf("the requests: %+v", all)
+	}
+}

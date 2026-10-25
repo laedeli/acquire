@@ -137,6 +137,7 @@ ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS decided_by text NOT NULL DEFAU
 ALTER TABLE wanted_items ADD COLUMN IF NOT EXISTS decided_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS wanted_title_idx     ON wanted_items (title_id) WHERE title_id <> '';
+
 CREATE INDEX IF NOT EXISTS titles_inventory_idx ON titles (inventory_at NULLS FIRST) WHERE monitored;
 CREATE INDEX IF NOT EXISTS targets_added_idx    ON acquisition_targets (title_id, added_at) WHERE added_at IS NOT NULL;
 
@@ -172,3 +173,18 @@ UPDATE acquisition_targets SET ever_held = true WHERE state = 'held' AND NOT eve
 -- request then was.
 UPDATE wanted_items SET approval = 'approved', decided_by = 'acquire', decided_at = COALESCE(decided_at, updated_at)
  WHERE title_id <> '' AND approval = '';
+
+-- One request follows a title: one per TMDB id and kind of title — a series
+-- asked for as tv is a series —, so of two made at once one is made and the
+-- other finds it (wanted_follow_uq). A database where more were made before
+-- keeps one following its title — the one approved, else the newest —, and
+-- the others follow none.
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+           PARTITION BY tmdb_id, CASE WHEN media_type IN ('series', 'tv') THEN 'series' ELSE media_type END
+           ORDER BY (approval = 'approved') DESC, requested_at DESC, id DESC) AS n
+    FROM wanted_items WHERE title_id <> '')
+UPDATE wanted_items w SET title_id = '', approval = '', decided_by = '', decided_at = NULL, updated_at = now()
+  FROM ranked r WHERE r.id = w.id AND r.n > 1;
+CREATE UNIQUE INDEX IF NOT EXISTS wanted_follow_uq ON wanted_items
+  (tmdb_id, (CASE WHEN media_type IN ('series', 'tv') THEN 'series' ELSE media_type END)) WHERE title_id <> '';

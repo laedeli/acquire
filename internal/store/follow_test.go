@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -1202,5 +1203,31 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 	a, err := s.AirTimesOfRunning(ctx)
 	if err != nil || a.Running != 6 || a.Read != 2 || a.Unknown != 1 || a.Pending != 3 || a.LastError != "TVmaze did not answer: HTTP 503" {
 		t.Errorf("of the series that run: %+v %v", a, err)
+	}
+}
+
+// A request that follows a title is made once per TMDB id and kind of title
+// — a series asked for as tv is a series —; one that follows none, any number
+// of times.
+func TestOneRequestFollowsATitle(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	follow := Wanted{ID: "w1", TMDBID: 990801, MediaType: "series", Title: "Example", TitleID: "series:990801", Approval: ApprovalAwaiting}
+	if err := s.CreateWanted(ctx, follow); err != nil {
+		t.Fatal(err)
+	}
+	again := follow
+	again.ID, again.MediaType = "w2", "tv"
+	if err := s.CreateWanted(ctx, again); !errors.Is(err, ErrExists) {
+		t.Errorf("the same series again, as tv: %v", err)
+	}
+	movie := Wanted{ID: "w3", TMDBID: 990801, MediaType: "movie", Title: "Example", TitleID: "movie:990801", Approval: ApprovalAwaiting}
+	if err := s.CreateWanted(ctx, movie); err != nil {
+		t.Errorf("a movie of the same TMDB id: %v", err)
+	}
+	for _, id := range []string{"w4", "w5"} {
+		if err := s.CreateWanted(ctx, Wanted{ID: id, TMDBID: 990802, MediaType: "movie", Title: "Plain"}); err != nil {
+			t.Errorf("a request that follows nothing, %s: %v", id, err)
+		}
 	}
 }

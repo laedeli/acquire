@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -443,7 +444,9 @@ func TestMigrate042OverAnEarlierDraft(t *testing.T) {
 		ALTER TABLE wanted_items ADD COLUMN title_id text NOT NULL DEFAULT '';
 		INSERT INTO titles (id, tmdb_id, kind, title) VALUES ('series:990401', 990401, 'series', 'Example Show');
 		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, title_id)
-		VALUES ('w_draft', 990401, 'series', 'Example Show', 'following', 'series:990401');`); err != nil {
+		VALUES ('w_draft', 990401, 'series', 'Example Show', 'following', 'series:990401');
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, title_id, requested_at)
+		VALUES ('w_draft_twice', 990401, 'tv', 'Example Show', 'following', 'series:990401', now() - interval '1 day');`); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
@@ -463,5 +466,14 @@ func TestMigrate042OverAnEarlierDraft(t *testing.T) {
 	w, err := s.GetWanted(ctx, "w_draft")
 	if err != nil || w.Approval != ApprovalApproved || w.DecidedBy != "acquire" || w.DecidedAt == nil {
 		t.Errorf("the draft's request: %+v %v", w, err)
+	}
+	// The draft made two for the title, asked for at once: the newest
+	// follows it, the other none.
+	if twice, err := s.GetWanted(ctx, "w_draft_twice"); err != nil || twice.TitleID != "" || twice.Approval != "" {
+		t.Errorf("the draft's second request: %+v %v", twice, err)
+	}
+	if err := s.CreateWanted(ctx, Wanted{ID: "w_new", TMDBID: 990401, MediaType: "series", Title: "Example Show",
+		TitleID: "series:990401", Approval: ApprovalAwaiting}); !errors.Is(err, ErrExists) {
+		t.Errorf("a third over the draft's: %v", err)
 	}
 }

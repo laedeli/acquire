@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -192,8 +193,12 @@ var errNoReleases = errors.New("no releases found")
 func itoa(n int) string { return strconv.Itoa(n) }
 
 func newID() string {
-	// time-ordered enough for a request id; uniqueness from the nanosecond.
-	return "w_" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
+	// Time-ordered enough for a request id; unique by the random part after
+	// the time — a clock that ticks in microseconds gives two requests made
+	// at once the same time.
+	var b [6]byte
+	_, _ = rand.Read(b[:])
+	return "w_" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "") + hex.EncodeToString(b[:])
 }
 
 // Grab hands a concrete source (magnet, release-file URL or hoster link) for a

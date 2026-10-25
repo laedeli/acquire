@@ -105,14 +105,18 @@ func (s *Service) Request(ctx context.Context, w store.Wanted, by Requester) (ou
 		// Approved by the setting, not by whoever asked.
 		approval, decidedBy = store.ApprovalApproved, decidedByAutoApprove
 	}
-	// One request per title: asking again finds the request there is.
+	// One request per title: asking again finds the request there is — an
+	// admin asking approves it.
+	again := func(prev store.Wanted) (store.Wanted, bool, error) {
+		if !by.Admin || prev.Approval == store.ApprovalApproved {
+			return prev, false, nil
+		}
+		out, err := s.ApproveRequest(ctx, prev.ID, decidedBy)
+		return out, false, err
+	}
 	if prev, err := s.st.FindRequestFor(ctx, w.TMDBID, mediaTypesOf(kind)); err == nil {
 		if prev.TitleID != "" {
-			if by.Admin && prev.Approval != store.ApprovalApproved {
-				out, err := s.ApproveRequest(ctx, prev.ID, decidedBy)
-				return out, false, err
-			}
-			return prev, false, nil
+			return again(prev)
 		}
 		title, err := s.requested(ctx, kind, w, approval)
 		if err != nil {
@@ -140,6 +144,14 @@ func (s *Service) Request(ctx context.Context, w store.Wanted, by Requester) (ou
 		w.DecidedAt = &now
 	}
 	out, err = s.createRequest(ctx, w)
+	if errors.Is(err, store.ErrExists) {
+		// Asked at once from elsewhere: the request made there.
+		prev, err := s.st.FindRequestFor(ctx, w.TMDBID, mediaTypesOf(kind))
+		if err != nil {
+			return store.Wanted{}, false, err
+		}
+		return again(prev)
+	}
 	return out, err == nil, err
 }
 
