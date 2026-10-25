@@ -260,6 +260,55 @@ func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 	}
 }
 
+// A release published before the day its episode aired — TMDB's air date,
+// 00:00 UTC — cannot be of it: most often a fake, it is rejected and blocked
+// for the episode, and a release published since is grabbed. An automatic
+// grab waits search.airDelayHours after the air date — 30 by default — for
+// the broadcast, which is a day later in UTC for an evening in the Americas.
+func TestTheFeedsTakeNothingFromBeforeTheAirDate(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
+	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(0), 0)
+	fake := "Show.Name.S01E01.1080p.WEB.h264-FAKE"
+	feedSrc := newFeedSource(t, true,
+		tv(fake, day(-1).Add(-6*time.Hour)),
+		tv("Show.Name.S01E02.1080p.WEB.h264-GRP", *day(0)))
+	addFeed(t, r.svc, "feed", feedSrc)
+	if d := r.svc.envSearchSettings().AirDelayHours; d != 30 {
+		t.Fatalf("the air delay by default: %d", d)
+	}
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true,
+		AirDelayHours: 30}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := r.svc.SyncRSS(ctx)
+	if err != nil || run.Grabbed != 0 || len(r.gw.added()) != 0 {
+		t.Fatalf("the fake and an episode within its delay: %+v %v (adds %d)", run, err, len(r.gw.added()))
+	}
+	blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID)
+	if why := blocked[fake]; !strings.Contains(why, "before S01E01 aired on "+dateOf(day(-1))) {
+		t.Errorf("the fake is not blocked for E01: %v", blocked)
+	}
+	if st := target(t, r.svc, eps[1].ID); st.State != store.TargetWanted {
+		t.Errorf("E02, aired today, grabbed within the delay: %+v", st)
+	}
+
+	// The real E01 turns up; without a delay, a second E02 is grabbed too.
+	feedSrc.add(tv("Show.Name.S01E01.1080p.WEB.h264-GRP", ago(time.Minute)), tv("Show.Name.S01E02.720p.WEB.h264-GRP", *day(0)))
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.SyncRSS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := r.grabbed(t)
+	if got["S01E01"] != "Show.Name.S01E01.1080p.WEB.h264-GRP" || got["S01E02"] != "Show.Name.S01E02.720p.WEB.h264-GRP" {
+		t.Errorf("grabbed %v", got)
+	}
+}
+
 // What the policy grabs: with only the new things, an episode that aired
 // days ago, not the old backlog; with everything, the old backlog too.
 func TestTheFeedsGrabWhatThePolicyAllows(t *testing.T) {

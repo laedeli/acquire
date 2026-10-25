@@ -365,8 +365,12 @@ func gatewayDown(err error) bool {
 
 // recordSearch records a target search's outcome — found, none or error —
 // with when the target is due again, and returns the releases an automatic
-// grab may take. Recording every outcome is what makes the sweep rotate.
+// grab may take. Recording every outcome is what makes the sweep rotate. A
+// release published before the target aired is blocked for it (blockPreAired).
 func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Candidate, err error) []Candidate {
+	if err == nil {
+		s.blockPreAired(ctx, t, cands)
+	}
 	if err != nil {
 		// A search that errors is a failure to LOOK, not evidence of absence,
 		// so it backs off rather than marking anything.
@@ -397,6 +401,20 @@ func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Cand
 		Reason: fmt.Sprintf("%d candidate(s), best via %s", len(usable), best.MatchedVia),
 	})
 	return usable
+}
+
+// blockPreAired blocks for a target the releases rejected for having been
+// published before it aired (preAired): most often fakes, and never offered
+// to an automatic grab of it again for as long as a failed release is
+// blocked.
+func (s *Service) blockPreAired(ctx context.Context, t store.Target, cands []Candidate) {
+	for _, c := range cands {
+		if c.preAired {
+			if err := s.BlockFailedRelease(ctx, t.ID, c.Title, c.Indexer, clip(strings.SplitN(c.Reason, " · ", 2)[0], 200)); err != nil {
+				log.Printf("acquire: block %q for %s: %v", c.Title, t.ID, err)
+			}
+		}
+	}
 }
 
 // ── the grab queue (the console's Missing tab) ─────────────────────────────

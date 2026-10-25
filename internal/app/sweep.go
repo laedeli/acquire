@@ -87,15 +87,13 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 // free; a target whose title's holdings are unknown is never grabbed. With
 // autoGrabNew on it grabs so the new things only (SearchSettings.Grabs), and
 // takes them first, before the old backlog.
+//
+// Nothing is searched before search.airDelayHours have passed since its air
+// date (store.DueOrder): what turns up named for an episode before it was
+// broadcast is most often a fake, and a release published before its air date
+// is rejected and blocked for it (preAired).
 func (s *Service) SweepBacklog(ctx context.Context, limit int) error {
-	pol := s.grabPolicy(ctx)
-	var due []store.Target
-	var err error
-	if pol.AutoGrabNew {
-		due, err = s.st.DueTargetsNewFirst(ctx, limit, pol.newWithin())
-	} else {
-		due, err = s.st.DueTargets(ctx, limit)
-	}
+	due, err := s.st.DueTargetsBy(ctx, limit, s.grabPolicy(ctx).dueOrder())
 	if err != nil {
 		return err
 	}
@@ -105,14 +103,7 @@ func (s *Service) SweepBacklog(ctx context.Context, limit int) error {
 // SweepRetries re-examines targets whose searches found nothing or failed and
 // whose backoff has expired.
 func (s *Service) SweepRetries(ctx context.Context, limit int) error {
-	pol := s.grabPolicy(ctx)
-	var due []store.Target
-	var err error
-	if pol.AutoGrabNew {
-		due, err = s.st.RetryableTargetsNewFirst(ctx, limit, pol.newWithin())
-	} else {
-		due, err = s.st.RetryableTargets(ctx, limit)
-	}
+	due, err := s.st.RetryableTargetsBy(ctx, limit, s.grabPolicy(ctx).dueOrder())
 	if err != nil || len(due) == 0 {
 		return err
 	}

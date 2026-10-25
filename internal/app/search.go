@@ -88,6 +88,9 @@ type Candidate struct {
 	// to every wanted target it holds.
 	Covers string `json:"covers,omitempty"`
 	Pack   bool   `json:"pack,omitempty"`
+	// PubDate is when the source says the release was published; nil when
+	// it says not.
+	PubDate *time.Time `json:"pubDate,omitempty"`
 	// Release is an opaque, sealed reference to the release's real link. A grab
 	// sends it back. Source, which the console shows, is that link with its
 	// credentials removed: a source's API key never reaches a browser.
@@ -95,6 +98,10 @@ type Candidate struct {
 
 	// link is the real link, server-side only.
 	link string
+	// preAired is set on a release rejected for having been published before
+	// its target aired (preAired): an automatic grab blocks it for the
+	// target.
+	preAired bool
 }
 
 // SearchResult is a manual search's answer.
@@ -534,6 +541,7 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 	if err != nil {
 		log.Printf("acquire: blocklist of %s unreadable, not applied: %v", targetID, err)
 	}
+	days := s.airDays(ctx, t)
 	out := make([]Candidate, 0, len(results))
 	for _, r := range results {
 		c := s.candidate(r.Release, profile, routes)
@@ -544,13 +552,81 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 			cov := release.ParseCoverage(c.Title)
 			c.Covers, c.Pack = cov.String(), cov.Pack()
 		}
-		if why, ok := blocked[c.Title]; ok {
-			c.Rejected, c.Reason = true, clip("blocked for this target: "+why+" · "+c.Reason, 300)
-		}
+		markRejected(&c, t, blocked, days)
 		out = append(out, c)
 	}
 	sortCandidates(out)
 	return out, nil
+}
+
+// markRejected rejects, with the reason, a release blocked for the target, or
+// one published before the target aired (preAired).
+func markRejected(c *Candidate, t store.Target, blocked map[string]string, days func() map[[2]int]time.Time) {
+	if why, ok := blocked[c.Title]; ok {
+		c.Rejected, c.Reason = true, clip("blocked for this target: "+why+" · "+c.Reason, 300)
+		return
+	}
+	if why := preAired(*c, t, days); why != "" {
+		c.Rejected, c.Reason, c.preAired = true, clip(why+" · "+c.Reason, 300), true
+	}
+}
+
+// preAired says why a release cannot be what its name says, or "" when it
+// can: it was published before the day its target aired — of a release of
+// several episodes, the last of them —, as TMDB dates the day (00:00 UTC), or
+// before the day a requested movie came out. A release named for an episode
+// before it was broadcast is most often a fake. A release whose source names
+// no publication time is not told; days reads the air dates of the title's
+// episodes, once, for a release of several.
+func preAired(c Candidate, t store.Target, days func() map[[2]int]time.Time) string {
+	if c.PubDate == nil || t.AirDate == nil {
+		return ""
+	}
+	due, what := *t.AirDate, coords(t)
+	if t.Kind != "movie" {
+		if cov := release.ParseCoverage(c.Title); cov.Multi() {
+			m := days()
+			for _, e := range cov.Episodes {
+				if d, ok := m[[2]int{cov.Season, e}]; ok && d.After(due) {
+					due, what = d, fmt.Sprintf("S%02dE%02d", cov.Season, e)
+				}
+			}
+		}
+	}
+	if !c.PubDate.Before(due) {
+		return ""
+	}
+	at := c.PubDate.UTC().Format("2006-01-02 15:04 UTC")
+	if t.Kind == "movie" {
+		return fmt.Sprintf("published %s, before the movie came out on %s: most likely a fake", at, due.Format("2006-01-02"))
+	}
+	return fmt.Sprintf("published %s, before %s aired on %s: most likely a fake", at, what, due.Format("2006-01-02"))
+}
+
+// airDays reads, once and when asked, the air dates of the episodes of a
+// target's title, by season and episode: what preAired compares a release
+// of several episodes with. None for a movie, or when they cannot be read.
+func (s *Service) airDays(ctx context.Context, t store.Target) func() map[[2]int]time.Time {
+	var m map[[2]int]time.Time
+	return func() map[[2]int]time.Time {
+		if m != nil {
+			return m
+		}
+		m = map[[2]int]time.Time{}
+		if t.Kind == "movie" {
+			return m
+		}
+		all, err := s.st.TitleTargets(ctx, t.TitleID)
+		if err != nil {
+			return m
+		}
+		for _, x := range all {
+			if x.SeasonNumber != nil && x.EpisodeNumber != nil && x.AirDate != nil {
+				m[[2]int{*x.SeasonNumber, *x.EpisodeNumber}] = *x.AirDate
+			}
+		}
+		return m
+	}
 }
 
 // autoCandidates are the releases an automatic grab of a target may take —
@@ -654,8 +730,13 @@ func (s *Service) candidate(r release.Release, profile release.Profile, routes m
 		SizeMb: r.Size / (1024 * 1024), Seeders: r.Seeders,
 	}, profile)
 	link := r.Source()
+	var pub *time.Time
+	if !r.PubDate.IsZero() {
+		at := r.PubDate.UTC()
+		pub = &at
+	}
 	return Candidate{
-		Title: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Size: r.Size, Seeders: r.Seeders,
+		Title: r.Title, Indexer: r.Indexer, Protocol: r.Protocol, Size: r.Size, Seeders: r.Seeders, PubDate: pub,
 		Adapter: routes[r.Protocol], Source: endpoint.Redact(link),
 		Reason: v.Summary(), Score: v.Score, Rejected: v.Rejected,
 		Resolution: info.Resolution, Codec: info.Codec, SourceType: info.Source,

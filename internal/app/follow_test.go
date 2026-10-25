@@ -625,7 +625,7 @@ func TestMovieWindow(t *testing.T) {
 		{"in cinemas only", tmdb.Movie{Releases: []tmdb.Release{{Type: tmdb.ReleaseTheatrical, Date: cinema}}}, ptr(cinema.Add(theatricalWait)), "theatrical"},
 		{"nothing dated", tmdb.Movie{}, nil, ""},
 	} {
-		at, kind := movieWindow(tc.m)
+		at, _, kind := movieWindow(tc.m)
 		if kind != tc.kind || (at == nil) != (tc.at == nil) || (at != nil && !at.Equal(*tc.at)) {
 			t.Errorf("%s: %v %q", tc.name, at, kind)
 		}
@@ -719,6 +719,87 @@ func TestTheSweepGrabsOnlyTheNewThings(t *testing.T) {
 	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, NewWithinDays: 400}, 0, "test"); !errors.As(err, &ve) {
 		t.Errorf("400 days: %v", err)
 	}
+}
+
+// The sweep searches nothing before search.airDelayHours have passed since
+// its air date, and takes no release published before it aired: rejected,
+// and blocked for the episode. The same holds for a requested movie and the
+// day it came out to watch at home.
+func TestTheSweepTakesNothingFromBeforeTheAirDate(t *testing.T) {
+	fake, real := "Show.Name.S01E01.2160p.WEB-DL.DDP5.1.x265-FAKE", "Show.Name.S01E01.720p.WEB.h264-GRP"
+	r := newTargetRig(t, fake, real)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-2), 0)
+	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(0), 0)
+	r.src.mu.Lock()
+	r.src.pubs = map[string]time.Time{fake: *day(-3), real: ago(time.Hour)}
+	r.src.mu.Unlock()
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, AutoGrab: true,
+		AirDelayHours: 30}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := r.svc.SearchTarget(ctx, eps[0].ID)
+	if err != nil || len(cands) != 2 || cands[0].Title != real || !cands[1].Rejected ||
+		!strings.Contains(cands[1].Reason, "before S01E01 aired on "+dateOf(day(-2))) || cands[1].PubDate == nil {
+		t.Fatalf("the typed search: %+v %v", cands, err)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if got := handedOver(t, r); len(got) != 1 || got[0] != real {
+		t.Errorf("the sweep handed over %v, want the real E01 only", got)
+	}
+	if blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID); blocked[fake] == "" {
+		t.Errorf("the fake is not blocked for E01: %v", blocked)
+	}
+	if st := target(t, r.svc, eps[1].ID); st.LastSearchAt != nil {
+		t.Errorf("E02, aired today, searched within the delay: %+v", st)
+	}
+
+	// A requested movie, out at home two days ago: a release from before.
+	m := newFollowRig(t)
+	m.tmdb.set(func(f *fakeTMDB) {
+		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
+	})
+	if _, err := m.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, "friend"); err != nil {
+		t.Fatal(err)
+	}
+	m.settle(t, false)
+	early, out := "Example.Clay.Film.2026.2160p.WEB-DL.DDP5.1.x265-FAKE", "Example.Clay.Film.2026.1080p.WEB-DL.x264-GRP"
+	src := newFakeSource(t, "usenet", "K", early, out)
+	src.pubs = map[string]time.Time{early: *day(-3), out: ago(time.Hour)}
+	addSource(t, m.svc, "example", src, nil)
+	if _, err := m.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, AutoGrabNew: true,
+		AirDelayHours: 30}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if got := handedOver(t, m.targetRig); len(got) != 1 || got[0] != out {
+		t.Errorf("the sweep handed over %v, want the movie's release from after it came out", got)
+	}
+	if blocked, _ := m.svc.st.BlockedFor(ctx, "movie:9100:movie"); !strings.Contains(blocked[early], "before the movie came out on "+dateOf(day(-2))) {
+		t.Errorf("the early release is not blocked: %v", blocked)
+	}
+}
+
+// handedOver are the releases the gateway was handed, by name.
+func handedOver(t *testing.T, r *targetRig) []string {
+	t.Helper()
+	var out []string
+	for _, add := range r.gw.added() {
+		id, _ := add["wanted_item_id"].(string)
+		g, err := r.svc.st.GetTargetGrab(context.Background(), id)
+		if err != nil {
+			t.Fatalf("an add for %q: %v", id, err)
+		}
+		out = append(out, g.ReleaseTitle)
+	}
+	return out
 }
 
 func TestFollowKind(t *testing.T) {

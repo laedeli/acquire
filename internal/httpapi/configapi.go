@@ -232,7 +232,9 @@ func (s *Server) getSearchSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, doc)
 }
 
-// putSearchSettings stores the search and grab policy.
+// putSearchSettings stores the search and grab policy. The document is read
+// over the policy stored: a field it does not name — one a console from
+// before it does not know — keeps its value.
 //
 //	PUT /api/settings/search   If-Match: <revision>
 func (s *Server) putSearchSettings(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +246,12 @@ func (s *Server) putSearchSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var in app.SearchSettings
+	cur, err := s.svc.GetSearchSettings(r.Context())
+	if err != nil {
+		writeConfigError(w, err)
+		return
+	}
+	in := cur.SearchSettings
 	if !decodeBody(w, r, &in) {
 		return
 	}

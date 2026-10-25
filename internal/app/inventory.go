@@ -278,10 +278,10 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 		if err != nil {
 			return ch, false, tmdbError(err)
 		}
-		window, kind := movieWindow(m)
+		window, released, kind := movieWindow(m)
 		target, err := s.st.ApplyMovieInventory(ctx, t.ID, store.MovieRead{
 			IMDBID: m.IMDBID, Name: m.Title, Year: m.Year(), Status: m.Status, Aliases: m.Aliases,
-			Window: window, Kind: kind,
+			Window: window, Released: released, Kind: kind,
 		})
 		if err != nil {
 			return ch, false, err
@@ -343,14 +343,15 @@ func tmdbError(err error) error {
 // movieWindow is when a requested movie is searched from: its first release
 // to watch at home, as TMDB dates it — digital, physical or TV —; when TMDB
 // dates none, theatricalWait after it came to cinemas; nil while TMDB dates
-// nothing at all.
-func movieWindow(m tmdb.Movie) (*time.Time, string) {
+// nothing at all. released is the day it came out as kind says: at home, or
+// in cinemas.
+func movieWindow(m tmdb.Movie) (window, released *time.Time, kind string) {
 	if at, kind, ok := m.HomeRelease(); ok {
-		return &at, kind
+		return &at, &at, kind
 	}
 	if at, ok := m.TheatricalRelease(); ok {
 		w := at.Add(theatricalWait)
-		return &w, "theatrical"
+		return &w, &at, "theatrical"
 	}
-	return nil, ""
+	return nil, nil, ""
 }

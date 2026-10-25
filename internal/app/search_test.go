@@ -41,6 +41,8 @@ type fakeSource struct {
 	srv      *httptest.Server
 	// gone are release ids whose file the source answers 404 for.
 	gone map[string]bool
+	// pubs are the publication times it names, by release name.
+	pubs map[string]time.Time
 }
 
 func newFakeSource(t *testing.T, protocol, key string, titles ...string) *fakeSource {
@@ -70,7 +72,7 @@ func (f *fakeSource) offer(titles ...string) {
 
 func (f *fakeSource) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	mode, delay, titles, gone := f.mode, f.delay, f.titles, f.gone
+	mode, delay, titles, gone, pubs := f.mode, f.delay, f.titles, f.gone, f.pubs
 	q := r.URL.Query()
 	f.queries = append(f.queries, q.Get("t"))
 	f.mu.Unlock()
@@ -112,13 +114,17 @@ func (f *fakeSource) serve(w http.ResponseWriter, r *http.Request) {
 		var b strings.Builder
 		b.WriteString(`<rss xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/"><channel>`)
 		for i, title := range titles {
+			pub := ""
+			if at, ok := pubs[title]; ok {
+				pub = "<pubDate>" + at.Format(time.RFC1123Z) + "</pubDate>"
+			}
 			if f.protocol == "torrent" {
-				fmt.Fprintf(&b, `<item><title>%s</title><guid>t%d</guid><enclosure url="%s/api?t=get&amp;id=t%d&amp;apikey=%s" length="%d" type="application/x-bittorrent"/>
-				  <newznab:attr name="seeders" value="20"/></item>`, title, i, f.srv.URL, i, f.key, int64(8<<30))
+				fmt.Fprintf(&b, `<item><title>%s</title><guid>t%d</guid>%s<enclosure url="%s/api?t=get&amp;id=t%d&amp;apikey=%s" length="%d" type="application/x-bittorrent"/>
+				  <newznab:attr name="seeders" value="20"/></item>`, title, i, pub, f.srv.URL, i, f.key, int64(8<<30))
 				continue
 			}
-			fmt.Fprintf(&b, `<item><title>%s</title><guid>n%d</guid><enclosure url="%s/api?t=get&amp;id=n%d&amp;apikey=%s" length="%d" type="application/x-nzb"/></item>`,
-				title, i, f.srv.URL, i, f.key, int64(8<<30))
+			fmt.Fprintf(&b, `<item><title>%s</title><guid>n%d</guid>%s<enclosure url="%s/api?t=get&amp;id=n%d&amp;apikey=%s" length="%d" type="application/x-nzb"/></item>`,
+				title, i, pub, f.srv.URL, i, f.key, int64(8<<30))
 		}
 		b.WriteString(`</channel></rss>`)
 		_, _ = w.Write([]byte(b.String()))

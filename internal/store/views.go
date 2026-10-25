@@ -300,27 +300,23 @@ func (s *Store) RecentHistory(ctx context.Context, limit int) ([]map[string]any,
 // and whose backoff has expired — the ones the sweep may look at, as
 // DueTargets says.
 func (s *Store) RetryableTargets(ctx context.Context, limit int) ([]Target, error) {
-	return s.retryableTargets(ctx, limit, 0)
+	return s.RetryableTargetsBy(ctx, limit, DueOrder{})
 }
 
-// RetryableTargetsNewFirst is RetryableTargets with the new things first, as
-// DueTargetsNewFirst orders them.
-func (s *Store) RetryableTargetsNewFirst(ctx context.Context, limit, days int) ([]Target, error) {
-	return s.retryableTargets(ctx, limit, days)
-}
-
-func (s *Store) retryableTargets(ctx context.Context, limit, days int) ([]Target, error) {
+// RetryableTargetsBy is RetryableTargets in the order the policy asks for, as
+// DueTargetsBy orders them.
+func (s *Store) RetryableTargetsBy(ctx context.Context, limit int, o DueOrder) ([]Target, error) {
 	order := `a.search_backoff_until`
-	args := []any{limit}
-	if days > 0 {
-		order = newSQL("$2") + ` DESC, ` + order
-		args = append(args, days)
+	args := []any{limit, o.AirDelay.Seconds()}
+	if o.NewWithinDays > 0 {
+		order = newSQL("$3") + ` DESC, ` + order
+		args = append(args, o.NewWithinDays)
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+targetCols+`
 		  FROM acquisition_targets a
 		  JOIN titles t ON t.id = a.title_id
-		 WHERE `+sweepableSQL+`
+		 WHERE `+sweepableSQL("$2")+`
 		   AND a.search_failures > 0
 		   AND a.search_backoff_until IS NOT NULL AND a.search_backoff_until <= now()
 		 ORDER BY `+order+`

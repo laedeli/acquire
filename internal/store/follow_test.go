@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -514,23 +515,85 @@ func TestNewThingsFirst(t *testing.T) {
 	if got := ids(plain); len(got) != 3 || got[0] != old {
 		t.Errorf("plain order = %v, want the one never searched first", got)
 	}
-	first, _ := s.DueTargetsNewFirst(ctx, 2, 14)
+	first, _ := s.DueTargetsBy(ctx, 2, DueOrder{NewWithinDays: 14})
 	if got := ids(first); len(got) != 2 || got[0] == old || got[1] == old {
 		t.Errorf("new first = %v, want the two new ones before the old backlog", got)
 	}
-	retry, _ := s.RetryableTargetsNewFirst(ctx, 10, 14)
+	retry, _ := s.RetryableTargetsBy(ctx, 10, DueOrder{NewWithinDays: 14})
 	if len(retry) != 2 {
 		t.Errorf("retryable = %v", ids(retry))
 	}
-	eps, movies, err := s.WantedForFeeds(ctx, false, 14)
+	eps, movies, err := s.WantedForFeeds(ctx, FeedsWant{NewWithinDays: 14})
 	if err != nil || eps != 2 || movies != 0 {
 		t.Errorf("new wants for the feeds: %d episodes, %d movies, %v", eps, movies, err)
 	}
-	if eps, _, _ := s.WantedForFeeds(ctx, true, 14); eps != 3 {
+	if eps, _, _ := s.WantedForFeeds(ctx, FeedsWant{All: true, NewWithinDays: 14}); eps != 3 {
 		t.Errorf("all wants for the feeds: %d", eps)
 	}
-	if eps, _, _ := s.WantedForFeeds(ctx, false, 1); eps != 1 {
+	if eps, _, _ := s.WantedForFeeds(ctx, FeedsWant{NewWithinDays: 1}); eps != 1 {
 		t.Errorf("new within a day: %d, want only the followed one", eps)
+	}
+}
+
+// An automatic grab waits the air delay after an air date — 00:00 UTC of the
+// day TMDB dates — and a requested movie's after the day it came out to
+// watch at home; one whose window is set from its theatrical release waits
+// for that window.
+func TestTheAirDelay(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	if err := s.UpsertTitle(ctx, Title{TMDBID: 1, Kind: "series", Title: "Show", Monitored: true}); err != nil {
+		t.Fatal(err)
+	}
+	season := 1
+	for e, d := range map[int]int{1: 0, 2: -2} {
+		e := e
+		id := TargetID("series:1", &season, &e)
+		if err := s.UpsertTarget(ctx, Target{ID: id, TitleID: "series:1", Kind: "episode", SeasonNumber: &season,
+			EpisodeNumber: &e, Monitored: true, State: TargetWanted}); err != nil {
+			t.Fatal(err)
+		}
+		_ = s.SetAirWindow(ctx, id, day(d), 0)
+	}
+	for id, w := range map[int64]MovieRead{
+		2: {Window: day(-2), Released: day(-2), Kind: "digital"},     // out two days ago
+		3: {Window: day(0), Released: day(0), Kind: "digital"},       // out today
+		4: {Window: day(-1), Released: day(-91), Kind: "theatrical"}, // 90 days after cinemas
+	} {
+		f, _, _ := s.FollowTitle(ctx, Title{TMDBID: id, Kind: "movie", Title: "Film"})
+		if _, err := s.ApplyMovieInventory(ctx, f.ID, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"series:1", "movie:2", "movie:3", "movie:4"} {
+		if _, err := s.ApplySeriesHoldings(ctx, id, "", "default", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	due := func(delay time.Duration) string {
+		ts, err := s.DueTargetsBy(ctx, 10, DueOrder{AirDelay: delay})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, x := range ts {
+			ids = append(ids, x.ID)
+		}
+		sort.Strings(ids)
+		return strings.Join(ids, " ")
+	}
+	if got := due(0); got != "movie:2:movie movie:3:movie movie:4:movie series:1:s01e001 series:1:s01e002" {
+		t.Errorf("without a delay: %s", got)
+	}
+	if got := due(30 * time.Hour); got != "movie:2:movie movie:4:movie series:1:s01e002" {
+		t.Errorf("30 hours after the air date: %s", got)
+	}
+	if eps, movies, _ := s.WantedForFeeds(ctx, FeedsWant{All: true, AirDelay: 30 * time.Hour}); eps != 1 || movies != 2 {
+		t.Errorf("the feeds 30 hours after the air date: %d episodes, %d movies", eps, movies)
+	}
+	m, _ := s.TargetAt(ctx, "movie:4", nil, nil)
+	if m.AirDate == nil || !m.AirDate.Equal(*day(-91)) || m.WindowAt == nil || !m.WindowAt.Equal(*day(-1)) {
+		t.Errorf("a movie searched 90 days after cinemas: air date %v, window %v", m.AirDate, m.WindowAt)
 	}
 }
 

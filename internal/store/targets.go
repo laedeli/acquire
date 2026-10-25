@@ -424,10 +424,26 @@ func (s *Store) InvalidateHeldScores(ctx context.Context, profileID string) (int
 	return tag.RowsAffected(), nil
 }
 
-// sweepableSQL is what the backlog sweep may look at: wanted (not failed, not
-// in flight), aired, monitored with its title, of holdings acquire knows, and
-// due — its next search time has come.
-const sweepableSQL = `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + airedSQL
+// autoOpenSQL is airedSQL for an automatic grab: the target's window has
+// opened, and the air delay (the parameter named, in seconds) has passed
+// since its air date — 00:00 UTC on the day TMDB dates an episode, or the day
+// a requested movie comes out. TMDB dates the day, not the hour: the window
+// opens a day before an evening broadcast in the Americas reaches UTC, and
+// what turns up named for the episode before it was broadcast is most often a
+// fake.
+func autoOpenSQL(delay string) string {
+	return `(CASE WHEN a.air_window_opens_at IS NULL THEN a.kind = 'movie' AND NOT a.release_pending
+	         ELSE GREATEST(a.air_window_opens_at,
+	                       (a.air_date::timestamp AT TIME ZONE 'UTC') + make_interval(secs => ` + delay + `::float8)) <= now() END)`
+}
+
+// sweepableSQL is what the backlog sweep may look at, and a source's newest
+// release be grabbed for: wanted (not failed, not in flight), monitored with
+// its title, of holdings acquire knows, and open to an automatic grab
+// (autoOpenSQL, with the air delay in the parameter named).
+func sweepableSQL(delay string) string {
+	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + autoOpenSQL(delay)
+}
 
 // newSQL is the condition "this target is one of the new things": an episode
 // aired in the last $days days (the parameter named), an episode a follow or
@@ -437,6 +453,14 @@ const sweepableSQL = `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored 
 func newSQL(days string) string {
 	return `COALESCE((a.kind = 'episode' AND a.air_date >= (now() AT TIME ZONE 'UTC')::date - ` + days + `::int)
 	         OR (t.followed_at IS NOT NULL AND (a.kind = 'movie' OR a.added_at >= t.followed_at)), false)`
+}
+
+// DueOrder is how the sweep picks the targets it searches: with
+// NewWithinDays, the new things first (newSQL); none before AirDelay has
+// passed since its air date (autoOpenSQL).
+type DueOrder struct {
+	NewWithinDays int
+	AirDelay      time.Duration
 }
 
 // DueTargets returns the targets the backlog sweep searches next: wanted,
@@ -452,29 +476,22 @@ func newSQL(days string) string {
 // backlog rotates: before, a target whose search found something was given no
 // next time, and the sweep returned the same first targets on every run.
 func (s *Store) DueTargets(ctx context.Context, limit int) ([]Target, error) {
-	return s.dueTargets(ctx, limit, 0)
+	return s.DueTargetsBy(ctx, limit, DueOrder{})
 }
 
-// DueTargetsNewFirst is DueTargets with the new things first (newSQL: aired
-// in the last days days, added after their title was followed, requested
-// movies): with search.autoGrabNew an automatic grab takes those, and they
-// do not wait their turn behind the old backlog.
-func (s *Store) DueTargetsNewFirst(ctx context.Context, limit, days int) ([]Target, error) {
-	return s.dueTargets(ctx, limit, days)
-}
-
-func (s *Store) dueTargets(ctx context.Context, limit, days int) ([]Target, error) {
+// DueTargetsBy is DueTargets in the order the policy asks for (DueOrder).
+func (s *Store) DueTargetsBy(ctx context.Context, limit int, o DueOrder) ([]Target, error) {
 	order := `a.last_search_at NULLS FIRST, a.air_window_opens_at NULLS FIRST, a.id`
-	args := []any{limit}
-	if days > 0 {
-		order = newSQL("$2") + ` DESC, ` + order
-		args = append(args, days)
+	args := []any{limit, o.AirDelay.Seconds()}
+	if o.NewWithinDays > 0 {
+		order = newSQL("$3") + ` DESC, ` + order
+		args = append(args, o.NewWithinDays)
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+targetCols+`
 		  FROM acquisition_targets a
 		  JOIN titles t ON t.id = a.title_id
-		 WHERE `+sweepableSQL+`
+		 WHERE `+sweepableSQL("$2")+`
 		   AND (a.search_backoff_until IS NULL OR a.search_backoff_until <= now())
 		 ORDER BY `+order+`
 		 LIMIT $1`, args...)

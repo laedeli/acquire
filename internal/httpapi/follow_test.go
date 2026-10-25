@@ -98,7 +98,7 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 		t.Errorf("GET /api/missing -> %v", missing)
 	}
 	_, doc := call(t, h, http.MethodGet, "/api/settings/search", "")
-	if doc["autoGrabNew"] != false || doc["newWithinDays"] != float64(14) {
+	if doc["autoGrabNew"] != false || doc["newWithinDays"] != float64(14) || doc["airDelayHours"] != float64(30) {
 		t.Fatalf("GET /api/settings/search -> %v", doc)
 	}
 	rev := doc["revision"].(float64)
@@ -116,10 +116,20 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 		!strings.Contains(w.Body.String(), "newWithinDays") {
 		t.Errorf("400 days -> %d %s", w.Code, w.Body.String())
 	}
-	// A console from before sends no newWithinDays: the default.
+	if w, _ := call(t, h, http.MethodPut, "/api/settings/search",
+		`{"preferProtocol":"usenet","storageFloorGb":500,"maxConcurrentGrabs":3,"airDelayHours":200}`); w.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(w.Body.String(), "airDelayHours") {
+		t.Errorf("a delay of 200 hours -> %d %s", w.Code, w.Body.String())
+	}
+	if w, saved := call(t, h, http.MethodPut, "/api/settings/search", `{"airDelayHours":0}`); w.Code != 200 || saved["airDelayHours"] != float64(0) {
+		t.Errorf("no delay -> %d %s", w.Code, w.Body.String())
+	}
+	// A console from before names neither newWithinDays nor airDelayHours:
+	// they keep their values.
 	if w, saved := call(t, h, http.MethodPut, "/api/settings/search",
-		`{"preferProtocol":"usenet","storageFloorGb":500,"maxConcurrentGrabs":3,"autoGrabNew":true}`); w.Code != 200 || saved["newWithinDays"] != float64(14) {
-		t.Errorf("without newWithinDays -> %d %s", w.Code, w.Body.String())
+		`{"preferProtocol":"usenet","storageFloorGb":500,"maxConcurrentGrabs":3,"autoGrabNew":true}`); w.Code != 200 ||
+		saved["newWithinDays"] != float64(7) || saved["airDelayHours"] != float64(0) {
+		t.Errorf("without newWithinDays and airDelayHours -> %d %s", w.Code, w.Body.String())
 	}
 
 	// Removing the request ends the follow.

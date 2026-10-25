@@ -127,7 +127,7 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 	if !pol.GrabsAnything() {
 		return run, nil
 	}
-	episodes, movies, err := s.st.WantedForFeeds(ctx, pol.AutoGrab, pol.newWithin())
+	episodes, movies, err := s.st.WantedForFeeds(ctx, store.FeedsWant{All: pol.AutoGrab, NewWithinDays: pol.newWithin(), AirDelay: pol.airDelay()})
 	if err != nil || (episodes == 0 && movies == 0) {
 		return run, err
 	}
@@ -451,7 +451,7 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 			}
 			for _, t := range targetsOf(title.ID) {
 				if t.SeasonNumber != nil && t.EpisodeNumber != nil && cov.Covers(*t.SeasonNumber, *t.EpisodeNumber) &&
-					grabbableNow(title, t, now) && pol.Grabs(title, t, now) {
+					grabbableNow(title, t, now, pol.airDelay()) && pol.Grabs(title, t, now) {
 					run.Matched++
 					add(title, t, r)
 					break
@@ -464,7 +464,7 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 			continue
 		}
 		for _, t := range targetsOf(title.ID) {
-			if t.Kind == "movie" && grabbableNow(title, t, now) && pol.Grabs(title, t, now) {
+			if t.Kind == "movie" && grabbableNow(title, t, now, pol.airDelay()) && pol.Grabs(title, t, now) {
 				run.Matched++
 				add(title, t, r)
 			}
@@ -475,18 +475,31 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 
 // grabbableNow reports whether a target is what the sweep may grab now
 // (store's sweepable): wanted, not reserved, monitored with its title, of
-// holdings acquire knows — learned after the target was added —, and out: an
-// episode aired, a movie released.
-func grabbableNow(title store.Title, t store.Target, now time.Time) bool {
+// holdings acquire knows — learned after the target was added —, and open to
+// an automatic grab (autoOpen).
+func grabbableNow(title store.Title, t store.Target, now time.Time, delay time.Duration) bool {
 	switch {
 	case t.State != store.TargetWanted, t.ReservedBy != "", !t.Monitored, !title.Monitored, !title.HoldingsKnown():
 		return false
 	case t.AddedAt != nil && t.AddedAt.After(*title.HoldingsAt):
 		return false
-	case t.WindowAt != nil:
-		return !t.WindowAt.After(now)
 	}
-	return t.Kind == "movie" && !t.ReleasePending
+	return autoOpen(t, now, delay)
+}
+
+// autoOpen reports whether an automatic grab may take a target now, as
+// store's autoOpenSQL says: its window has opened and delay has passed since
+// its air date (00:00 UTC of the day TMDB dates it); a movie the import
+// tracks, without a window, is out.
+func autoOpen(t store.Target, now time.Time, delay time.Duration) bool {
+	if t.WindowAt == nil {
+		return t.Kind == "movie" && !t.ReleasePending
+	}
+	at := *t.WindowAt
+	if t.AirDate != nil && t.AirDate.Add(delay).After(at) {
+		at = t.AirDate.Add(delay)
+	}
+	return !at.After(now)
 }
 
 // grabMatched grabs, for each target matched, the best of its releases an
@@ -510,6 +523,7 @@ func (s *Service) grabMatched(ctx context.Context, groups []*matched, run *RSSRu
 		if err != nil {
 			log.Printf("acquire rss-sync: blocklist of %s unreadable, not applied: %v", g.target.ID, err)
 		}
+		days := s.airDays(ctx, g.target)
 		cands := make([]Candidate, 0, len(g.releases))
 		for _, r := range g.releases {
 			c := s.candidate(r, profile, routes)
@@ -518,11 +532,10 @@ func (s *Service) grabMatched(ctx context.Context, groups []*matched, run *RSSRu
 				cov := release.ParseCoverage(c.Title)
 				c.Covers, c.Pack = cov.String(), cov.Pack()
 			}
-			if why, ok := blocked[c.Title]; ok {
-				c.Rejected, c.Reason = true, clip("blocked for this target: "+why+" · "+c.Reason, 300)
-			}
+			markRejected(&c, g.target, blocked, days)
 			cands = append(cands, c)
 		}
+		s.blockPreAired(ctx, g.target, cands)
 		sortCandidates(cands)
 		usable := s.autoCandidates(ctx, g.target, cands)
 		if len(usable) == 0 {

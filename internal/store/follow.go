@@ -274,16 +274,20 @@ type MovieRead struct {
 	Aliases []string
 	// Window is when the movie can have a release — its first release to
 	// watch at home, or one set from its theatrical release (Kind says
-	// which) —, nil while TMDB dates none.
-	Window *time.Time
-	Kind   string
+	// which) —, nil while TMDB dates none. Released is the day it came out
+	// as Kind says — at home, or in cinemas for one whose window is set from
+	// that —: a release published before it cannot be of the movie.
+	Window   *time.Time
+	Released *time.Time
+	Kind     string
 }
 
 // ApplyMovieInventory records what a read of TMDB says of a movie a request
 // follows: its IMDb id where it had none, TMDB's status, its other titles as
 // aliases, and its one target — wanted, with its release as the window it is
-// searched from, or waiting for one while TMDB dates none. A movie's target
-// the import made (released, by the import's word) keeps the window it has.
+// searched from and the day it came out as its air date, or waiting for one
+// while TMDB dates none. A movie's target the import made (released, by the
+// import's word) keeps the window it has.
 func (s *Store) ApplyMovieInventory(ctx context.Context, titleID string, r MovieRead) (Target, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -311,14 +315,14 @@ func (s *Store) ApplyMovieInventory(ctx context.Context, titleID string, r Movie
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO acquisition_targets AS a (id, title_id, kind, monitored, state, added_at, air_date,
 		                                      air_window_opens_at, release_pending, release_kind)
-		SELECT $2, t.id, 'movie', t.monitored, 'wanted', now(), ($3::timestamptz AT TIME ZONE 'UTC')::date,
+		SELECT $2, t.id, 'movie', t.monitored, 'wanted', now(), (COALESCE($5::timestamptz, $3::timestamptz) AT TIME ZONE 'UTC')::date,
 		       $3::timestamptz, $3::timestamptz IS NULL, $4
 		  FROM titles t WHERE t.id = $1
 		ON CONFLICT (title_id, season_number, episode_number) DO UPDATE
 		   SET air_date = EXCLUDED.air_date, air_window_opens_at = EXCLUDED.air_window_opens_at,
 		       release_pending = EXCLUDED.release_pending, release_kind = EXCLUDED.release_kind, updated_at = now()
 		 WHERE a.added_at IS NOT NULL`,
-		titleID, TargetID(titleID, nil, nil), r.Window, r.Kind); err != nil {
+		titleID, TargetID(titleID, nil, nil), r.Window, r.Kind, r.Released); err != nil {
 		return Target{}, fmt.Errorf("the target of %s: %w", titleID, err)
 	}
 	t, err := scanTarget(tx.QueryRow(ctx, `SELECT `+targetCols+` FROM acquisition_targets a
@@ -642,15 +646,24 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 
 // ── the sources' newest releases ───────────────────────────────────────────
 
+// FeedsWant is what the sources' newest releases may be grabbed for: every
+// target (All) or the new things (aired in the last NewWithinDays days), none
+// before AirDelay has passed since its air date.
+type FeedsWant struct {
+	All           bool
+	NewWithinDays int
+	AirDelay      time.Duration
+}
+
 // WantedForFeeds counts the targets a release in a source's newest releases
-// could be grabbed for now, episodes and movies: wanted, aired, monitored
-// with their title, of holdings acquire knows, not reserved — every one when
-// all, else only the new things (newSQL, aired in the last days days).
-func (s *Store) WantedForFeeds(ctx context.Context, all bool, days int) (episodes, movies int, err error) {
+// could be grabbed for now, episodes and movies: wanted, aired and past the
+// air delay, monitored with their title, of holdings acquire knows, not
+// reserved — every one, or only the new things (newSQL).
+func (s *Store) WantedForFeeds(ctx context.Context, w FeedsWant) (episodes, movies int, err error) {
 	err = s.pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE a.kind = 'episode'), count(*) FILTER (WHERE a.kind = 'movie')
 		  FROM acquisition_targets a JOIN titles t ON t.id = a.title_id
-		 WHERE `+sweepableSQL+` AND ($1 OR `+newSQL("$2")+`)`, all, days).Scan(&episodes, &movies)
+		 WHERE `+sweepableSQL("$3")+` AND ($1 OR `+newSQL("$2")+`)`, w.All, w.NewWithinDays, w.AirDelay.Seconds()).Scan(&episodes, &movies)
 	return episodes, movies, err
 }
 

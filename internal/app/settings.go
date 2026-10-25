@@ -38,11 +38,40 @@ type SearchSettings struct {
 	// NewWithinDays is how recently an episode aired to be one of the new
 	// things.
 	NewWithinDays int `json:"newWithinDays"`
+	// AirDelayHours is how long an automatic grab waits after an episode's
+	// air date — 00:00 UTC on the day TMDB dates it — and after the day a
+	// requested movie comes out: TMDB dates the day, not the hour, and an
+	// evening broadcast in the Americas is a day later in UTC. Releases
+	// named for an episode before it was broadcast are most often fakes.
+	// 0 grabs from the air date on.
+	AirDelayHours int `json:"airDelayHours"`
 }
 
 // DefaultNewWithinDays is how recently an episode aired, by default, to be
 // one of the new things search.autoGrabNew grabs.
 const DefaultNewWithinDays = 14
+
+// DefaultAirDelayHours is how long an automatic grab waits after an air date
+// by default, and MaxAirDelayHours the longest it may be set to wait.
+const (
+	DefaultAirDelayHours = 30
+	MaxAirDelayHours     = 168
+)
+
+// airDelay is how long after an air date an automatic grab may take a
+// target.
+func (p SearchSettings) airDelay() time.Duration { return time.Duration(p.AirDelayHours) * time.Hour }
+
+// dueOrder is how the sweep picks what it searches under the policy: the new
+// things first when they are grabbed on their own, and nothing before its air
+// delay is over.
+func (p SearchSettings) dueOrder() store.DueOrder {
+	o := store.DueOrder{AirDelay: p.airDelay()}
+	if p.AutoGrabNew {
+		o.NewWithinDays = p.newWithin()
+	}
+	return o
+}
 
 // Grabs reports whether the policy lets an automatic grab — the sweep's, a
 // newest release's — take a target: any with AutoGrab, a new one with
@@ -97,6 +126,7 @@ func (s *Service) envSearchSettings() SearchSettings {
 		StorageFloorGB:     s.cfg.StorageFloorBytes() >> 30,
 		MaxConcurrentGrabs: s.cfg.MaxConcurrentGrabs(),
 		NewWithinDays:      DefaultNewWithinDays,
+		AirDelayHours:      DefaultAirDelayHours,
 	}
 }
 
@@ -145,7 +175,8 @@ func (s *Service) GrabPolicy(ctx context.Context) SearchSettings { return s.grab
 
 // SaveSearchSettings validates and stores the policy. A document that names
 // no newWithinDays — one written by a console from before it — takes the
-// default.
+// default; the API reads a document over the policy stored, so a field it
+// does not name keeps its value (airDelayHours, whose 0 means no wait).
 func (s *Service) SaveSearchSettings(ctx context.Context, in SearchSettings, ifRevision int64, actor string) (SearchSettingsDoc, error) {
 	if in.NewWithinDays == 0 {
 		in.NewWithinDays = DefaultNewWithinDays
@@ -177,6 +208,9 @@ func validateSearchSettings(in SearchSettings) []FieldError {
 	// 0 is a document that names none: the default.
 	if in.NewWithinDays < 0 || in.NewWithinDays > 365 {
 		add("newWithinDays", "must be between 1 and 365")
+	}
+	if in.AirDelayHours < 0 || in.AirDelayHours > MaxAirDelayHours {
+		add("airDelayHours", fmt.Sprintf("must be between 0 and %d", MaxAirDelayHours))
 	}
 	return fe
 }
