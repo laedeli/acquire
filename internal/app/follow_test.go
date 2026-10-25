@@ -419,7 +419,7 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 		t.Errorf("its episodes, read from TMDB meanwhile: %d", len(targets))
 	}
 	v := r.view(t, w.ID)
-	if v.Status != "awaiting" || !strings.HasPrefix(v.Detail, "waiting for an admin's approval; until then nothing of it is grabbed on its own · 13 episodes") ||
+	if v.Status != "awaiting" || !strings.HasPrefix(v.Detail, "waiting for an admin's approval; until then nothing of it is searched or grabbed on its own · 13 episodes") ||
 		v.AutoGrab == nil || *v.AutoGrab {
 		t.Errorf("awaiting approval: %s %q %v", v.Status, v.Detail, v.AutoGrab)
 	}
@@ -656,7 +656,8 @@ func TestARequestedMovie(t *testing.T) {
 	r.settle(t, false)
 	v := r.view(t, w.ID)
 	window := theatrical.Add(theatricalWait)
-	if v.Status != "waiting" || !strings.Contains(v.Detail, "out on "+dateOf(&window)+", 90 days after it came to cinemas") {
+	if v.Status != "waiting" || !strings.Contains(v.Detail, "in cinemas since "+dateOf(theatrical)+", and TMDB dates no release to watch at home; searched from "+
+		window.Format("2006-01-02 15:04 UTC")+" on, 90 days after it came to cinemas") {
 		t.Errorf("in cinemas only: %s %q", v.Status, v.Detail)
 	}
 	if due, _ := r.svc.st.DueTargets(ctx, 10); len(due) != 0 {
@@ -672,7 +673,7 @@ func TestARequestedMovie(t *testing.T) {
 	})
 	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
 	r.settle(t, true)
-	if v := r.view(t, w.ID); v.Status != "pending" || v.Detail != "out digitally on "+dateOf(day(-1))+"; not searched yet" {
+	if v := r.view(t, w.ID); v.Status != "pending" || v.Detail != "out digitally since "+dateOf(day(-1))+"; not searched yet" {
 		t.Errorf("once out: %s %q", v.Status, v.Detail)
 	}
 	if due, _ := r.svc.st.DueTargets(ctx, 10); len(due) != 1 {
@@ -863,17 +864,26 @@ func TestRequestState(t *testing.T) {
 			"TMDB lists no episodes of it yet; it is read again on every refresh while it runs"},
 		{"a movie not read yet", store.Progress{Kind: "movie"}, "pending", "reading its release dates from TMDB"},
 		{"a movie without a date", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetWanted, ReleasePending: true}},
-			"waiting", "TMDB dates no release to watch at home yet; it is searched once it does"},
-		{"a movie to come", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetWanted, WindowAt: soon, ReleaseKind: "physical"}},
-			"waiting", "out on disc on " + dateOf(soon) + "; searched from then on"},
-		{"a movie out", store.Progress{Kind: "movie", HoldingsKnown: true, Movie: &store.Target{State: store.TargetWanted, WindowAt: past,
-			ReleaseKind: "tv", SearchOutcome: store.SearchNone}}, "pending", "out on TV on " + dateOf(past) + "; searched, nothing found yet"},
+			"waiting", "TMDB dates no release of it yet: it is read again daily, and searched once it comes out to watch at home — " +
+				"or 90 days after it comes to cinemas, if TMDB dates nothing else"},
+		{"a movie to come", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetWanted, WindowAt: soon, AirDate: soon, ReleaseKind: "physical"}},
+			"waiting", "comes out on disc on " + dateOf(soon) + "; searched from " + soon.Add(30*time.Hour).Format("2006-01-02 15:04 UTC") + " on"},
+		{"a movie out", store.Progress{Kind: "movie", HoldingsKnown: true, Movie: &store.Target{State: store.TargetWanted, WindowAt: past, AirDate: past,
+			ReleaseKind: "tv", SearchOutcome: store.SearchNone}}, "pending", "out on TV since " + dateOf(past) + "; searched, nothing found yet"},
+		{"a movie out, within the delay", store.Progress{Kind: "movie", HoldingsKnown: true, Movie: &store.Target{State: store.TargetWanted,
+			WindowAt: day(0), AirDate: day(0), ReleaseKind: "digital"}}, "waiting",
+			"out digitally since " + dateOf(day(0)) + "; searched from " + day(0).Add(30*time.Hour).Format("2006-01-02 15:04 UTC") + " on"},
+		{"a movie in cinemas", store.Progress{Kind: "movie", HoldingsKnown: true, Movie: &store.Target{State: store.TargetWanted,
+			WindowAt: ptr(day(-10).Add(theatricalWait)), AirDate: day(-10), ReleaseKind: "theatrical"}}, "waiting",
+			"in cinemas since " + dateOf(day(-10)) + ", and TMDB dates no release to watch at home; searched from " +
+				day(-10).Add(theatricalWait).Format("2006-01-02 15:04 UTC") + " on, 90 days after it came to cinemas — TMDB is read again daily, " +
+				"and a release to watch at home it dates sooner moves that"},
 		{"a movie on its way", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetDownloaded, Detail: "downloaded; copying"}},
 			"downloading", "downloaded; copying"},
 		{"a movie held", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetHeld}}, "packaging", "in the library; being packaged"},
 		{"a movie that plays", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetHeld, HeldPlayable: true}}, "fulfilled", "in the library"},
 	} {
-		status, detail := requestState(tc.p, now)
+		status, detail := requestState(tc.p, now, 30*time.Hour)
 		if status != tc.status || detail != tc.detail {
 			t.Errorf("%s:\n  got  %s %q\n  want %s %q", tc.name, status, detail, tc.status, tc.detail)
 		}

@@ -283,7 +283,8 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 	if err != nil {
 		return nil, err
 	}
-	grabs := s.grabPolicy(ctx).GrabsAnything()
+	pol := s.grabPolicy(ctx)
+	grabs := pol.GrabsAnything()
 	now := s.now()
 	out := make([]RequestView, 0, len(rows))
 	for _, w := range rows {
@@ -291,7 +292,8 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 		if p, ok := progress[w.TitleID]; ok && w.TitleID != "" {
 			p := p
 			v.Progress = &p
-			v.Status, v.Detail = approvalState(w.Approval, p, now)
+			status, detail := requestState(p, now, pol.airDelay())
+			v.Status, v.Detail = approvalState(w.Approval, status, detail)
 			auto := grabs && w.Approval == store.ApprovalApproved
 			v.AutoGrab = &auto
 		}
@@ -302,15 +304,14 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 
 // approvalState is a request's status and detail as an admin's word on it
 // leaves them: one awaiting approval says so before how far acquire is with
-// its title — nothing of it is grabbed on its own meanwhile —; a declined one
-// says so alone.
-func approvalState(approval string, p store.Progress, now time.Time) (status, detail string) {
-	status, detail = requestState(p, now)
+// its title — nothing of it is searched or grabbed on its own meanwhile —; a
+// declined one says so alone.
+func approvalState(approval, status, detail string) (string, string) {
 	switch {
 	case approval == store.ApprovalDeclined:
 		return "declined", "an admin declined it: acquire does not follow it for this request"
 	case approval == store.ApprovalAwaiting && status != "fulfilled":
-		return "awaiting", clip("waiting for an admin's approval; until then nothing of it is grabbed on its own · "+detail, 300)
+		return "awaiting", clip("waiting for an admin's approval; until then nothing of it is searched or grabbed on its own · "+detail, 300)
 	}
 	return status, detail
 }
@@ -339,10 +340,11 @@ func (s *Service) RequestStatus(ctx context.Context, tmdbID int64) (RequestView,
 // requestState is the status and the detail of a request that follows a
 // title, from how far acquire is with it: a series stays following while it
 // runs or misses episodes, and is fulfilled once it ended and the library
-// holds every episode; a movie reads as its target is.
-func requestState(p store.Progress, now time.Time) (status, detail string) {
+// holds every episode; a movie reads as its target is (movieState), delay
+// being the air delay automatic grabs wait after a release.
+func requestState(p store.Progress, now time.Time, delay time.Duration) (status, detail string) {
 	if p.Kind == "movie" {
-		return movieState(p, now)
+		return movieState(p, now, delay)
 	}
 	switch {
 	case p.Episodes == 0 && p.InventoryErr != "":
@@ -381,8 +383,13 @@ func requestState(p store.Progress, now time.Time) (status, detail string) {
 	return "following", clip(detail, 300)
 }
 
-// movieState is a requested movie's status, as its target is.
-func movieState(p store.Progress, now time.Time) (status, detail string) {
+// movieState is a requested movie's status, as its target is, saying what
+// happens next: while TMDB dates no release of it, it is read again daily;
+// it is searched from the day it comes out to watch at home, the air delay
+// after the day TMDB dates — or, when TMDB dates it in cinemas only, 90 days
+// after it came to cinemas, read again daily meanwhile in case TMDB dates a
+// release to watch at home sooner.
+func movieState(p store.Progress, now time.Time, delay time.Duration) (status, detail string) {
 	t := p.Movie
 	switch {
 	case t == nil && p.InventoryErr != "":
@@ -398,11 +405,17 @@ func movieState(p store.Progress, now time.Time) (status, detail string) {
 	case t.State == store.TargetFailed:
 		return "failed", t.Detail
 	case t.ReleasePending:
-		return "waiting", "TMDB dates no release to watch at home yet; it is searched once it does"
-	case t.WindowAt != nil && t.WindowAt.After(now):
-		return "waiting", "out " + releaseWords(t) + "; searched from then on"
+		return "waiting", "TMDB dates no release of it yet: it is read again daily, and searched once it comes out to watch at home — " +
+			fmt.Sprintf("or %d days after it comes to cinemas, if TMDB dates nothing else", int(theatricalWait.Hours()/24))
 	}
-	detail = "out " + releaseWords(t)
+	from := searchedFrom(t, delay)
+	if from != nil && from.After(now) {
+		return "waiting", clip(releaseWords(t, now)+"; searched from "+from.UTC().Format("2006-01-02 15:04 UTC")+" on"+guessWords(t), 300)
+	}
+	detail = releaseWords(t, now)
+	if from != nil && t.ReleaseKind == "theatrical" {
+		detail += "; searched since " + from.UTC().Format("2006-01-02") + guessWords(t)
+	}
 	switch t.SearchOutcome {
 	case store.SearchFound:
 		detail += "; a release was found"
@@ -416,27 +429,56 @@ func movieState(p store.Progress, now time.Time) (status, detail string) {
 	if !p.HoldingsKnown {
 		detail += "; the catalog has not said yet whether the library holds it"
 	}
-	return "pending", detail
+	return "pending", clip(detail, 300)
 }
 
-// releaseWords says when and how a requested movie comes out: "digitally on
-// 2026-11-25". A movie whose window is its theatrical release says so.
-func releaseWords(t *store.Target) string {
+// searchedFrom is when a requested movie is searched from: its window, and
+// the air delay after the day it comes out (as store's autoOpenSQL); nil for
+// a movie the import tracks.
+func searchedFrom(t *store.Target, delay time.Duration) *time.Time {
 	if t.WindowAt == nil {
-		return "already"
+		return nil
 	}
-	on := "on " + t.WindowAt.UTC().Format("2006-01-02")
-	switch t.ReleaseKind {
-	case "digital":
-		return "digitally " + on
-	case "physical":
-		return "on disc " + on
-	case "tv":
-		return "on TV " + on
-	case "theatrical":
-		return fmt.Sprintf("%s, %d days after it came to cinemas (TMDB dates no release to watch at home)", on, int(theatricalWait.Hours()/24))
+	at := *t.WindowAt
+	if t.AirDate != nil && t.AirDate.Add(delay).After(at) {
+		at = t.AirDate.Add(delay)
 	}
-	return on
+	return &at
+}
+
+// releaseWords says when and how a requested movie comes out, or came out:
+// "comes out digitally on 2026-11-25", "out on disc since 2026-10-02". One
+// TMDB dates in cinemas only says so.
+func releaseWords(t *store.Target, now time.Time) string {
+	if t.AirDate == nil {
+		return "out"
+	}
+	day := t.AirDate.UTC().Format("2006-01-02")
+	past := !t.AirDate.After(now)
+	how := map[string]string{"digital": "digitally", "physical": "on disc", "tv": "on TV"}[t.ReleaseKind]
+	switch {
+	case t.ReleaseKind == "theatrical" && past:
+		return "in cinemas since " + day + ", and TMDB dates no release to watch at home"
+	case t.ReleaseKind == "theatrical":
+		return "comes to cinemas on " + day + ", and TMDB dates no release to watch at home"
+	case past && how != "":
+		return "out " + how + " since " + day
+	case past:
+		return "out since " + day
+	case how != "":
+		return "comes out " + how + " on " + day
+	}
+	return "comes out on " + day
+}
+
+// guessWords says, of a movie whose window is set from its theatrical
+// release, how that window came about and that it may move.
+func guessWords(t *store.Target) string {
+	if t.ReleaseKind != "theatrical" {
+		return ""
+	}
+	return fmt.Sprintf(", %d days after it came to cinemas — TMDB is read again daily, and a release to watch at home it dates sooner moves that",
+		int(theatricalWait.Hours()/24))
 }
 
 // count is "1 episode", "13 episodes".
