@@ -47,11 +47,11 @@ func (f *fake) server(t *testing.T) *httptest.Server {
 		case r.URL.Path == "/lookup/shows" && r.URL.Query().Get("imdb") == "tt99000012":
 			_, _ = w.Write([]byte(`{"id":78,"name":"Example Show"}`))
 		case r.URL.Path == "/shows/77" && embedded:
-			_, _ = w.Write([]byte(`{"id":77,"name":"Example Night Show","runtime":60,
+			_, _ = w.Write([]byte(`{"id":77,"name":"Example Night Show","runtime":60,"schedule":{"time":"21:00","days":["Friday"]},
 			  "network":{"id":1,"name":"Example Network","country":{"name":"United States","code":"US","timezone":"America/New_York"}},
 			  "webChannel":null,
 			  "_embedded":{"episodes":[
-			  {"id":1,"season":1,"number":1,"airdate":"2026-10-23","airtime":"21:00","airstamp":"2026-10-24T01:00:00+00:00","runtime":90},
+			  {"id":1,"season":1,"number":1,"name":"Pilot","airdate":"2026-10-23","airtime":"21:00","airstamp":"2026-10-24T01:00:00+00:00","runtime":90},
 			  {"id":2,"season":1,"number":2,"airdate":"2026-10-30","airtime":"","airstamp":"2026-10-30T12:00:00+00:00","runtime":null},
 			  {"id":3,"season":1,"number":null,"airdate":"2026-10-31","airtime":"20:00","airstamp":"2026-11-01T00:00:00+00:00"},
 			  {"id":4,"season":2,"number":1,"airdate":"","airtime":"","airstamp":null}]}}`))
@@ -117,15 +117,16 @@ func TestAShowAndItsEpisodes(t *testing.T) {
 	c := client(f.server(t))
 	ctx := context.Background()
 	show, err := c.Show(ctx, 77)
-	if err != nil || show.Name != "Example Night Show" || show.Kind != Broadcast || show.Country != "US" || show.Runtime != 60 || len(show.Episodes) != 3 {
+	if err != nil || show.Name != "Example Night Show" || show.Kind != Broadcast || show.Country != "US" || show.Zone != "America/New_York" ||
+		show.Runtime != 60 || show.ScheduleTime != "21:00" || len(show.ScheduleDays) != 1 || len(show.Episodes) != 3 {
 		t.Fatalf("the show = %+v %v", show, err)
 	}
 	eps := show.Episodes
-	if eps[0].AirStamp == nil || !eps[0].AirStamp.Equal(time.Date(2026, 10, 24, 1, 0, 0, 0, time.UTC)) ||
-		eps[0].AirDate == nil || eps[0].AirDate.Format("2006-01-02") != "2026-10-23" || eps[0].Runtime != 90 {
+	if eps[0].AirStamp == nil || !eps[0].AirStamp.Equal(time.Date(2026, 10, 24, 1, 0, 0, 0, time.UTC)) || eps[0].AirTime != "21:00" ||
+		eps[0].AirDate == nil || eps[0].AirDate.Format("2006-01-02") != "2026-10-23" || eps[0].Runtime != 90 || eps[0].Name != "Pilot" {
 		t.Errorf("an episode at 21:00 ET, 90 minutes long: %+v", eps[0])
 	}
-	if eps[1].AirStamp != nil || eps[1].AirDate == nil || eps[1].Runtime != 60 {
+	if eps[1].AirStamp != nil || eps[1].AirTime != "" || eps[1].AirDate == nil || eps[1].Runtime != 60 {
 		t.Errorf("an episode of a day without an hour, the show's runtime: %+v", eps[1])
 	}
 	if eps[2].Season != 2 || eps[2].AirDate != nil || eps[2].AirStamp != nil {

@@ -189,6 +189,10 @@ type SeriesRead struct {
 	// season is monitored when its title monitors new seasons, and a new
 	// episode as its season is.
 	MonitorAll bool
+	// AirTimes is set when the schedule source's air times are used: an
+	// episode TMDB moves to another day, of a series whose air times were
+	// read, is held until they are read again (ScheduleMovedHold).
+	AirTimes bool
 }
 
 // InventoryChange is what applying a read of TMDB changed.
@@ -234,14 +238,14 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var monitorNew, followed bool
+	var monitorNew, followed, scheduled bool
 	var preMonitored, preMonitorNew *bool
 	var grace int
 	var name, origin string
 	err = tx.QueryRow(ctx, `SELECT monitor_new, air_grace_hours, title, origin, followed_at IS NOT NULL AND unfollowed_at IS NULL,
-		       pre_monitored, pre_monitor_new
+		       pre_monitored, pre_monitor_new, schedule_at IS NOT NULL
 		  FROM titles WHERE id = $1 FOR UPDATE`, titleID).
-		Scan(&monitorNew, &grace, &name, &origin, &followed, &preMonitored, &preMonitorNew)
+		Scan(&monitorNew, &grace, &name, &origin, &followed, &preMonitored, &preMonitorNew, &scheduled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ch, ErrNotFound
 	}
@@ -317,7 +321,11 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	}
 	// Listed again: not gone; TMDB's id of each, as it says now.
 	if _, err := tx.Exec(ctx, `
-		UPDATE acquisition_targets a SET tmdb_gone_at = NULL, tmdb_episode_id = COALESCE(NULLIF(e.tid, 0), a.tmdb_episode_id)
+		UPDATE acquisition_targets a SET tmdb_gone_at = NULL, tmdb_episode_id = COALESCE(NULLIF(e.tid, 0), a.tmdb_episode_id),
+		       -- Another episode at these numbers now: the schedule source's
+		       -- episode taken for the one before is not its.
+		       schedule_episode_id = CASE WHEN a.tmdb_episode_id IS DISTINCT FROM COALESCE(NULLIF(e.tid, 0), a.tmdb_episode_id)
+		                                  THEN NULL ELSE a.schedule_episode_id END
 		  FROM unnest($2::int[], $3::int[], $4::bigint[]) AS e(season, episode, tid)
 		 WHERE a.title_id = $1 AND a.season_number = e.season AND a.episode_number = e.episode
 		   AND (a.tmdb_gone_at IS NOT NULL OR a.tmdb_episode_id IS DISTINCT FROM COALESCE(NULLIF(e.tid, 0), a.tmdb_episode_id))`,
@@ -340,19 +348,23 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		ON CONFLICT (title_id, season_number, episode_number) DO UPDATE
 		   SET air_date = EXCLUDED.air_date, air_window_opens_at = EXCLUDED.air_window_opens_at,
 		       episode_title = EXCLUDED.episode_title,
-		       -- An air time is the source's for a day: TMDB moving the day
-		       -- further than one makes it no one's, until the source is read.
-		       air_stamp = CASE WHEN EXCLUDED.air_date IS NULL
-		                          OR abs(EXCLUDED.air_date - (a.air_stamp AT TIME ZONE 'UTC')::date) > 1 THEN NULL
-		                        ELSE a.air_stamp END,
-		       air_runtime = CASE WHEN EXCLUDED.air_date IS NULL
-		                            OR abs(EXCLUDED.air_date - (a.air_stamp AT TIME ZONE 'UTC')::date) > 1 THEN 0
-		                          ELSE a.air_runtime END,
+		       -- TMDB moving the day: an air time the source gave stays while
+		       -- it is not more than a day before TMDB's new day (a move can
+		       -- only delay); one estimated for the old day goes, and so does
+		       -- the source's later day; and the episode is held until the
+		       -- source is read again (at once, after this read).
+		       air_stamp = CASE WHEN `+keptStampSQL+` THEN a.air_stamp END,
+		       air_runtime = CASE WHEN `+keptStampSQL+` THEN a.air_runtime ELSE 0 END,
+		       air_stamp_estimated = CASE WHEN `+keptStampSQL+` THEN a.air_stamp_estimated ELSE false END,
+		       schedule_day = CASE WHEN a.air_date IS NOT DISTINCT FROM EXCLUDED.air_date THEN a.schedule_day END,
+		       schedule_hold = CASE WHEN a.air_date IS DISTINCT FROM EXCLUDED.air_date AND $13 THEN $14 ELSE a.schedule_hold END,
+		       detail = CASE WHEN a.air_date IS DISTINCT FROM EXCLUDED.air_date AND $13 THEN $14 ELSE a.detail END,
 		       updated_at = now()
 		 WHERE a.air_date IS DISTINCT FROM EXCLUDED.air_date OR a.episode_title <> EXCLUDED.episode_title
 		    OR a.air_window_opens_at IS DISTINCT FROM EXCLUDED.air_window_opens_at
 		RETURNING (a.xmax = 0), COALESCE(a.air_window_opens_at <= now(), false)`,
-		titleID, nonNil(ids), es, en, nonNil(names), airs, grace, monitorAll, tids, followed, natTitle, natAll)
+		titleID, nonNil(ids), es, en, nonNil(names), airs, grace, monitorAll, tids, followed, natTitle, natAll, scheduled && r.AirTimes,
+		ScheduleMovedHold)
 	if err != nil {
 		return ch, fmt.Errorf("targets of %s: %w", titleID, err)
 	}
@@ -427,6 +439,17 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	}
 	return ch, tx.Commit(ctx)
 }
+
+// ScheduleMovedHold is what an episode TMDB moves to another day says while
+// the schedule source is read again.
+const ScheduleMovedHold = "TMDB moved its air date: no automatic grab takes it until TVmaze's air times of it are read again"
+
+// keptStampSQL is "the target a keeps its air time as TMDB dates it anew":
+// TMDB's day unchanged, or the air time the source's, not estimated, and not
+// more than a day before TMDB's new day.
+const keptStampSQL = `(a.air_date IS NOT DISTINCT FROM EXCLUDED.air_date
+	OR (a.air_stamp IS NOT NULL AND NOT a.air_stamp_estimated AND EXCLUDED.air_date IS NOT NULL
+	    AND EXCLUDED.air_date - (a.air_stamp AT TIME ZONE 'UTC')::date <= 1))`
 
 // heldMove is a holding of an episode TMDB lists under other numbers now:
 // the target it was held at, the number it moves to, TMDB's id of the
@@ -1004,9 +1027,14 @@ type Progress struct {
 	// InventoryRetryAt is when a title TMDB did not know is read again.
 	InventoryRetryAt *time.Time `json:"inventoryRetryAt,omitempty"`
 	// ScheduleAt is when a series' air times were last read at the schedule
-	// source, nil while never; ScheduleErr why the last read failed.
+	// source, nil while never; ScheduleErr why the last read failed;
+	// AirTimesRead whether they were read by these rules
+	// (ScheduleVersion); AirTimeHolds how many of its monitored episodes not
+	// in the library are held for the source (schedule_hold).
 	ScheduleAt    *time.Time `json:"scheduleAt,omitempty"`
 	ScheduleErr   string     `json:"scheduleError,omitempty"`
+	AirTimesRead  bool       `json:"airTimesRead"`
+	AirTimeHolds  int        `json:"airTimeHolds,omitempty"`
 	HoldingsKnown bool       `json:"holdingsKnown"`
 	// Of a series' monitored episodes: all of them, the ones the library
 	// holds (and plays), on their way, missing, whose last grab failed, and
@@ -1042,7 +1070,8 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, `+handsOffSQL+`, t.origin = 'request', t.tmdb_seasons,
 		       EXISTS (SELECT 1 FROM seasons s WHERE s.title_id = t.id),
-		       t.inventory_at, t.inventory_error, t.inventory_retry_at, t.schedule_at, t.schedule_error, t.holdings_at IS NOT NULL,
+		       t.inventory_at, t.inventory_error, t.inventory_retry_at, t.schedule_at, t.schedule_error, `+scheduleReadSQL+`,
+		       count(*) FILTER (WHERE a.monitored AND a.state <> 'held' AND a.schedule_hold <> ''), t.holdings_at IS NOT NULL,
 		       count(a.id) FILTER (WHERE a.monitored AND (a.tmdb_gone_at IS NULL OR a.state = 'held')),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held'),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held' AND a.held_playable),
@@ -1059,7 +1088,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		     ORDER BY x.air_window_opens_at, x.season_number, x.episode_number LIMIT 1) n ON true
 		 WHERE t.id = ANY($1)
 		 GROUP BY t.id, t.kind, t.tmdb_status, t.status, t.inventory_at, t.inventory_error, t.inventory_retry_at, t.schedule_at, t.schedule_error,
-		          t.holdings_at,
+		          t.schedule_version, t.holdings_at,
 		          n.season_number, n.episode_number, n.episode_title, n.air_window_opens_at`, nonNil(ids))
 	if err != nil {
 		return nil, err
@@ -1071,7 +1100,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		var title *string
 		var at *time.Time
 		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.HandsOff, &p.FromRequest, &p.Seasons, &p.EpisodesRead,
-			&p.InventoryAt, &p.InventoryErr, &p.InventoryRetryAt, &p.ScheduleAt, &p.ScheduleErr, &p.HoldingsKnown,
+			&p.InventoryAt, &p.InventoryErr, &p.InventoryRetryAt, &p.ScheduleAt, &p.ScheduleErr, &p.AirTimesRead, &p.AirTimeHolds, &p.HoldingsKnown,
 			&p.Episodes, &p.Held, &p.Playable, &p.OnTheWay, &p.Missing, &p.Failed, &p.Unaired,
 			&season, &episode, &title, &at); err != nil {
 			rows.Close()

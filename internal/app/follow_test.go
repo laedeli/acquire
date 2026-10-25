@@ -1120,9 +1120,14 @@ func TestRequestState(t *testing.T) {
 	if _, detail := requestState(running, now, withTimes); !strings.HasSuffix(detail, "until TVmaze's air times of it are read (TVmaze did not answer: HTTP 503)") {
 		t.Errorf("air times never read, TVmaze down: %q", detail)
 	}
-	running.ScheduleAt = &read
+	running.ScheduleAt, running.AirTimesRead = &read, true
 	if _, detail := requestState(running, now, withTimes); detail != "2 episodes: 0 in the library, 1 missing, 1 not aired yet" {
 		t.Errorf("air times read: %q", detail)
+	}
+	running.AirTimeHolds = 1
+	if _, detail := requestState(running, now, withTimes); !strings.HasSuffix(detail,
+		"; 1 episode held, not grabbed on its own until TVmaze and TMDB agree on it or it has an air time") {
+		t.Errorf("an episode held: %q", detail)
 	}
 }
 

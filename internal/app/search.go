@@ -651,24 +651,26 @@ func preAired(c Candidate, title store.Title, t store.Target, days func() map[[2
 
 // airCut is the moment before which no real release of a target can exist,
 // and how it is known. With the schedule source's air times (stamps): of an
-// episode it dates to the minute, the end of its broadcast — the moment it
-// airs and its runtime (broadcastLength) —, or, of a series streamed, airSlack
-// before it streams; of a streamed episode dated to the day alone, the
-// earliest a streaming service of its country puts an episode out
-// (zones.Drop), where that is the rule. Of any other episode, midnight of its air date where
-// its series comes from (TMDB's origin country; before TMDB was read for it,
-// the country of its network or service at the schedule source; UTC when
-// neither names one acquire knows) — TMDB dates the day as broadcast there,
-// not the hour. Of a
-// requested movie, midnight of the day it comes out to watch at home, where it
-// does. ok is false when nothing dates it, and for a movie dated in cinemas
-// only: no release to watch at home is dated to tell one by.
+// episode it dates to the minute — or whose hour is estimated from the usual
+// one of the series' broadcasts —, the end of its broadcast — the moment it
+// airs and its runtime (broadcastLength) —, or, of a series streamed,
+// airSlack before it streams; of a streamed episode dated to the day alone,
+// the earliest a streaming service of its country puts an episode out
+// (zones.Drop), where that is the rule. Of any other episode, midnight of the
+// day it is told by (airDay: TMDB's, or the source's when more than a day
+// later) where its series comes from (TMDB's origin country; before TMDB was
+// read for it, the country of its network or service at the schedule source;
+// UTC when neither names one acquire knows) — TMDB dates the day as broadcast
+// there, not the hour. Of a requested movie, midnight of the day it comes out
+// to watch at home, where it does. ok is false when nothing dates it, and for
+// a movie dated in cinemas only: no release to watch at home is dated to tell
+// one by.
 func airCut(title store.Title, t store.Target, stamps bool) (cut time.Time, aired string, ok bool) {
 	if t.AirDate == nil {
 		return time.Time{}, "", false
 	}
-	day := t.AirDate.UTC().Format("2006-01-02")
 	if t.Kind == "movie" {
+		day := t.AirDate.UTC().Format("2006-01-02")
 		how := map[string]string{"digital": "digitally", "physical": "on disc", "tv": "on TV"}[t.ReleaseKind]
 		if how == "" {
 			return time.Time{}, "", false
@@ -676,18 +678,28 @@ func airCut(title store.Title, t store.Target, stamps bool) (cut time.Time, aire
 		loc := zones.Of(append([]string{t.ReleaseCountry}, title.Countries...)...)
 		return zones.Midnight(*t.AirDate, loc), fmt.Sprintf("came out %s on %s, %s", how, day, loc), true
 	}
+	date := airDay(t, stamps)
+	day := date.UTC().Format("2006-01-02")
+	moved := ""
+	if date != t.AirDate {
+		moved = fmt.Sprintf(" (TVmaze's date; TMDB dates it %s)", t.AirDate.UTC().Format("2006-01-02"))
+	}
 	streamed := title.ScheduleKind == store.ScheduleStreaming
 	switch {
 	case stamps && t.AirStamp != nil && streamed:
 		at := t.AirStamp.UTC()
-		return at.Add(-airSlack), "streams from " + at.Format("2006-01-02 15:04 UTC"), true
+		return at.Add(-airSlack), "streams from " + at.Format("2006-01-02 15:04 UTC") + moved, true
 	case stamps && t.AirStamp != nil:
 		at := t.AirStamp.UTC()
 		end := at.Add(broadcastLength(t))
-		return end, fmt.Sprintf("aired %s, a broadcast until %s", at.Format("2006-01-02 15:04 UTC"), end.Format("15:04 UTC")), true
+		how := "aired"
+		if t.AirStampEstimated {
+			how = "aired, by its usual hour,"
+		}
+		return end, fmt.Sprintf("%s %s, a broadcast until %s%s", how, at.Format("2006-01-02 15:04 UTC"), end.Format("15:04 UTC"), moved), true
 	case stamps && streamed:
-		if at, loc, ok := zones.Drop(*t.AirDate, firstOf(title.ScheduleCountry, title.Countries...)); ok {
-			return at, fmt.Sprintf("streams on %s, from %s %s at the earliest", day, at.In(loc).Format("2006-01-02 15:04"), loc), true
+		if at, loc, ok := zones.Drop(*date, firstOf(title.ScheduleCountry, title.Countries...)); ok {
+			return at, fmt.Sprintf("streams on %s, from %s %s at the earliest%s", day, at.In(loc).Format("2006-01-02 15:04"), loc, moved), true
 		}
 	}
 	countries := title.Countries
@@ -697,7 +709,7 @@ func airCut(title store.Title, t store.Target, stamps bool) (cut time.Time, aire
 		countries = append(append([]string(nil), countries...), title.ScheduleCountry)
 	}
 	loc := zones.Of(countries...)
-	return zones.Midnight(*t.AirDate, loc), fmt.Sprintf("aired on %s, %s", day, loc), true
+	return zones.Midnight(*date, loc), fmt.Sprintf("aired on %s, %s%s", day, loc, moved), true
 }
 
 // broadcastLength is how long an episode the schedule source dates to the

@@ -86,32 +86,40 @@ func New(base, userAgent string) *Client {
 // Enabled reports whether the client asks anything at all.
 func (c *Client) Enabled() bool { return c != nil && strings.TrimSpace(c.BaseURL) != "" }
 
-// Episode is one episode as TVmaze lists it: its id, its numbers, its local
-// air date, when it airs — only when TVmaze knows the hour, not just the day
-// —, and how long it runs in minutes: its own runtime, else the show's (0
-// when TVmaze gives neither).
+// Episode is one episode as TVmaze lists it: its id, its numbers, its name,
+// its local air date and hour (AirTime, "21:00" where its network or service
+// is; "" when TVmaze knows only the day), when it airs — only when TVmaze
+// knows the hour —, and how long it runs in minutes: its own runtime, else
+// the show's (0 when TVmaze gives neither).
 type Episode struct {
 	ID       int64
 	Season   int
 	Number   int
+	Name     string
 	AirDate  *time.Time
+	AirTime  string
 	AirStamp *time.Time
 	Runtime  int
 }
 
 // Show is a show as TVmaze's record of it says: its name; how it airs — on a
 // broadcaster's network (Broadcast) or a streaming service's web channel
-// (Streaming), "" when it names neither —, and the country of that network or
-// service (ISO 3166-1; "" when it names none, as of a service everywhere);
-// its runtime in minutes (0 when unknown); and its episodes, specials — which
+// (Streaming), "" when it names neither —, the country of that network or
+// service (ISO 3166-1; "" when it names none, as of a service everywhere) and
+// its time zone (IANA; ""); its runtime in minutes (0 when unknown); its
+// usual hour and days (ScheduleTime "21:00" local, ScheduleDays "Thursday";
+// "" and none when TVmaze gives none); and its episodes, specials — which
 // TVmaze numbers in no season — left out.
 type Show struct {
-	ID       int64
-	Name     string
-	Kind     string
-	Country  string
-	Runtime  int
-	Episodes []Episode
+	ID           int64
+	Name         string
+	Kind         string
+	Country      string
+	Zone         string
+	Runtime      int
+	ScheduleTime string
+	ScheduleDays []string
+	Episodes     []Episode
 }
 
 // How a show airs (Show.Kind).
@@ -192,7 +200,8 @@ func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
 	}
 	type channel struct {
 		Country *struct {
-			Code string `json:"code"`
+			Code     string `json:"code"`
+			Timezone string `json:"timezone"`
 		} `json:"country"`
 	}
 	var raw struct {
@@ -202,11 +211,16 @@ func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
 		AverageRuntime *int     `json:"averageRuntime"`
 		Network        *channel `json:"network"`
 		WebChannel     *channel `json:"webChannel"`
-		Embedded       struct {
+		Schedule       struct {
+			Time string   `json:"time"`
+			Days []string `json:"days"`
+		} `json:"schedule"`
+		Embedded struct {
 			Episodes []struct {
 				ID       int64  `json:"id"`
 				Season   int    `json:"season"`
 				Number   *int   `json:"number"`
+				Name     string `json:"name"`
 				AirDate  string `json:"airdate"`
 				AirTime  string `json:"airtime"`
 				AirStamp string `json:"airstamp"`
@@ -220,18 +234,20 @@ func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
 	if raw.ID != 0 && raw.ID != id {
 		return Show{}, fmt.Errorf("TVmaze %s: %w: the record of show %d", p, ErrUnreadable, raw.ID)
 	}
-	show := Show{ID: id, Name: strings.TrimSpace(raw.Name)}
-	country := func(ch *channel) string {
+	show := Show{ID: id, Name: strings.TrimSpace(raw.Name), ScheduleTime: clockTime(raw.Schedule.Time), ScheduleDays: raw.Schedule.Days}
+	where := func(ch *channel) (country, zone string) {
 		if ch.Country == nil {
-			return ""
+			return "", ""
 		}
-		return strings.ToUpper(strings.TrimSpace(ch.Country.Code))
+		return strings.ToUpper(strings.TrimSpace(ch.Country.Code)), strings.TrimSpace(ch.Country.Timezone)
 	}
 	switch {
 	case raw.Network != nil:
-		show.Kind, show.Country = Broadcast, country(raw.Network)
+		show.Kind = Broadcast
+		show.Country, show.Zone = where(raw.Network)
 	case raw.WebChannel != nil:
-		show.Kind, show.Country = Streaming, country(raw.WebChannel)
+		show.Kind = Streaming
+		show.Country, show.Zone = where(raw.WebChannel)
 	}
 	switch {
 	case raw.Runtime != nil && *raw.Runtime > 0:
@@ -244,7 +260,7 @@ func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
 		if e.Number == nil || *e.Number < 1 || e.Season < 1 {
 			continue
 		}
-		ep := Episode{ID: e.ID, Season: e.Season, Number: *e.Number, Runtime: show.Runtime}
+		ep := Episode{ID: e.ID, Season: e.Season, Number: *e.Number, Name: strings.TrimSpace(e.Name), Runtime: show.Runtime}
 		if e.Runtime != nil && *e.Runtime > 0 {
 			ep.Runtime = *e.Runtime
 		}
@@ -252,15 +268,27 @@ func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
 			ep.AirDate = &d
 		}
 		// An airstamp without an hour is a day, not the moment it airs.
-		if strings.TrimSpace(e.AirTime) != "" {
+		if ep.AirTime = clockTime(e.AirTime); ep.AirTime != "" {
 			if at, err := time.Parse(time.RFC3339, strings.TrimSpace(e.AirStamp)); err == nil {
 				at = at.UTC()
 				ep.AirStamp = &at
+			} else {
+				ep.AirTime = ""
 			}
 		}
 		show.Episodes = append(show.Episodes, ep)
 	}
 	return show, nil
+}
+
+// clockTime is an hour as TVmaze writes one ("21:00"), or "" for anything
+// else.
+func clockTime(v string) string {
+	v = strings.TrimSpace(v)
+	if _, err := time.Parse("15:04", v); err != nil {
+		return ""
+	}
+	return v
 }
 
 // do sends one GET, spaced from the last (Every), and waits out a 429 — up

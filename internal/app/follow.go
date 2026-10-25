@@ -492,11 +492,14 @@ func requestState(p store.Progress, now time.Time, pol SearchSettings) (status, 
 	switch {
 	case p.HandsOff:
 		detail += "; its releases name no season and episode (an anime, a daily show): grabbed from the missing tab only"
-	case pol.exactAirTimes() && p.ScheduleAt == nil && p.Missing+p.Unaired > 0:
+	case pol.exactAirTimes() && !p.AirTimesRead && p.Missing+p.Unaired > 0:
 		detail += "; nothing of it is grabbed on its own until TVmaze's air times of it are read"
 		if p.ScheduleErr != "" {
 			detail += " (" + p.ScheduleErr + ")"
 		}
+	case pol.exactAirTimes() && p.AirTimeHolds > 0:
+		detail += fmt.Sprintf("; %s held, not grabbed on its own until TVmaze and TMDB agree on it or it has an air time",
+			count(p.AirTimeHolds, "episode", "episodes"))
 	}
 	return "following", clip(detail, 300)
 }

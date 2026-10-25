@@ -239,6 +239,7 @@ func TestWhenAReleaseIsPublishedTooEarly(t *testing.T) {
 	pol := SearchSettings{AirTimes: AirTimesTVmaze, AirDelayHours: 30, AirDelayAfterAirstampMinutes: 60}
 	read := time.Now()
 	us.ScheduleAt, stream.ScheduleAt = &read, &read
+	us.ScheduleVersion, stream.ScheduleVersion = store.ScheduleVersion, store.ScheduleVersion
 	episode.WindowAt, half.WindowAt, dayOnly.WindowAt = day(-2), day(-2), day(-2)
 	for _, tc := range []struct {
 		name   string
@@ -255,13 +256,19 @@ func TestWhenAReleaseIsPublishedTooEarly(t *testing.T) {
 			t.Errorf("%s opens at %s, want %s", tc.name, got.UTC(), tc.want.UTC())
 		}
 	}
-	never := us
+	never, earlier := us, us
 	never.ScheduleAt = nil
-	if autoOpen(never, episode, time.Now(), pol) || !autoOpen(us, episode, time.Now(), pol) {
-		t.Error("an episode of a series whose air times were never read is open")
+	earlier.ScheduleVersion = store.ScheduleVersion - 1
+	if autoOpen(never, episode, time.Now(), pol) || autoOpen(earlier, episode, time.Now(), pol) || !autoOpen(us, episode, time.Now(), pol) {
+		t.Error("an episode of a series whose air times were never read, or read by earlier rules, is open")
+	}
+	held := episode
+	held.ScheduleHold = "held"
+	if autoOpen(us, held, time.Now(), pol) {
+		t.Error("an episode held for TVmaze is open")
 	}
 	pol.AirTimes = AirTimesOff
-	if !autoOpen(never, episode, time.Now(), pol) {
+	if !autoOpen(never, episode, time.Now(), pol) || !autoOpen(us, held, time.Now(), pol) {
 		t.Error("with air times off, an episode waits for them")
 	}
 }
@@ -889,10 +896,12 @@ func TestTVmazeTooSlow(t *testing.T) {
 }
 
 // A series' show id is looked up once, its air times read again as it is,
-// and a schedule that dates an episode more than a day from TMDB gives it no
-// air time — the two count it differently. TMDB moving an episode drops its
-// air time; the source failing keeps what it gave, says so and asks it no
-// more this run; a show it does not know is looked up again a week later.
+// and a schedule that dates an episode more than a day before TMDB gives it
+// none of its own: of the two, the later day tells — the broadcast's usual
+// hour on TMDB's day. TMDB moving an episode drops its air time and holds it
+// until TVmaze is read again; the source failing keeps what it gave, says so
+// and asks it no more this run; a show it does not know is looked up again a
+// week later.
 func TestTheScheduleIsReadAndKept(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
@@ -916,8 +925,9 @@ func TestTheScheduleIsReadAndKept(t *testing.T) {
 		t.Errorf("the first read: %+v", run)
 	}
 	one, two := target(t, r.svc, "series:990741:s01e001"), target(t, r.svc, "series:990741:s01e002")
-	if one.AirStamp == nil || two.AirStamp != nil {
-		t.Errorf("E01 %v, E02 %v — the schedule dates E02 three days from TMDB", one.AirStamp, two.AirStamp)
+	if one.AirStamp == nil || one.AirStampEstimated || two.AirStamp == nil || !two.AirStampEstimated ||
+		!two.AirStamp.Equal(local(-2, 21, 0, "America/New_York")) || two.ScheduleDay != nil || two.ScheduleHold != "" {
+		t.Errorf("E01 %v, E02 %+v — the schedule dates E02 three days before TMDB: TMDB's day, at the usual hour", one.AirStamp, two)
 	}
 	known, _ := r.svc.st.TitleByID(ctx, "series:990741")
 	unknown, _ := r.svc.st.TitleByID(ctx, "series:990742")
@@ -963,12 +973,24 @@ func TestTheScheduleIsReadAndKept(t *testing.T) {
 		t.Errorf("E01's air time with the source down: %v", st.AirStamp)
 	}
 
-	// TMDB moves E01 by three days: its air time is no one's any more.
+	// TMDB moves E01 by three days: its air time is no one's any more, and
+	// with TVmaze down it is held until TVmaze is read again.
 	r.tmdb.set(func(t *fakeTMDB) { t.series[990741].seasons[1][0].air = day(-6) })
 	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:990741'`)
 	r.settle(t, true)
-	if st := target(t, r.svc, one.ID); st.AirStamp != nil || !st.AirDate.Equal(*day(-6)) {
-		t.Errorf("E01 moved by TMDB: %v %v", st.AirStamp, st.AirDate)
+	if st := target(t, r.svc, one.ID); st.AirStamp != nil || !st.AirDate.Equal(*day(-6)) || st.ScheduleHold != store.ScheduleMovedHold ||
+		st.Detail != store.ScheduleMovedHold {
+		t.Errorf("E01 moved by TMDB: %v %v %q %q", st.AirStamp, st.AirDate, st.ScheduleHold, st.Detail)
+	}
+	// TVmaze answers again: TVmaze's day is the earlier, so TMDB's tells, at
+	// the usual hour; the hold goes.
+	f.set(func(f *fakeSchedule) { f.down = false })
+	r.svc.retrySchedules(ctx)
+	sqlExec(t, `UPDATE titles SET schedule_at = now() - interval '6 hours' WHERE id = 'series:990741'`)
+	r.settle(t, true)
+	if st := target(t, r.svc, one.ID); st.ScheduleHold != "" || st.Detail != "" || st.AirStamp == nil || !st.AirStampEstimated ||
+		!st.AirStamp.Equal(local(-6, 21, 0, "America/New_York")) {
+		t.Errorf("E01 read again: %+v", st)
 	}
 }
 

@@ -610,31 +610,34 @@ func grabbableNow(title store.Title, t store.Target, now time.Time, pol SearchSe
 
 // autoOpen reports whether an automatic grab may take a target now, as
 // store's autoOpenSQL says (openAt): with the schedule source's air times,
-// nothing of a series whose air times were never read — but of one whose
-// releases name no season and episode, which no automatic grab takes —; a
-// movie the import tracks, without a window, is out.
+// nothing of a series whose air times were not read by these rules — but of
+// one whose releases name no season and episode, which no automatic grab
+// takes —, nor an episode held for the source; a movie the import tracks,
+// without a window, is out.
 func autoOpen(title store.Title, t store.Target, now time.Time, pol SearchSettings) bool {
 	if t.WindowAt == nil {
 		return t.Kind == "movie" && !t.ReleasePending
 	}
-	if schedulePending(title, t, pol) {
+	if schedulePending(title, t, pol) || (pol.exactAirTimes() && t.Kind == "episode" && t.ScheduleHold != "") {
 		return false
 	}
 	return !openAt(title, t, pol).After(now)
 }
 
 // schedulePending reports whether an episode waits for its series' air times
-// to be read: they are used, and were never read of a series an automatic
-// grab may take anything of.
+// to be read: they are used, and were not read by these rules
+// (store.ScheduleVersion) of a series an automatic grab may take anything of.
 func schedulePending(title store.Title, t store.Target, pol SearchSettings) bool {
-	return pol.exactAirTimes() && t.Kind == "episode" && title.Kind == "series" && title.ScheduleAt == nil && !title.HandsOff()
+	return pol.exactAirTimes() && t.Kind == "episode" && title.Kind == "series" && !title.HandsOff() &&
+		(title.ScheduleAt == nil || title.ScheduleVersion < store.ScheduleVersion)
 }
 
 // openAt is when an automatic grab may take a target with a window: of an
-// episode the schedule source dates to the minute, the delay after its
-// broadcast ends (broadcastLength) — or, of a series streamed, after it
-// streams —; else its window, and the air delay after its air date (00:00
-// UTC of the day TMDB dates it).
+// episode the schedule source dates to the minute — or whose hour is
+// estimated from its usual one —, the delay after its broadcast ends
+// (broadcastLength) — or, of a series streamed, after it streams —; else its
+// window, and the air delay after the day it is told by (airDay): 00:00 UTC of
+// the day TMDB dates it, or the source's when that is more than a day later.
 func openAt(title store.Title, t store.Target, pol SearchSettings) time.Time {
 	if pol.exactAirTimes() && t.AirStamp != nil {
 		if title.ScheduleKind == store.ScheduleStreaming {
@@ -643,10 +646,20 @@ func openAt(title store.Title, t store.Target, pol SearchSettings) time.Time {
 		return t.AirStamp.Add(broadcastLength(t) + pol.stampDelay())
 	}
 	at := *t.WindowAt
-	if t.AirDate != nil && t.AirDate.Add(pol.airDelay()).After(at) {
-		at = t.AirDate.Add(pol.airDelay())
+	if day := airDay(t, pol.exactAirTimes()); day != nil && day.Add(pol.airDelay()).After(at) {
+		at = day.Add(pol.airDelay())
 	}
 	return at
+}
+
+// airDay is the day an episode is told by: TMDB's, or — with the schedule
+// source's air times — the source's, when it dates it more than a day later
+// (TMDB has not caught up with a move).
+func airDay(t store.Target, stamps bool) *time.Time {
+	if stamps && t.ScheduleDay != nil && (t.AirDate == nil || t.ScheduleDay.After(*t.AirDate)) {
+		return t.ScheduleDay
+	}
+	return t.AirDate
 }
 
 // grabMatched grabs, for each target matched, the best of its releases an

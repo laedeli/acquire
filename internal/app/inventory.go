@@ -146,7 +146,8 @@ func (s *Service) takeScheduled() bool {
 }
 
 // RunInventory reads TMDB as it is asked to until ctx ends, and every
-// followRetry the follows TMDB could not be read for yet.
+// followRetry the follows TMDB could not be read for yet, and the air times
+// TVmaze did not give.
 func (s *Service) RunInventory(ctx context.Context) {
 	if s.st == nil {
 		return
@@ -330,7 +331,9 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 			reconcile = append(reconcile, t.ID)
 		}
 		if schedule && t.Kind == "series" && !headOnly(t) {
-			schedule = s.readSchedule(ctx, t.ID, &run)
+			// An episode TMDB added or moved is read at TVmaze at once:
+			// moved, it is held until it is.
+			schedule = s.readSchedule(ctx, t.ID, &run, ch.Added > 0 || ch.Updated > 0)
 		}
 		return true
 	}
@@ -483,6 +486,7 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 		Status: head.Status, Running: tmdb.Running(head.Status), Aliases: head.Aliases, Countries: head.Countries,
 		Genres: head.Genres, Type: head.Type,
 		Seasons: listed, Read: toRead, MonitorAll: t.Followed() && t.InventoryAt == nil,
+		AirTimes: s.grabPolicy(ctx).exactAirTimes(),
 	}
 	for _, n := range toRead {
 		spend()
@@ -500,10 +504,11 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 }
 
 // readSchedule reads a series' air times at the schedule source when they
-// are due (scheduleDue), as readScheduleOf does.
-func (s *Service) readSchedule(ctx context.Context, titleID string, run *InventoryRun) bool {
+// are due (scheduleDue) — or at once, with now: a read of TMDB added an
+// episode or moved one —, as readScheduleOf does.
+func (s *Service) readSchedule(ctx context.Context, titleID string, run *InventoryRun, now bool) bool {
 	t, err := s.st.TitleByID(ctx, titleID)
-	if err != nil || !scheduleDue(t, time.Now()) {
+	if err != nil || (!now && !scheduleDue(t, time.Now())) {
 		return true
 	}
 	return s.readScheduleOf(ctx, t, run)
@@ -512,15 +517,15 @@ func (s *Service) readSchedule(ctx context.Context, titleID string, run *Invento
 // readScheduleOf reads a series' air times at the schedule source: its show
 // id, looked up once by the series' TVDB id or IMDb id — nothing else is
 // sent —, then the show's record with its episodes in one call — how it
-// airs, broadcast or streamed, and the moment each episode airs and how long
-// it runs, kept on its target. A show whose name is neither the series' nor
-// one of its aliases is another show behind the same id: none of its air
-// times is taken, and it is looked up again in a week. It reports false when
-// the source does not answer as it should — out of reach, failing, limiting,
+// airs, broadcast or streamed, its usual hour, and the moment each episode
+// airs and how long it runs —, made into what each episode target is told by
+// (planSchedule). A show whose name is neither the series' nor one of its
+// aliases is another show behind the same id: none of its air times is
+// taken, and it is looked up again in a week. It reports false when the
+// source does not answer as it should — out of reach, failing, limiting,
 // refusing —: no other series would fare better this run. An answer that
 // cannot be read leaves the series unread, to be read again, and the run goes
-// on. Nothing fails of the series either way; an episode without an air time
-// is told by its air date.
+// on. Nothing fails of the series either way.
 func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *InventoryRun) bool {
 	if t.TVDBID == 0 && t.IMDBID == "" {
 		_ = s.st.ScheduleFailed(ctx, t.ID, "no TVDB or IMDb id to look it up at TVmaze by; looked up again in a week", store.ScheduleUnknown)
@@ -562,16 +567,17 @@ func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *Invent
 			"looked up again in a week", id, show.Name), store.ScheduleOtherShow)
 		return true
 	}
-	rec := store.ScheduledShow{ID: id, Country: show.Country}
+	targets, err := s.st.TitleTargets(ctx, t.ID)
+	if err != nil {
+		log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
+		return true
+	}
+	rec := store.ScheduledShow{ID: id, Country: show.Country, Targets: planSchedule(t, show, targets, time.Now())}
 	switch show.Kind {
 	case tvmaze.Broadcast:
 		rec.Kind = store.ScheduleBroadcast
 	case tvmaze.Streaming:
 		rec.Kind = store.ScheduleStreaming
-	}
-	for _, e := range show.Episodes {
-		rec.Episodes = append(rec.Episodes, store.ScheduledEpisode{Season: e.Season, Episode: e.Number, AirDate: e.AirDate,
-			AirStamp: e.AirStamp, Runtime: e.Runtime})
 	}
 	if _, err := s.st.ApplySchedule(ctx, t.ID, rec); err != nil {
 		log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
@@ -617,12 +623,13 @@ func sameShow(name, title string, aliases []string) bool {
 	return false
 }
 
-// scheduleDue reports whether a series' air times are read now: never read;
-// of a series that runs, on every read of it; of any other, monthly; a show
-// the schedule source did not know, a week after it was looked up.
+// scheduleDue reports whether a series' air times are read now: never read,
+// or read by an earlier version of the rules (store.ScheduleVersion); of a
+// series that runs, on every read of it; of any other, monthly; a show the
+// schedule source did not know, a week after it was looked up.
 func scheduleDue(t store.Title, now time.Time) bool {
 	switch {
-	case t.ScheduleAt == nil:
+	case t.ScheduleAt == nil, t.ScheduleVersion < store.ScheduleVersion:
 		return true
 	case t.ScheduleID == 0:
 		return now.Sub(*t.ScheduleAt) >= scheduleUnknownAgain

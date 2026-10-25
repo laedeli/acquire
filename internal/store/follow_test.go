@@ -1133,11 +1133,11 @@ func TestASeasonWithAGoneEpisodeIsReadAgain(t *testing.T) {
 
 // Whose air times a run reads: a monitored series an automatic grab may take
 // anything of — not one held for an admin's approval, nor an anime or a
-// daily show —, never read first and of them the one with an episode near its
-// air date, then the ones due: one that runs after the running interval, one
-// the source did not know after a week, any other after a month. With failed,
-// only the ones never read because the source did not answer. How far they
-// are of the series that run is counted.
+// daily show —, never read — or read by earlier rules — first and of them the
+// one with an episode near its air date, then the ones due: one that runs
+// after the running interval, one the source did not know after a week, any
+// other after a month. With failed, only the ones never read because the
+// source did not answer. How far they are of the series that run is counted.
 func TestWhoseAirTimesAreRead(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -1152,6 +1152,7 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 		{TMDBID: 990868, Kind: "series", Title: "Not Monitored", Status: "continuing"},
 		{TMDBID: 990869, Kind: "series", Title: "Daily", Monitored: true, Status: "continuing", SeriesType: "daily"},
 		{TMDBID: 990870, Kind: "series", Title: "Never Read, Failed", Monitored: true, Status: "continuing"},
+		{TMDBID: 990872, Kind: "series", Title: "Read An Hour Ago, By Earlier Rules", Monitored: true, Status: "continuing"},
 	} {
 		if err := s.UpsertTitle(ctx, ti); err != nil {
 			t.Fatal(err)
@@ -1161,11 +1162,13 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.pool.Exec(ctx, `
+		UPDATE titles SET schedule_version = 1 WHERE tmdb_id BETWEEN 990861 AND 990871;
 		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 day' WHERE tmdb_id = 990863;
 		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 hour' WHERE tmdb_id = 990864;
 		UPDATE titles SET schedule_at = now() - interval '8 days' WHERE tmdb_id = 990865;
 		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '7 days' WHERE tmdb_id = 990866;
 		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '60 days' WHERE tmdb_id = 990867;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 hour', schedule_version = 0 WHERE tmdb_id = 990872;
 		UPDATE titles SET schedule_error = 'TVmaze did not answer: HTTP 503' WHERE tmdb_id = 990870;
 		UPDATE titles SET monitored = true WHERE tmdb_id = 990871;`); err != nil {
 		t.Fatal(err)
@@ -1189,8 +1192,8 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 		}
 		return out
 	}
-	want := []string{"Never Read, Airing", "Never Read", "Never Read, Failed", "Unknown A Week Ago", "Running, Read A Day Ago",
-		"Ended, Read Two Months Ago"}
+	want := []string{"Never Read, Airing", "Never Read", "Never Read, Failed", "Read An Hour Ago, By Earlier Rules", "Unknown A Week Ago",
+		"Running, Read A Day Ago", "Ended, Read Two Months Ago"}
 	if got := names(false); !reflect.DeepEqual(got, want) {
 		t.Errorf("due = %q\nwant  %q", got, want)
 	}
@@ -1201,7 +1204,7 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 		t.Errorf("limit: %d", len(lim))
 	}
 	a, err := s.AirTimesOfRunning(ctx)
-	if err != nil || a.Running != 6 || a.Read != 2 || a.Unknown != 1 || a.Pending != 3 || a.LastError != "TVmaze did not answer: HTTP 503" {
+	if err != nil || a.Running != 7 || a.Read != 2 || a.Unknown != 1 || a.Pending != 4 || a.LastError != "TVmaze did not answer: HTTP 503" {
 		t.Errorf("of the series that run: %+v %v", a, err)
 	}
 }

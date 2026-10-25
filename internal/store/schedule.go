@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -12,10 +13,16 @@ import (
 // the moment each episode airs and how long it runs: kept on its target
 // (air_stamp, air_runtime). Of a broadcast, an automatic grab takes nothing
 // published before it ended, and waits a while after; of a streamed episode,
-// nothing published more than half an hour before it streams. Until a
-// series' air times are read, an automatic grab takes nothing of it. A
-// series' show id at the source is kept on its title, so it is looked up
-// once.
+// nothing published more than half an hour before it streams. An episode the
+// source dates more than a day after TMDB is told by the source's date and
+// hour (schedule_day): TMDB has not caught up with a move. Of a broadcast the
+// source gives no hour for, the hour is estimated from its usual one
+// (air_stamp_estimated). An episode the two date apart that cannot be told
+// the same, or of a broadcast without an hour to estimate, is held: no
+// automatic grab takes it (schedule_hold). Until a series' air times are read
+// by the rules of this version (schedule_version), an automatic grab takes
+// nothing of it. A series' show id at the source is kept on its title, so it
+// is looked up once.
 
 // How the schedule source says a series airs (titles.schedule_kind).
 const (
@@ -23,43 +30,58 @@ const (
 	ScheduleStreaming = "streaming"
 )
 
+// ScheduleVersion is the version of the rules a series' air times are read
+// by: a series read by an earlier one is due first, and nothing of it is
+// grabbed on its own until it is read again (titles.schedule_version).
+const ScheduleVersion = 1
+
+// scheduleReadSQL is "the series t's air times were read, by these rules".
+var scheduleReadSQL = fmt.Sprintf(`(t.schedule_at IS NOT NULL AND t.schedule_version >= %d)`, ScheduleVersion)
+
 // ScheduledShow is a series as the schedule source has it: its show id
 // there, how it airs (ScheduleBroadcast, ScheduleStreaming, ""), the country
-// of its network or service, and its episodes.
+// of its network or service, and what the read makes of each of its episode
+// targets.
 type ScheduledShow struct {
-	ID       int64
-	Kind     string
-	Country  string
-	Episodes []ScheduledEpisode
+	ID      int64
+	Kind    string
+	Country string
+	Targets []ScheduledTarget
 }
 
-// ScheduledEpisode is one episode as the schedule source lists it: its
-// numbers, the day it airs where it airs, the moment it airs when the source
-// knows the hour, and how long it runs in minutes (0: not known).
-type ScheduledEpisode struct {
-	Season, Episode int
-	AirDate         *time.Time
-	AirStamp        *time.Time
-	Runtime         int
+// ScheduledTarget is what a read of the schedule source makes of an episode
+// target: TargetID; AirDate, its day at TMDB as the read saw it — nothing is
+// written of a target whose day has changed since —; EpisodeID, the source's
+// episode taken for it (0: none); Stamp and Runtime, the moment it airs and
+// how long it runs, as the source says, or Estimated from the usual hour of
+// the series' broadcasts; Day, the source's date of it when more than a day
+// after TMDB's; Hold, why no automatic grab takes it ("": none).
+type ScheduledTarget struct {
+	TargetID  string
+	AirDate   *time.Time
+	EpisodeID int64
+	Stamp     *time.Time
+	Runtime   int
+	Estimated bool
+	Day       *time.Time
+	Hold      string
 }
 
 // ApplySchedule records a series' show at the schedule source — its id, how
-// it airs, its country — and the moment each of its episodes airs and how
-// long it runs, on the target of the same numbers when the source dates it
-// within a day of TMDB: numbers the two count differently are not taken for
-// the same episode. An episode the source gives no hour for any more, or
-// dates elsewhere, keeps none: it is told by its air date. stamped is how
-// many of the series' targets carry an air time now.
+// it airs, its country — and what the read made of each of its episodes, in
+// one transaction; the series counts as read by these rules
+// (ScheduleVersion). An episode target the read names nothing of keeps no air
+// time. A hold is said on the target (its detail) while it lasts. stamped is
+// how many of the series' targets carry an air time now.
 func (s *Store) ApplySchedule(ctx context.Context, titleID string, show ScheduledShow) (stamped int, err error) {
-	seasons, numbers, runtimes := []int32{}, []int32{}, []int32{}
-	stamps, days := []time.Time{}, []time.Time{}
-	for _, e := range show.Episodes {
-		if e.AirStamp == nil || e.AirDate == nil || e.Season < 1 || e.Episode < 1 {
-			continue
-		}
-		seasons, numbers = append(seasons, int32(e.Season)), append(numbers, int32(e.Episode))
-		stamps, days = append(stamps, e.AirStamp.UTC()), append(days, e.AirDate.UTC())
-		runtimes = append(runtimes, int32(max(e.Runtime, 0)))
+	ids, days, holds := []string{}, []*time.Time{}, []string{}
+	episodes, runtimes := []int64{}, []int32{}
+	stamps, sdays := []*time.Time{}, []*time.Time{}
+	estimated := []bool{}
+	for _, t := range show.Targets {
+		ids, days, holds = append(ids, t.TargetID), append(days, t.AirDate), append(holds, clipText(t.Hold))
+		episodes, runtimes = append(episodes, t.EpisodeID), append(runtimes, int32(max(t.Runtime, 0)))
+		stamps, sdays, estimated = append(stamps, t.Stamp), append(sdays, t.Day), append(estimated, t.Estimated && t.Stamp != nil)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -68,28 +90,38 @@ func (s *Store) ApplySchedule(ctx context.Context, titleID string, show Schedule
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		UPDATE titles SET schedule_id = $2, schedule_at = now(), schedule_error = '', schedule_kind = $3, schedule_country = $4,
-		       updated_at = now()
+		       schedule_version = $5, updated_at = now()
 		 WHERE id = $1`,
-		titleID, show.ID, show.Kind, show.Country); err != nil {
+		titleID, show.ID, show.Kind, show.Country, ScheduleVersion); err != nil {
 		return 0, err
 	}
-	const listed = `unnest($2::int[], $3::int[], $4::timestamptz[], $5::date[], $6::int[]) AS s(season, episode, stamp, day, runtime)`
+	const listed = `unnest($2::text[], $3::date[], $4::bigint[], $5::timestamptz[], $6::int[], $7::boolean[], $8::date[], $9::text[])
+		AS s(id, tmdb_day, episode, stamp, runtime, estimated, day, hold)`
 	if _, err := tx.Exec(ctx, `
-		UPDATE acquisition_targets a SET air_stamp = s.stamp, air_runtime = s.runtime, updated_at = now()
+		UPDATE acquisition_targets a
+		   SET schedule_episode_id = NULLIF(s.episode, 0), air_stamp = s.stamp, air_runtime = CASE WHEN s.stamp IS NULL THEN 0 ELSE s.runtime END,
+		       air_stamp_estimated = s.estimated, schedule_day = s.day, schedule_hold = s.hold,
+		       detail = CASE WHEN s.hold <> '' AND s.hold <> a.schedule_hold THEN s.hold
+		                     WHEN s.hold = '' AND a.schedule_hold <> '' AND a.detail = a.schedule_hold THEN ''
+		                     ELSE a.detail END,
+		       updated_at = now()
 		  FROM `+listed+`
-		 WHERE a.title_id = $1 AND a.kind = 'episode' AND a.season_number = s.season AND a.episode_number = s.episode
-		   AND a.air_date IS NOT NULL AND abs(a.air_date - s.day) <= 1
-		   AND (a.air_stamp IS DISTINCT FROM s.stamp OR a.air_runtime <> s.runtime)`,
-		titleID, seasons, numbers, stamps, days, runtimes); err != nil {
+		 WHERE a.id = s.id AND a.title_id = $1 AND a.kind = 'episode' AND a.air_date IS NOT DISTINCT FROM s.tmdb_day
+		   AND (a.schedule_episode_id IS DISTINCT FROM NULLIF(s.episode, 0) OR a.air_stamp IS DISTINCT FROM s.stamp
+		        OR a.air_runtime <> CASE WHEN s.stamp IS NULL THEN 0 ELSE s.runtime END OR a.air_stamp_estimated <> s.estimated
+		        OR a.schedule_day IS DISTINCT FROM s.day OR a.schedule_hold <> s.hold)`,
+		titleID, ids, days, episodes, stamps, runtimes, estimated, sdays, holds); err != nil {
 		return 0, err
 	}
+	// What the read named nothing of keeps nothing of the source's.
 	if _, err := tx.Exec(ctx, `
-		UPDATE acquisition_targets a SET air_stamp = NULL, air_runtime = 0, updated_at = now()
-		 WHERE a.title_id = $1 AND a.air_stamp IS NOT NULL
-		   AND NOT EXISTS (SELECT 1 FROM `+listed+`
-		                    WHERE s.season = a.season_number AND s.episode = a.episode_number
-		                      AND a.air_date IS NOT NULL AND abs(a.air_date - s.day) <= 1)`,
-		titleID, seasons, numbers, stamps, days, runtimes); err != nil {
+		UPDATE acquisition_targets a
+		   SET schedule_episode_id = NULL, air_stamp = NULL, air_runtime = 0, air_stamp_estimated = false, schedule_day = NULL,
+		       schedule_hold = '', detail = CASE WHEN a.schedule_hold <> '' AND a.detail = a.schedule_hold THEN '' ELSE a.detail END,
+		       updated_at = now()
+		 WHERE a.title_id = $1 AND a.kind = 'episode' AND NOT (a.id = ANY($2::text[]))
+		   AND (a.schedule_episode_id IS NOT NULL OR a.air_stamp IS NOT NULL OR a.schedule_day IS NOT NULL OR a.schedule_hold <> '')`,
+		titleID, ids); err != nil {
 		return 0, err
 	}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM acquisition_targets WHERE title_id = $1 AND air_stamp IS NOT NULL`,
@@ -111,20 +143,23 @@ const (
 	ScheduleDown ScheduleFailure = iota
 	// ScheduleUnknown: the source does not know the series by its ids, or
 	// it has none to be asked by. Its show id is forgotten, and it is looked
-	// up again after a week; the air times it gave stay.
+	// up again after a week; the air times it gave stay, and no episode of
+	// it is held for the source.
 	ScheduleUnknown
 	// ScheduleOtherShow: the show the source answers by the series' ids is
 	// another — a name neither the series' nor one of its aliases: its show
-	// id, how it airs and every air time taken from it are dropped, and it
-	// is looked up again after a week.
+	// id, how it airs and everything taken from it are dropped, and it is
+	// looked up again after a week.
 	ScheduleOtherShow
 )
 
 // ScheduleFailed records why a series' air times could not be read, as how
 // says (ScheduleFailure). Of all but ScheduleDown, the series counts as read
-// now — told by its air dates, as far as the source gives it none.
+// now, by these rules — told by its air dates, as far as the source gives it
+// none.
 func (s *Store) ScheduleFailed(ctx context.Context, titleID, reason string, how ScheduleFailure) error {
 	other := how == ScheduleOtherShow
+	read := how != ScheduleDown
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -135,14 +170,25 @@ func (s *Store) ScheduleFailed(ctx context.Context, titleID, reason string, how 
 		       schedule_id = CASE WHEN $4 THEN NULL ELSE schedule_id END,
 		       schedule_kind = CASE WHEN $5 THEN '' ELSE schedule_kind END,
 		       schedule_country = CASE WHEN $5 THEN '' ELSE schedule_country END,
+		       schedule_version = CASE WHEN $3 THEN $6 ELSE schedule_version END,
 		       schedule_at = CASE WHEN $3 THEN now() ELSE schedule_at END, updated_at = now()
-		 WHERE id = $1`, titleID, clipText(reason), how != ScheduleDown, how == ScheduleUnknown || other, other); err != nil {
+		 WHERE id = $1`, titleID, clipText(reason), read, read, other, ScheduleVersion); err != nil {
 		return err
 	}
-	if other {
+	if read {
+		// Without the source, nothing is held for it; of another show, nothing
+		// taken from it stays.
 		if _, err := tx.Exec(ctx, `
-			UPDATE acquisition_targets SET air_stamp = NULL, air_runtime = 0, updated_at = now()
-			 WHERE title_id = $1 AND (air_stamp IS NOT NULL OR air_runtime <> 0)`, titleID); err != nil {
+			UPDATE acquisition_targets a
+			   SET air_stamp = CASE WHEN $2 OR a.air_stamp_estimated THEN NULL ELSE a.air_stamp END,
+			       air_runtime = CASE WHEN $2 OR a.air_stamp_estimated THEN 0 ELSE a.air_runtime END,
+			       air_stamp_estimated = false,
+			       schedule_episode_id = CASE WHEN $2 THEN NULL ELSE a.schedule_episode_id END,
+			       schedule_day = NULL, schedule_hold = '',
+			       detail = CASE WHEN a.schedule_hold <> '' AND a.detail = a.schedule_hold THEN '' ELSE a.detail END,
+			       updated_at = now()
+			 WHERE a.title_id = $1 AND (a.air_stamp_estimated OR a.schedule_day IS NOT NULL OR a.schedule_hold <> ''
+			       OR ($2 AND (a.air_stamp IS NOT NULL OR a.schedule_episode_id IS NOT NULL)))`, titleID, other); err != nil {
 			return err
 		}
 	}
@@ -167,22 +213,23 @@ type ScheduleEvery struct {
 }
 
 // SchedulesDue are the series whose air times are due to be read
-// (scheduleTrackedSQL): never read first — of them, the ones with an episode
-// near its air date (nearAirSQL) —, then the ones that run, then the ones
-// read longest ago. failed narrows them to the series never read because the
-// source did not answer when it was last asked.
+// (scheduleTrackedSQL): never read — or read by an earlier version of the
+// rules (ScheduleVersion) — first, and of them the ones with an episode near
+// its air date (nearAirSQL), then the ones that run, then the ones read
+// longest ago. failed narrows them to the series not read because the source
+// did not answer when it was last asked.
 func (s *Store) SchedulesDue(ctx context.Context, every ScheduleEvery, limit int, failed bool) ([]Title, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+titleCols+`
 		  FROM titles t
 		  CROSS JOIN LATERAL (SELECT `+runningSQL+` AS running) r
 		 WHERE `+scheduleTrackedSQL+`
-		   AND (CASE WHEN t.schedule_at IS NULL THEN NOT $5 OR t.schedule_error <> ''
+		   AND (CASE WHEN NOT `+scheduleReadSQL+` THEN NOT $5 OR t.schedule_error <> ''
 		             WHEN $5 THEN false
 		             WHEN t.schedule_id IS NULL THEN t.schedule_at < now() - make_interval(secs => $3::float8)
 		             WHEN r.running THEN t.schedule_at < now() - make_interval(secs => $2::float8)
 		             ELSE t.schedule_at < now() - make_interval(secs => $4::float8) END)
-		 ORDER BY t.schedule_at IS NULL DESC, `+nearAirSQL+` DESC, r.running DESC, t.schedule_at NULLS FIRST, t.id
+		 ORDER BY `+scheduleReadSQL+`, `+nearAirSQL+` DESC, r.running DESC, t.schedule_at NULLS FIRST, t.id
 		 LIMIT $1`, limit, every.Running.Seconds(), every.Unknown.Seconds(), every.Other.Seconds(), failed)
 	if err != nil {
 		return nil, err
@@ -202,15 +249,18 @@ func (s *Store) SchedulesDue(ctx context.Context, every ScheduleEvery, limit int
 // AirTimes is how far the schedule source's air times are of the series that
 // run (runningSQL) whose air times matter (scheduleTrackedSQL): of Running,
 // Read are read; Unknown are told by their air dates alone — the source does
-// not know them, or knows them under another name; Pending are not read yet,
-// and an automatic grab takes nothing of them until they are. LastError is
-// why the source last failed to give a pending one's.
+// not know them, they have no id to be asked by, or the source knows them
+// under another name; Pending are not read yet by these rules, and an
+// automatic grab takes nothing of them until they are. LastError is why the
+// source last failed to give a pending one's. Held are their episodes no
+// automatic grab takes until TMDB and the source agree, or it has an air time.
 type AirTimes struct {
 	Running   int    `json:"running"`
 	Read      int    `json:"read"`
 	Unknown   int    `json:"unknown"`
 	Pending   int    `json:"pending"`
 	LastError string `json:"lastError,omitempty"`
+	Held      int    `json:"held"`
 }
 
 // AirTimesOfRunning counts them.
@@ -218,12 +268,14 @@ func (s *Store) AirTimesOfRunning(ctx context.Context) (AirTimes, error) {
 	var a AirTimes
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*),
-		       count(*) FILTER (WHERE t.schedule_at IS NOT NULL AND t.schedule_id IS NOT NULL),
-		       count(*) FILTER (WHERE t.schedule_at IS NOT NULL AND t.schedule_id IS NULL),
-		       count(*) FILTER (WHERE t.schedule_at IS NULL),
+		       count(*) FILTER (WHERE `+scheduleReadSQL+` AND t.schedule_id IS NOT NULL),
+		       count(*) FILTER (WHERE `+scheduleReadSQL+` AND t.schedule_id IS NULL),
+		       count(*) FILTER (WHERE NOT `+scheduleReadSQL+`),
 		       COALESCE((array_agg(t.schedule_error ORDER BY t.updated_at DESC)
-		                   FILTER (WHERE t.schedule_at IS NULL AND t.schedule_error <> ''))[1], '')
+		                   FILTER (WHERE NOT `+scheduleReadSQL+` AND t.schedule_error <> ''))[1], ''),
+		       COALESCE(sum((SELECT count(*) FROM acquisition_targets x WHERE x.title_id = t.id AND x.schedule_hold <> ''
+		                      AND x.monitored AND x.state <> 'held')), 0)
 		  FROM titles t
-		 WHERE `+scheduleTrackedSQL+` AND `+runningSQL).Scan(&a.Running, &a.Read, &a.Unknown, &a.Pending, &a.LastError)
+		 WHERE `+scheduleTrackedSQL+` AND `+runningSQL).Scan(&a.Running, &a.Read, &a.Unknown, &a.Pending, &a.LastError, &a.Held)
 	return a, err
 }
