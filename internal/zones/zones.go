@@ -107,21 +107,23 @@ func sameDate(t, d time.Time) bool {
 	return y == d.Year() && m == d.Month() && dd == d.Day()
 }
 
-// dropHour is the hour a streaming service of a country puts an episode out
-// on the day it is dated, as a rule, in the country's zone (byCountry): in
-// the United States 03:00 in New York — midnight on the Pacific coast. A
-// country it does not name has no such rule acquire counts on: an episode's
-// day there begins at midnight.
-var dropHour = map[string]int{"US": 3}
+// drops are the earliest a streaming service of a country puts an episode
+// out, as a rule, against the day it is dated, in the country's zone
+// (byCountry): in the United States 21:00 in New York the evening before —
+// a service there puts an episode out then, or at midnight on the Pacific
+// coast, 03:00 in New York, on the day. A country it does not name has no
+// such rule acquire counts on: an episode's day there begins at midnight.
+var drops = map[string]struct{ days, hour int }{"US": {-1, 21}}
 
-// Drop is when a streaming service of country puts out an episode dated day,
-// as a rule (dropHour), and the zone that hour is counted in; ok is false for
-// a country without one.
+// Drop is the earliest a streaming service of country puts out an episode
+// dated day, as a rule (drops), and the zone it is counted in; ok is false
+// for a country without one.
 func Drop(day time.Time, country string) (at time.Time, loc *time.Location, ok bool) {
 	code := strings.ToUpper(strings.TrimSpace(country))
-	h, known := dropHour[code]
+	d, known := drops[code]
 	if loc = Country(code); !known || loc == nil {
 		return time.Time{}, nil, false
 	}
-	return Midnight(day, loc).Add(time.Duration(h) * time.Hour), loc, true
+	on := day.UTC().AddDate(0, 0, d.days)
+	return time.Date(on.Year(), on.Month(), on.Day(), d.hour, 0, 0, 0, loc), loc, true
 }

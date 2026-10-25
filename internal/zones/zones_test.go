@@ -62,17 +62,23 @@ func TestMidnightAcrossTheClocksTurning(t *testing.T) {
 	}
 }
 
-// A streaming service of the United States puts an episode out at 03:00 in
-// New York, midnight on the Pacific coast, on the day it is dated; of a
-// country without such a rule, nothing is said.
+// A streaming service of the United States puts an episode out at 21:00 in
+// New York the evening before the day it is dated, at the earliest — or at
+// midnight on the Pacific coast on the day; of a country without such a rule,
+// nothing is said.
 func TestWhenAStreamingServicePutsAnEpisodeOut(t *testing.T) {
 	d := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
 	at, loc, ok := Drop(d, "us")
-	if !ok || loc.String() != "America/New_York" || at.UTC().Format(time.RFC3339) != "2026-10-23T07:00:00Z" {
+	if !ok || loc.String() != "America/New_York" || at.UTC().Format(time.RFC3339) != "2026-10-23T01:00:00Z" ||
+		at.In(loc).Format("2006-01-02 15:04") != "2026-10-22 21:00" {
 		t.Errorf("in the US: %s %v %v", at.UTC(), loc, ok)
 	}
-	if at, _, ok := Drop(time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC), "US"); !ok || at.UTC().Format(time.RFC3339) != "2026-11-06T08:00:00Z" {
+	if at, _, ok := Drop(time.Date(2026, 11, 6, 0, 0, 0, 0, time.UTC), "US"); !ok || at.UTC().Format(time.RFC3339) != "2026-11-06T02:00:00Z" {
 		t.Errorf("in the US in winter: %s", at.UTC())
+	}
+	// The evening of the day the clocks turned back: 21:00 standard time.
+	if at, _, ok := Drop(time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC), "US"); !ok || at.UTC().Format(time.RFC3339) != "2026-11-02T02:00:00Z" {
+		t.Errorf("the evening the clocks turned: %s", at.UTC())
 	}
 	for _, c := range []string{"DE", "", "ZZ"} {
 		if _, _, ok := Drop(d, c); ok {

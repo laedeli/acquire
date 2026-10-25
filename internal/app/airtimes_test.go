@@ -198,10 +198,11 @@ func TestWhenAReleaseIsPublishedTooEarly(t *testing.T) {
 		{"streamed: 20 minutes before it streams", stream, episode, stamp.Add(-20 * time.Minute), true, ""},
 		{"streamed: 40 minutes before it", stream, episode, stamp.Add(-40 * time.Minute), true,
 			"published before the episode aired (published " + utc(stamp.Add(-40*time.Minute)) + "; S01E01 streams from " + utc(stamp) + "): most likely a fake"},
-		{"streamed from the US, dated to the day: before 03:00 in New York", stream, dayOnly, local(-2, 2, 30, "America/New_York"), true,
-			"published before the episode aired (published " + utc(local(-2, 2, 30, "America/New_York")) + "; S01E01 streams on " + dateOf(day(-2)) +
-				", from about 03:00 America/New_York): most likely a fake"},
-		{"streamed from the US, dated to the day: after 03:00", stream, dayOnly, local(-2, 3, 10, "America/New_York"), true, ""},
+		{"streamed from the US, dated to the day: before 21:00 in New York the evening before", stream, dayOnly, local(-3, 20, 30, "America/New_York"), true,
+			"published before the episode aired (published " + utc(local(-3, 20, 30, "America/New_York")) + "; S01E01 streams on " + dateOf(day(-2)) +
+				", from " + dateOf(day(-3)) + " 21:00 America/New_York at the earliest): most likely a fake"},
+		{"streamed from the US, dated to the day: 21:30 in New York the evening before", stream, dayOnly, local(-3, 21, 30, "America/New_York"), true, ""},
+		{"streamed from the US, dated to the day: 02:30 on the day", stream, dayOnly, local(-2, 2, 30, "America/New_York"), true, ""},
 		{"streamed from a country without a drop hour: its midnight", german, dayOnly, local(-2, 0, 30, "Europe/Berlin"), true, ""},
 		{"streamed from a country without a drop hour: before its midnight", german, dayOnly, local(-3, 23, 30, "Europe/Berlin"), true,
 			"published before the episode aired (published " + utc(local(-3, 23, 30, "Europe/Berlin")) + "; S01E01 aired on " + dateOf(day(-2)) + ", Europe/Berlin)"},
@@ -568,8 +569,9 @@ func TestAFakeAroundTheBroadcastIsNotTaken(t *testing.T) {
 // A streamed series dated to the minute: a release posted twenty minutes
 // before it streams is the episode, taken an hour after; one posted an hour
 // before is a fake. Dated to the day alone, a series streamed from the United
-// States streams from 03:00 in New York: a release from before is skipped, and
-// the episode waits the air delay after its air date.
+// States streams from 21:00 in New York the evening before, at the earliest:
+// a release from before is skipped, one from that evening on taken, and the
+// episode waits the air delay after its air date.
 func TestAStreamedSeries(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
@@ -597,8 +599,8 @@ func TestAStreamedSeries(t *testing.T) {
 	feedSrc := newFeedSource(t, true,
 		tv("Example.Stream.S01E01.1080p.WEB.h264-FAKE", drop.Add(-time.Hour)),
 		tv("Example.Stream.S01E01.1080p.WEB.h264-GRP", drop.Add(-20*time.Minute)),
-		tv("Example.Stream.S01E02.1080p.WEB.h264-FAKE", drop.Add(-30*time.Minute)),
-		tv("Example.Stream.S01E02.720p.WEB.h264-GRP", drop.Add(10*time.Minute)))
+		tv("Example.Stream.S01E02.1080p.WEB.h264-FAKE", local(-3, 20, 30, "America/New_York")),
+		tv("Example.Stream.S01E02.720p.WEB.h264-GRP", local(-3, 21, 20, "America/New_York")))
 	addFeed(t, r.svc, "feed", feedSrc)
 	autoGrabNew(t, r.svc, "")
 	if _, err := r.svc.SyncRSS(ctx); err != nil {

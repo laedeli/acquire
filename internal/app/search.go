@@ -653,9 +653,9 @@ func preAired(c Candidate, title store.Title, t store.Target, days func() map[[2
 // and how it is known. With the schedule source's air times (stamps): of an
 // episode it dates to the minute, the end of its broadcast — the moment it
 // airs and its runtime (broadcastLength) —, or, of a series streamed, airSlack
-// before it streams; of a streamed episode dated to the day alone, the hour a
-// streaming service of its country puts an episode out (zones.Drop), where
-// that hour is the rule. Of any other episode, midnight of its air date where
+// before it streams; of a streamed episode dated to the day alone, the
+// earliest a streaming service of its country puts an episode out
+// (zones.Drop), where that is the rule. Of any other episode, midnight of its air date where
 // its series comes from (TMDB's origin country; before TMDB was read for it,
 // the country of its network or service at the schedule source; UTC when
 // neither names one acquire knows) — TMDB dates the day as broadcast there,
@@ -687,7 +687,7 @@ func airCut(title store.Title, t store.Target, stamps bool) (cut time.Time, aire
 		return end, fmt.Sprintf("aired %s, a broadcast until %s", at.Format("2006-01-02 15:04 UTC"), end.Format("15:04 UTC")), true
 	case stamps && streamed:
 		if at, loc, ok := zones.Drop(*t.AirDate, firstOf(title.ScheduleCountry, title.Countries...)); ok {
-			return at, fmt.Sprintf("streams on %s, from about %s %s", day, at.In(loc).Format("15:04"), loc), true
+			return at, fmt.Sprintf("streams on %s, from %s %s at the earliest", day, at.In(loc).Format("2006-01-02 15:04"), loc), true
 		}
 	}
 	countries := title.Countries
