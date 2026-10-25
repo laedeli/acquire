@@ -661,16 +661,20 @@ func (s *Service) airDays(ctx context.Context, t store.Target) func() map[[2]int
 }
 
 // autoCandidates are the releases an automatic grab of a target may take —
-// the sweep's, and the Missing tab's search and grab — best first: the ones
-// the profile accepts that hold the target alone, or one run of at most
-// katalog.MaxCovered episodes in a row (the most one file goes over for),
-// every one of them missing: a target acquire tracks, aired, monitored,
-// wanted or failed, not reserved by another grab, not left for someone to
-// look at. Anything more — a longer range, episodes that are not one run, a
-// season pack, several seasons — spends disk and bandwidth on what may not
-// be missing, or cannot go over as one file: it is grabbed only when someone
-// picks it.
-func (s *Service) autoCandidates(ctx context.Context, t store.Target, ranked []Candidate) []Candidate {
+// the sweep's, the sources' newest releases', and the Missing tab's search
+// and grab — best first: the ones the profile accepts that hold the target
+// alone, or one run of at most katalog.MaxCovered episodes in a row (the most
+// one file goes over for), every one of them missing: a target acquire
+// tracks, aired, monitored, wanted or failed, not reserved by another grab,
+// not left for someone to look at, and of holdings acquire knows — the
+// library may hold one of unknown holdings already. A grab that comes on its
+// own (pol) takes a run only when the policy lets it take every episode of it
+// (SearchSettings.Grabs): with only the new things grabbed on their own, a
+// release of a new episode and the old backlog's is not one of them. Anything
+// more — a longer range, episodes that are not one run, a season pack,
+// several seasons — spends disk and bandwidth on what may not be missing, or
+// cannot go over as one file: it is grabbed only when someone picks it.
+func (s *Service) autoCandidates(ctx context.Context, t store.Target, ranked []Candidate, pol *SearchSettings) []Candidate {
 	ok := acceptable(ranked)
 	if t.Kind == "movie" {
 		return ok
@@ -688,7 +692,7 @@ func (s *Service) autoCandidates(ctx context.Context, t store.Target, ranked []C
 			continue
 		case len(cov.Episodes) > 1:
 			if missing == nil {
-				missing = s.missingEpisodes(ctx, t.TitleID)
+				missing = s.missingEpisodes(ctx, t.TitleID, pol)
 			}
 			all := true
 			for _, e := range cov.Episodes {
@@ -704,10 +708,15 @@ func (s *Service) autoCandidates(ctx context.Context, t store.Target, ranked []C
 }
 
 // missingEpisodes are the episodes of a title an automatic grab may bind
-// besides the one it is for. None when they cannot be read: then only a
-// release of that one episode is taken.
-func (s *Service) missingEpisodes(ctx context.Context, titleID string) map[[2]int]bool {
+// besides the one it is for: missing, of holdings acquire knows, and — for a
+// grab that comes on its own (pol) — what the policy lets it take. None when
+// they cannot be read: then only a release of that one episode is taken.
+func (s *Service) missingEpisodes(ctx context.Context, titleID string, pol *SearchSettings) map[[2]int]bool {
 	out := map[[2]int]bool{}
+	title, err := s.st.TitleByID(ctx, titleID)
+	if err != nil || !title.HoldingsKnown() {
+		return out
+	}
 	all, err := s.st.TitleTargets(ctx, titleID)
 	if err != nil {
 		return out
@@ -715,7 +724,8 @@ func (s *Service) missingEpisodes(ctx context.Context, titleID string) map[[2]in
 	now := time.Now()
 	for _, x := range all {
 		if x.SeasonNumber == nil || x.EpisodeNumber == nil || !x.Monitored || !aired(x, now) ||
-			!store.Grabbable(x.State) || x.ReservedBy != "" || leftForAHuman(x) {
+			!store.Grabbable(x.State) || x.ReservedBy != "" || leftForAHuman(x) ||
+			(x.AddedAt != nil && x.AddedAt.After(*title.HoldingsAt)) || (pol != nil && !pol.Grabs(title, x, now)) {
 			continue
 		}
 		out[[2]int{*x.SeasonNumber, *x.EpisodeNumber}] = true

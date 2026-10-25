@@ -82,7 +82,8 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 // search.autoGrab and search.autoGrabNew off — the default — the sweep only
 // searches and records what it would take. With autoGrab on, it grabs the
 // best release an automatic grab may take — the episode alone, or one run of
-// at most ten episodes in a row that are all missing (autoCandidates) — bound
+// at most ten episodes in a row that are all missing and the policy lets it
+// take (autoCandidates) — bound
 // to every target that release covers, and only while a download slot is
 // free; a target whose title's holdings are unknown is never grabbed. With
 // autoGrabNew on it grabs so the new things only (SearchSettings.Grabs), and
@@ -127,7 +128,7 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 		if ctx.Err() != nil {
 			break // a search cut short says nothing of its target
 		}
-		usable := s.recordSearch(ctx, t, cands, err)
+		usable := s.recordSearch(ctx, t, cands, err, &pol)
 		switch {
 		case err != nil:
 			failed++

@@ -185,7 +185,7 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 		return run, err
 	}
 	groups := s.matchFresh(ctx, m, pol, fresh, &run)
-	s.grabMatched(ctx, groups, &run)
+	s.grabMatched(ctx, pol, groups, &run)
 	return run, nil
 }
 
@@ -534,7 +534,7 @@ func autoOpen(t store.Target, now time.Time, delay time.Duration) bool {
 
 // grabMatched grabs, for each target matched, the best of its releases an
 // automatic grab may take, as the sweep grabs what it found.
-func (s *Service) grabMatched(ctx context.Context, groups []*matched, run *RSSRun) {
+func (s *Service) grabMatched(ctx context.Context, pol SearchSettings, groups []*matched, run *RSSRun) {
 	sort.SliceStable(groups, func(i, j int) bool {
 		a, b := groups[i].target, groups[j].target
 		if a.TitleID != b.TitleID {
@@ -567,7 +567,7 @@ func (s *Service) grabMatched(ctx context.Context, groups []*matched, run *RSSRu
 		}
 		s.blockPreAired(ctx, g.target, cands)
 		sortCandidates(cands)
-		usable := s.autoCandidates(ctx, g.target, cands)
+		usable := s.autoCandidates(ctx, g.target, cands, &pol)
 		if len(usable) == 0 {
 			continue
 		}

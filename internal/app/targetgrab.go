@@ -258,7 +258,7 @@ func (s *Service) GrabTarget(ctx context.Context, targetID, via string) (store.T
 		// Cut short — a shutdown, a caller gone: no word on the target.
 		return store.TargetGrab{}, unavailable{error: cerr}
 	}
-	usable := s.recordSearch(ctx, t, cands, err)
+	usable := s.recordSearch(ctx, t, cands, err, nil)
 	if err != nil {
 		return store.TargetGrab{}, searchFailed{err}
 	}
@@ -365,9 +365,10 @@ func gatewayDown(err error) bool {
 
 // recordSearch records a target search's outcome — found, none or error —
 // with when the target is due again, and returns the releases an automatic
-// grab may take. Recording every outcome is what makes the sweep rotate. A
-// release published before the target aired is blocked for it (blockPreAired).
-func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Candidate, err error) []Candidate {
+// grab may take (autoCandidates; pol for a grab that comes on its own).
+// Recording every outcome is what makes the sweep rotate. A release published
+// before the target aired is blocked for it (blockPreAired).
+func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Candidate, err error, pol *SearchSettings) []Candidate {
 	if err == nil {
 		s.blockPreAired(ctx, t, cands)
 	}
@@ -378,7 +379,7 @@ func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Cand
 			Detail: clip(err.Error(), 300), Base: backoffBase, Max: backoffCeiling})
 		return nil
 	}
-	usable := s.autoCandidates(ctx, t, cands)
+	usable := s.autoCandidates(ctx, t, cands, pol)
 	if len(usable) == 0 {
 		// Nothing usable is also not proof of absence — a typed query to an
 		// indexer without id support returns zero with no error — so this

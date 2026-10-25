@@ -397,6 +397,47 @@ func TestTheFeedsGrabARequestedMovieOnceOut(t *testing.T) {
 	}
 }
 
+// A release of several episodes is grabbed on its own only when the policy
+// lets an automatic grab take every one of them, and acquire knows what the
+// library holds of each: with only the new things grabbed on their own, a
+// file of a new episode and one of the old backlog waits for someone to pick
+// it.
+func TestARunOfEpisodesIsGrabbedOnlyAsThePolicyTakesEach(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 4, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-300), 0) // the old backlog
+	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(-2), 0)   // new
+	_ = r.svc.st.SetAirWindow(ctx, eps[2].ID, day(-2), 0)   // new
+	_ = r.svc.st.SetAirWindow(ctx, eps[3].ID, day(-2), 0)   // new, of unknown holdings
+	sqlExec(t, `UPDATE acquisition_targets SET added_at = now() + interval '1 minute' WHERE id = $1`, eps[3].ID)
+	feedSrc := newFeedSource(t, true,
+		tv("Show.Name.S01E01E02.1080p.WEB.h264-GRP", ago(2*time.Hour)),
+		tv("Show.Name.S01E03E04.1080p.WEB.h264-GRP", ago(2*time.Hour)))
+	addFeed(t, r.svc, "feed", feedSrc)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.SyncRSS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.grabbed(t); len(got) != 0 {
+		t.Errorf("grabbed %v: the old E01 with the new E02, or E04 of unknown holdings", got)
+	}
+	// Everything grabs on its own: E01 and E02 go as one; E04 still waits for
+	// the catalog.
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	feedSrc.add(tv("Show.Name.S01E01E02.720p.WEB.h264-GRP", ago(time.Minute)), tv("Show.Name.S01E03E04.720p.WEB.h264-GRP", ago(time.Minute)))
+	if _, err := r.svc.SyncRSS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.grabbed(t); len(got) != 1 || got["S01E01-E02"] != "Show.Name.S01E01E02.720p.WEB.h264-GRP" {
+		t.Errorf("with everything grabbed on its own: %v", got)
+	}
+}
+
 // A requested movie is matched only by a release the feed files as a movie
 // that names its title, its year and then tags only: no trailer, no
 // making-of, no longer title that starts with its name, nothing a TV category
