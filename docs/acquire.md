@@ -612,17 +612,23 @@ its numbers — forgets it. When the two date it:
   numbers than the one taken before, or a name of TVmaze's neither TMDB's nor
   a placeholder (`Episode 5`, `TBA`) —: the episode is **held**
   (`schedule_hold`): no automatic grab takes it until the two agree, its target
-  and its request say so. An episode that aired more than 30 days ago is not
-  held: of the old backlog, TMDB's day tells.
+  and its request say so.
+
+An episode TMDB dates in the last 30 days or to come that TVmaze dates
+**nowhere** is held too, until TVmaze dates it — TMDB's day may be the one it
+was moved from: TVmaze lists it with no date (postponed, perhaps), lists it no
+more after it did (pulled), or never listed it — whether or not it lists later
+episodes of its season. An episode that aired more than 30 days ago is not
+held: of the old backlog, TMDB's day tells.
 
 Of a **broadcast** — or a series TVmaze names neither network nor service of
-— that TVmaze gives no hour for — it does not list the episode, or dates it to
-the day alone —, the hour is **estimated** (`air_stamp_estimated`): the hour
-most of its season's episodes air at, else the show's schedule, in its
-network's zone, on the day the episode is told by; with the broadcast rule
-then. Without one, an episode aired in the last 30 days or to come is held
-until it has an air time. A **streamed** episode without an hour is told by its
-day.
+— that TVmaze gives no hour for — it dates the episode to the day alone, or,
+of the old backlog, does not list it —, the hour is **estimated**
+(`air_stamp_estimated`): the hour most of its season's episodes air at, else
+the show's schedule, in its network's zone, on the day the episode is told
+by; with the broadcast rule then. Without one, an episode aired in the last 30
+days or to come is held until it has an air time. A **streamed** episode
+without an hour is told by its day.
 
 **When they are read.** A series' air times are read right after a read of
 it at TMDB — at once for a follow, and whenever the read adds an episode or
@@ -637,13 +643,18 @@ week on. A run makes at most 2,000 calls to TVmaze, spaced under its limit of
 that runs, about 15 minutes for 800 of them —, and a `429` is waited out. A
 run also starts two minutes after acquire starts, whenever the schedule comes
 round next. TVmaze not answering — out of reach, failing (5xx), limiting
-(`429`) or refusing (any other 4xx but `404`) — fails nothing: the air times it
-gave stay, a series not read yet stays unread, and the run asks it no more; a
-series whose air times were never read is tried again every 15 minutes. An
-answer that cannot be read — not JSON, or the record of another show — leaves
-its series unread too, to be read again, and the run goes on. TMDB moving an
-episode's day drops an air time more than a day before its new day, and holds
-the episode until TVmaze is read again — at once, after that read of TMDB.
+(`429`), refusing (any other 4xx but `404`), or answering what cannot be read
+(not JSON, or the record of another show) — fails nothing: the air times it
+gave stay, a series not read yet stays unread (`schedule_down`), and the run
+goes on to the next series; it asks TVmaze no more only after it failed for
+three series in a row — one show TVmaze fails for does not keep the others
+from being read. A series TVmaze failed for comes after the ones not tried
+yet, on the next run. Every 15 minutes the series not read because TVmaze did
+not answer are tried again, and the series with an episode held after TMDB
+moved it. TMDB moving an episode's day drops an air time more than a day
+before its new day, and holds the episode until TVmaze is read again — at
+once, after that read of TMDB; when TVmaze does not answer then, within 15
+minutes of its answering again.
 With `search.airTimes` `off`, TVmaze is never asked, nothing is held, and every
 episode is told by its air date alone.
 
@@ -652,11 +663,14 @@ sweep does not search it, no feed is read for it —: the day alone cannot tell
 an evening's fake from the real release. Its request says so, and why TVmaze
 has not given them. Settings → search and grab says how far the air times of
 the series that run are — read, not known to TVmaze (told by their air date),
-not read yet, how many episodes are held — and warns when more than a third
-of them are not known to TVmaze (their ids may be missing or wrong; the
-refresh logs it too); switching grabbing on its own on while one is not read
-yet asks an admin to confirm it (`PUT /api/settings/search` answers `409` with
-`confirm: airTimes` until it is sent again with `?confirm=airTimes`). A series
+not read yet or read by an earlier version of the rules —, how many episodes
+of any series are held (after TMDB moved them, too), and for how many series
+that ended TVmaze did not answer; it warns when more than a third of the
+series that run are not known to TVmaze (their ids may be missing or wrong;
+the refresh logs it too). Switching grabbing on its own on while a series
+that runs is not read yet asks an admin to confirm it (`PUT
+/api/settings/search` answers `409` with `confirm: airTimes` until it is sent
+again with `?confirm=airTimes`). A series
 whose releases name no season and episode, which no automatic grab takes,
 waits for nothing.
 
@@ -676,9 +690,11 @@ none published before:
 - of a streamed episode dated to the day alone, of a service of the United
   States — or, of a service TVmaze names no country for, of a series from
   there —: 21:00 in New York the evening before its day, the earliest such a
-  service puts an episode out as a rule (some then, others at midnight on the
-  Pacific coast, 03:00 in New York, on the day). Of a service of any other
-  country, as of any other episode:
+  service puts an episode out as a rule (some then, most at midnight on the
+  Pacific coast, 03:00 in New York, on the day). A release from 03:00 on is
+  taken before one from the evening before, however better that one scores —
+  a fake there is from the evening too —; the evening's alone is taken still.
+  Of a service of any other country, as of any other episode:
 - of any other episode: midnight of the day it is told by — TMDB's, or
   TVmaze's when more than a day later — where its series comes from: the zone
   of the first country of TMDB's `origin_country` that acquire knows (for a
@@ -1101,7 +1117,7 @@ own data, edited by admins only:
 | `PUT` · `DELETE` | `/api/download-clients/{id}` | replace · remove a client (`409` while downloads are in flight, and for a managed client) |
 | `GET` | `/api/download-clients/types` | the client types the gateway runs |
 | `POST` | `/api/download-clients/test` | reach a client through the gateway without saving it |
-| `GET` · `PUT` | `/api/settings/search` | the search and grab policy: `preferProtocol`, `storageFloorGb`, `maxConcurrentGrabs`, `autoGrab` (everything missing is grabbed on its own; `false` by default), `autoGrabNew` (the new things are; `false`), `newWithinDays` (how recently an episode aired to be new; `14`, 1 to 365), `airDelayHours` (how long an automatic grab waits after an air date when the air time is not known; `30`, 0 to 168), `airTimes` (where exact air times come from: `tvmaze`, the default, or `off`) and `airDelayAfterAirstampMinutes` (how long it waits after a broadcast ends or an episode streams; `60`, 0 to 1440) — see [what is grabbed on its own](#what-is-grabbed-on-its-own) —, and, read only, `airTimesStatus` `{on, running, read, unknown, pending, lastError, held, warning}`: how far TVmaze's air times are of the series that run, how many of their episodes are held, and a warning when more than a third are not known to TVmaze. A `PUT` is read over the policy stored: a field it does not name keeps its value; one switching `autoGrab` or `autoGrabNew` on while a series that runs is not read yet answers `409` `{message, confirm: "airTimes", airTimesStatus}`, until it is sent again with `?confirm=airTimes` |
+| `GET` · `PUT` | `/api/settings/search` | the search and grab policy: `preferProtocol`, `storageFloorGb`, `maxConcurrentGrabs`, `autoGrab` (everything missing is grabbed on its own; `false` by default), `autoGrabNew` (the new things are; `false`), `newWithinDays` (how recently an episode aired to be new; `14`, 1 to 365), `airDelayHours` (how long an automatic grab waits after an air date when the air time is not known; `30`, 0 to 168), `airTimes` (where exact air times come from: `tvmaze`, the default, or `off`) and `airDelayAfterAirstampMinutes` (how long it waits after a broadcast ends or an episode streams; `60`, 0 to 1440) — see [what is grabbed on its own](#what-is-grabbed-on-its-own) —, and, read only, `airTimesStatus` `{on, running, read, unknown, pending, earlier, lastError, failingEnded, held, heldMoved, warning}`: how far TVmaze's air times are of the series that run, how many episodes of any series are held (after TMDB moved them, too), for how many series that ended TVmaze did not answer, and a warning when more than a third of the series that run are not known to TVmaze. A `PUT` is read over the policy stored: a field it does not name keeps its value; one switching `autoGrab` or `autoGrabNew` on while a series that runs is not read yet answers `409` `{message, confirm: "airTimes", airTimesStatus}`, until it is sent again with `?confirm=airTimes` |
 | `GET` · `PUT` | `/api/settings/requests` | how requests are taken: `autoApprove` (a request from someone who is not an admin is approved at once, by `autoApprove`; `false` by default — it awaits an admin's approval, and changes nothing until then) — see [approval](#approval) |
 
 Writes send the revision they were based on in `If-Match` and get `409` when it
@@ -1334,8 +1350,9 @@ was last read for it and why that failed, `inventory_retry_at` when one TMDB
 did not know is read again, and `schedule_id`, `schedule_at` and
 `schedule_error` its show id at the schedule source, when its air times were
 read and why that failed, `schedule_kind` whether it is broadcast or streamed,
-`schedule_country` the country of its network or service and
-`schedule_version` the version of the rules its air times were read by. A request's `approval` (`awaiting`, `approved`, `declined`),
+`schedule_country` the country of its network or service,
+`schedule_version` the version of the rules its air times were read by and
+`schedule_down` whether TVmaze's last answer for it was none. A request's `approval` (`awaiting`, `approved`, `declined`),
 `decided_by` and `decided_at` are an admin's word on it.
 
 **`target_grabs`** — one row per release handed over for targets: the title,

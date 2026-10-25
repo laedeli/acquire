@@ -453,10 +453,11 @@ schedules are registered: `inventory-refresh` (every six hours) and
   episode airs and how long it runs, sending a series' TVDB or IMDb id and
   nothing else, at under 20 calls in 10 seconds. The first `inventory-refresh`
   runs within a minute of the upgrade: after its reads of TMDB, it
-  looks up the air times of every tracked series that runs, whatever TMDB's
-  budget — two calls each, about 15 minutes for 800 series —, and the ones
-  that ended over the next runs, at most 2,000 calls a run; after that a run
-  reads the series that run again, the others monthly. Until a series' air
+  looks up the air times of every tracked series, whatever TMDB's budget —
+  the ones that run first, two calls each, at most 2,000 calls a run: every
+  series of a library of up to 1,000 in that first run, about 15 minutes for
+  800 —; after that a run reads the series that run again, the others
+  monthly. Until a series' air
   times are read, nothing of it is grabbed on its own: settings → search and
   grab says how many series that run are not read yet, and switching
   **new episodes and requests** or **everything missing** on before then asks
@@ -513,25 +514,36 @@ Migration `043` only adds columns. Exact air times are read by new rules:
   An episode the two date days apart and cannot tell the same is held — not
   grabbed on its own, saying so — until they agree. TMDB moving an episode
   holds it until TVmaze is read again, at once.
-- **A broadcast without an hour.** An episode TVmaze does not list, or dates
-  to the day alone, is told by the usual hour of its season's broadcasts (else
-  the show's schedule); without one, a recent one is held until it has an air
-  time.
+- **An episode TVmaze dates nowhere.** One TMDB dates in the last 30 days or
+  to come that TVmaze lists with no date (postponed), lists no more (pulled),
+  or never listed is held until TVmaze dates it: TMDB's day may be the one it
+  was moved from.
+- **A broadcast without an hour.** An episode TVmaze dates to the day alone is
+  told by the usual hour of its season's broadcasts (else the show's
+  schedule); without one, a recent one is held until it has an air time.
 - **TVmaze refusing.** A `403` — any 4xx but `404` — counts as TVmaze not
   answering: the series stays unread and is tried again, and grabbing on its
   own cannot be switched on past it without confirming. An answer that cannot
-  be read leaves its series unread too. Settings → search and grab warns when
-  more than a third of the series that run are not known to TVmaze.
+  be read leaves its series unread too. One show TVmaze fails for no longer
+  keeps the others from being read: a run asks it no more only after three
+  series in a row, and a series it failed for is read after the ones not
+  tried yet. The retry every 15 minutes also takes a series with an episode
+  held after TMDB moved it. Settings → search and grab counts the episodes
+  held, the series that ended TVmaze does not answer for, and warns when more
+  than a third of the series that run are not known to TVmaze.
 - **Streamed from the United States.** An episode dated to the day alone is
-  taken from 21:00 in New York the evening before, not from 03:00 on the day.
+  taken from 21:00 in New York the evening before, not from 03:00 on the day;
+  a release from 03:00 on is taken before one from the evening.
 
 Every series read by 0.6.0 counts as not read by these rules until it is read
 again, and nothing of it is grabbed on its own until then. acquire makes a
 run two minutes after it starts, whenever the schedule comes round next: it
-reads what TMDB has due, then the air times of every series that runs — one
-call each, their TVmaze ids known, about 8 minutes for 800 series —, and the
-ones that ended over the next runs, at most 2,000 calls a run. Settings →
-search and grab says how many series that run are not read yet. A schedule an
+reads what TMDB has due, then the air times of every series — the ones that
+run first, one call each, their TVmaze ids known, at most 2,000 calls a run:
+every series of a library of up to 2,000 in that run, about 8 minutes for
+800 —. Settings → search and grab says how many series that run are not
+read again yet, and the confirmation of grabbing on its own says so of
+them. A schedule an
 upgrade adds is due at once — the clock runs it on its next tick, within ten
 seconds, and every interval after —, one already there keeps its time:
 0.6.1 adds none, so its first run of `inventory-refresh` is the one two
