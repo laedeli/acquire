@@ -206,6 +206,12 @@ func TestWhenAReleaseIsPublishedTooEarly(t *testing.T) {
 		{"streamed from a country without a drop hour: before its midnight", german, dayOnly, local(-3, 23, 30, "Europe/Berlin"), true,
 			"published before the episode aired (published " + utc(local(-3, 23, 30, "Europe/Berlin")) + "; S01E01 aired on " + dateOf(day(-2)) + ", Europe/Berlin)"},
 		{"a broadcast dated to the day: midnight in New York", us, dayOnly, local(-2, 0, 30, "America/New_York"), true, ""},
+		{"not read at TMDB yet: midnight where its network is", store.Title{Kind: "series", ScheduleKind: store.ScheduleBroadcast, ScheduleCountry: "US"},
+			dayOnly, local(-2, 0, 0, "America/New_York").Add(-time.Minute), true,
+			"published before the episode aired (published " + utc(local(-2, 0, 0, "America/New_York").Add(-time.Minute)) + "; S01E01 aired on " +
+				dateOf(day(-2)) + ", America/New_York)"},
+		{"not read at TMDB yet, air times off: UTC", store.Title{Kind: "series", ScheduleKind: store.ScheduleBroadcast, ScheduleCountry: "US"},
+			dayOnly, local(-2, 0, 0, "America/New_York").Add(-time.Minute), false, ""},
 		{"air times off: the day, in New York", us, episode, stamp.Add(-15 * time.Hour), false, ""},
 		{"air times off: before the day began in New York", us, episode, local(-2, 0, 0, "America/New_York").Add(-time.Minute), false,
 			"published before the episode aired (published " + utc(local(-2, 0, 0, "America/New_York").Add(-time.Minute)) +

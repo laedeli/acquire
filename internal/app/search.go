@@ -656,8 +656,10 @@ func preAired(c Candidate, title store.Title, t store.Target, days func() map[[2
 // before it streams; of a streamed episode dated to the day alone, the hour a
 // streaming service of its country puts an episode out (zones.Drop), where
 // that hour is the rule. Of any other episode, midnight of its air date where
-// its series comes from (TMDB's origin country; UTC when it names none acquire
-// knows) — TMDB dates the day as broadcast there, not the hour. Of a
+// its series comes from (TMDB's origin country; before TMDB was read for it,
+// the country of its network or service at the schedule source; UTC when
+// neither names one acquire knows) — TMDB dates the day as broadcast there,
+// not the hour. Of a
 // requested movie, midnight of the day it comes out to watch at home, where it
 // does. ok is false when nothing dates it, and for a movie dated in cinemas
 // only: no release to watch at home is dated to tell one by.
@@ -688,7 +690,13 @@ func airCut(title store.Title, t store.Target, stamps bool) (cut time.Time, aire
 			return at, fmt.Sprintf("streams on %s, from about %s %s", day, at.In(loc).Format("15:04"), loc), true
 		}
 	}
-	loc := zones.Of(title.Countries...)
+	countries := title.Countries
+	if stamps && title.ScheduleCountry != "" {
+		// Before TMDB was read for the series, the country of its network
+		// or service at TVmaze.
+		countries = append(append([]string(nil), countries...), title.ScheduleCountry)
+	}
+	loc := zones.Of(countries...)
 	return zones.Midnight(*t.AirDate, loc), fmt.Sprintf("aired on %s, %s", day, loc), true
 }
 
