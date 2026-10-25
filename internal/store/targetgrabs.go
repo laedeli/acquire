@@ -115,11 +115,53 @@ func (e *NotGrabbableError) Error() string {
 // then finds it taken. Reading the target and its grab first and deciding in
 // the client let both take it.
 func (s *Store) ReserveTargetGrab(ctx context.Context, g TargetGrab, anchor string, covered []string) (TargetGrab, error) {
+	return s.ReserveTargetGrabWithin(ctx, g, anchor, covered, 0)
+}
+
+// AtCapacityError is a reservation refused because as many grabs as may be
+// under way at once are: downloads in flight, grabs handed over the gateway
+// has not reported yet, and reservations being handed over.
+type AtCapacityError struct{ InFlight, Max int }
+
+func (e *AtCapacityError) Error() string {
+	return fmt.Sprintf("%d download(s) in flight or on their way (cap %d)", e.InFlight, e.Max)
+}
+
+// reserveLock is the advisory lock reservations with a cap take, so the
+// count they read and the reservation they write are one step for every
+// grabber at once — the sweep, the sources' newest releases, the grab queue.
+const reserveLock = 4207001
+
+// ReserveTargetGrabWithin is ReserveTargetGrab under a cap: with max > 0, it
+// is refused (AtCapacityError) while max grabs are under way — downloads in
+// flight, grabs handed over the gateway has not reported yet, and other
+// reservations being handed over —, counted and taken under one lock, so two
+// grabbers at once cannot both take the last slot.
+func (s *Store) ReserveTargetGrabWithin(ctx context.Context, g TargetGrab, anchor string, covered []string, max int) (TargetGrab, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return TargetGrab{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if max > 0 {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, reserveLock); err != nil {
+			return TargetGrab{}, err
+		}
+		var n int
+		if err := tx.QueryRow(ctx, `
+			SELECT (SELECT count(*) FROM downloads WHERE state NOT IN ('completed','failed','cancelled'))
+			     + (SELECT count(*) FROM target_grabs g
+			         WHERE g.created_at > now() - interval '1 hour'
+			           AND (g.state = 'pending'
+			                OR (g.state = 'grabbed' AND NOT EXISTS (SELECT 1 FROM downloads d
+			                                                         WHERE d.adapter = g.adapter AND d.client_job_id = g.client_job_id))))`).
+			Scan(&n); err != nil {
+			return TargetGrab{}, err
+		}
+		if n >= max {
+			return TargetGrab{}, &AtCapacityError{InFlight: n, Max: max}
+		}
+	}
 
 	rows, err := tx.Query(ctx, `
 		UPDATE acquisition_targets SET reserved_by = $2, updated_at = now()

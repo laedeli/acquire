@@ -663,3 +663,80 @@ func TestAReservationKeepsTheSweepAwayUntilItEnds(t *testing.T) {
 		t.Errorf("the grab bound a target the library holds: %+v", st)
 	}
 }
+
+// Under a cap, the downloads at once are counted and the reservation taken
+// under one lock: reservations being handed over count, so grabbers racing
+// for the last slot — the sweep, the feeds, the grab queue — take it once.
+func TestReservationsUnderTheCap(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 9, 12)
+	start := make(chan struct{})
+	results := make(chan error, len(eps))
+	for i, ep := range eps {
+		gid := fmt.Sprintf("tg_cap%d", i)
+		go func() {
+			<-start
+			_, err := s.ReserveTargetGrabWithin(ctx, TargetGrab{ID: gid, TitleID: id}, ep, []string{ep}, 2)
+			results <- err
+		}()
+	}
+	close(start)
+	won := 0
+	for range eps {
+		err := <-results
+		var full *AtCapacityError
+		switch {
+		case err == nil:
+			won++
+		case errors.As(err, &full):
+			if full.Max != 2 || full.InFlight < 2 {
+				t.Errorf("refused: %+v", full)
+			}
+		default:
+			t.Fatal(err)
+		}
+	}
+	if won != 2 {
+		t.Fatalf("%d reservations under a cap of 2", won)
+	}
+	// Handed over and not reported yet, they still count; once the
+	// gateway's downloads end, the slots are free.
+	if _, err := s.pool.Exec(ctx, `UPDATE target_grabs SET state = 'grabbed', adapter = 'nzbget', client_job_id = id`); err != nil {
+		t.Fatal(err)
+	}
+	other, more := series(t, s, 11, 1)
+	if _, err := s.ReserveTargetGrabWithin(ctx, TargetGrab{ID: "tg_cap_late", TitleID: other}, more[0], more, 2); err == nil {
+		t.Error("reserved while two grabs are on their way")
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO downloads (adapter, client_job_id, state, title)
+		SELECT adapter, client_job_id, 'completed', release_title FROM target_grabs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReserveTargetGrabWithin(ctx, TargetGrab{ID: "tg_cap_free", TitleID: other}, more[0], more, 2); err != nil {
+		t.Errorf("once the downloads ended: %v", err)
+	}
+}
+
+// What the library holds is known as of when the catalog was asked: a target
+// a read of TMDB added meanwhile is of unknown holdings until the next
+// reconcile.
+func TestHoldingsAreKnownAsOfTheAsking(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 10, 1)
+	asked := time.Now().Add(-time.Minute)
+	if _, err := s.pool.Exec(ctx, `UPDATE acquisition_targets SET added_at = now() - interval '30 seconds' WHERE id = $1`, eps[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySeriesHoldingsAt(ctx, id, "", "default", nil, asked); err != nil {
+		t.Fatal(err)
+	}
+	ti, _ := s.TitleByID(ctx, id)
+	if ti.HoldingsAt == nil || ti.HoldingsAt.Sub(asked).Abs() > time.Millisecond {
+		t.Errorf("holdings known as of %v, want %v", ti.HoldingsAt, asked)
+	}
+	if missing, _ := s.Missing(ctx, 10); len(missing) != 0 {
+		t.Errorf("a target added after the asking is missing: %+v", missing)
+	}
+}

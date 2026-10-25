@@ -619,12 +619,19 @@ type HoldingsChange struct {
 	Released int64 `json:"released"` // held targets the library no longer holds
 }
 
-// ApplySeriesHoldings makes a series' targets match what the library holds of
-// it, and records that its holdings are known. A held episode acquire tracks
-// no target for is ignored: the library holds things nobody monitors, and they
-// must not become things acquire hunts. A target in flight that the library
-// now holds is held; one in flight that it does not hold is left to its grab.
+// ApplySeriesHoldings is ApplySeriesHoldingsAt for holdings asked now.
 func (s *Store) ApplySeriesHoldings(ctx context.Context, titleID, catalogID, profileID string, held []HeldEpisode) (HoldingsChange, error) {
+	return s.ApplySeriesHoldingsAt(ctx, titleID, catalogID, profileID, held, time.Now())
+}
+
+// ApplySeriesHoldingsAt makes a series' targets match what the library holds
+// of it, and records that its holdings are known as of asked, when the
+// catalog was asked: a target added since is of unknown holdings until the
+// next reconcile. A held episode acquire tracks no target for is ignored: the
+// library holds things nobody monitors, and they must not become things
+// acquire hunts. A target in flight that the library now holds is held; one in
+// flight that it does not hold is left to its grab.
+func (s *Store) ApplySeriesHoldingsAt(ctx context.Context, titleID, catalogID, profileID string, held []HeldEpisode, asked time.Time) (HoldingsChange, error) {
 	seasons := make([]int32, 0, len(held))
 	episodes := make([]int32, 0, len(held))
 	items := make([]string, 0, len(held))
@@ -634,7 +641,7 @@ func (s *Store) ApplySeriesHoldings(ctx context.Context, titleID, catalogID, pro
 		seasons, episodes = append(seasons, int32(h.Season)), append(episodes, int32(h.Episode))
 		items, vias, playable = append(items, h.ItemID), append(vias, h.Via), append(playable, h.Playable)
 	}
-	return s.applyHoldings(ctx, titleID, catalogID, profileID, func(tx pgx.Tx) (HoldingsChange, error) {
+	return s.applyHoldings(ctx, titleID, catalogID, asked, func(tx pgx.Tx) (HoldingsChange, error) {
 		var ch HoldingsChange
 		tag, err := tx.Exec(ctx, `
 			WITH h AS (
@@ -695,11 +702,16 @@ func holdSet(profileParam string) string {
 			       updated_at = now()`
 }
 
-// ApplyMovieHolding makes a movie's target match what the library holds of
-// it: held by the item named, or — held nil — not held. A movie the library
-// holds gets its target when it has none yet.
+// ApplyMovieHolding is ApplyMovieHoldingAt for a holding asked now.
 func (s *Store) ApplyMovieHolding(ctx context.Context, titleID, catalogID, profileID string, held *HeldEpisode) (HoldingsChange, error) {
-	return s.applyHoldings(ctx, titleID, catalogID, profileID, func(tx pgx.Tx) (HoldingsChange, error) {
+	return s.ApplyMovieHoldingAt(ctx, titleID, catalogID, profileID, held, time.Now())
+}
+
+// ApplyMovieHoldingAt makes a movie's target match what the library holds of
+// it: held by the item named, or — held nil — not held, as of asked. A movie
+// the library holds gets its target when it has none yet.
+func (s *Store) ApplyMovieHoldingAt(ctx context.Context, titleID, catalogID, profileID string, held *HeldEpisode, asked time.Time) (HoldingsChange, error) {
+	return s.applyHoldings(ctx, titleID, catalogID, asked, func(tx pgx.Tx) (HoldingsChange, error) {
 		var ch HoldingsChange
 		if held == nil {
 			tag, err := tx.Exec(ctx, `
@@ -736,8 +748,8 @@ func (s *Store) ApplyMovieHolding(ctx context.Context, titleID, catalogID, profi
 }
 
 // applyHoldings runs one title's holdings change and records, in the same
-// transaction, that the title's holdings are known.
-func (s *Store) applyHoldings(ctx context.Context, titleID, catalogID, profileID string, apply func(pgx.Tx) (HoldingsChange, error)) (HoldingsChange, error) {
+// transaction, that the title's holdings are known as of asked.
+func (s *Store) applyHoldings(ctx context.Context, titleID, catalogID string, asked time.Time, apply func(pgx.Tx) (HoldingsChange, error)) (HoldingsChange, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return HoldingsChange{}, err
@@ -748,8 +760,8 @@ func (s *Store) applyHoldings(ctx context.Context, titleID, catalogID, profileID
 		return HoldingsChange{}, fmt.Errorf("apply holdings of %s: %w", titleID, err)
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE titles SET holdings_at = now(), holdings_error = '', catalog_id = $2, updated_at = now()
-		 WHERE id = $1`, titleID, catalogID); err != nil {
+		UPDATE titles SET holdings_at = $3, holdings_error = '', catalog_id = $2, updated_at = now()
+		 WHERE id = $1`, titleID, catalogID, asked); err != nil {
 		return HoldingsChange{}, err
 	}
 	return ch, tx.Commit(ctx)

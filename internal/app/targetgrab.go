@@ -164,7 +164,14 @@ func (s *Service) grabRelease(ctx context.Context, title store.Title, anchor sto
 		n := int32(c.Seeders)
 		seeders, g.Seeders = &n, &n
 	}
-	g, err = s.st.ReserveTargetGrab(ctx, g, anchor.ID, ids)
+	// Reserved under the cap on downloads at once, counted and taken in one
+	// step: the sweep, the feeds and the grab queue cannot both take the
+	// last slot.
+	g, err = s.st.ReserveTargetGrabWithin(ctx, g, anchor.ID, ids, s.grabPolicy(ctx).MaxConcurrentGrabs)
+	var full *store.AtCapacityError
+	if errors.As(err, &full) {
+		return store.TargetGrab{}, atCapacity{msg: "refusing grab: " + full.Error()}
+	}
 	if err != nil {
 		return store.TargetGrab{}, err
 	}

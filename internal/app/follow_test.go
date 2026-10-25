@@ -1050,6 +1050,45 @@ func TestTheSweepTakesNothingFromBeforeTheAirDate(t *testing.T) {
 	}
 }
 
+// The cap on downloads at once holds for grabbers at the same time — the
+// sweep, the feeds, the grab queue —: a grab being handed over takes its
+// slot, so a second one meanwhile is refused instead of both going.
+func TestTheCapHoldsForGrabsAtOnce(t *testing.T) {
+	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB-DL.x265-G", "Show.Name.S01E02.1080p.WEB-DL.x265-G")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 990711, "Show Name", 2, true)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 1}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	hold := make(chan struct{})
+	r.gw.mu.Lock()
+	r.gw.addHold = hold
+	r.gw.mu.Unlock()
+	first := make(chan error, 1)
+	go func() {
+		_, err := r.svc.GrabTarget(ctx, eps[0].ID, "missing")
+		first <- err
+	}()
+	for deadline := time.Now().Add(5 * time.Second); len(r.gw.added()) == 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("the first grab never reached the gateway")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, err := r.svc.GrabTarget(ctx, eps[1].ID, "missing")
+	var capErr atCapacity
+	if !errors.As(err, &capErr) || !strings.Contains(err.Error(), "on their way (cap 1)") {
+		t.Errorf("a second grab while the first is handed over: %v", err)
+	}
+	close(hold)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if adds := r.gw.added(); len(adds) != 1 {
+		t.Errorf("%d grabs handed over under a cap of one", len(adds))
+	}
+}
+
 // handedOver are the releases the gateway was handed, by name.
 func handedOver(t *testing.T, r *targetRig) []string {
 	t.Helper()

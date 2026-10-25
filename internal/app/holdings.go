@@ -165,6 +165,9 @@ func (s *Service) holdingsTitles(ctx context.Context, ids []string) ([]store.Tit
 // without an identity (ns), is heldWithoutIdentity: nothing is applied.
 func (s *Service) reconcileTitle(ctx context.Context, t store.Title, ns *namesakes) (store.HoldingsChange, error) {
 	_, profileID := s.ScoringProfile(ctx, t.ProfileID)
+	// The holdings are known as of when the catalog was asked: a target a
+	// read of TMDB adds meanwhile waits for the next reconcile.
+	asked := time.Now()
 	if t.Kind == "movie" {
 		m, err := lookupByIdentity(t, func(kind, id string) (katalog.MovieHolding, error) {
 			return s.kc.MovieHoldings(ctx, kind, id)
@@ -174,13 +177,13 @@ func (s *Service) reconcileTitle(ctx context.Context, t store.Title, ns *namesak
 			if err := ns.check(ctx, s.kc, t); err != nil {
 				return store.HoldingsChange{}, err
 			}
-			return s.st.ApplyMovieHolding(ctx, t.ID, "", profileID, nil)
+			return s.st.ApplyMovieHoldingAt(ctx, t.ID, "", profileID, nil, asked)
 		case err == nil && !m.Held():
-			return s.st.ApplyMovieHolding(ctx, t.ID, "", profileID, nil)
+			return s.st.ApplyMovieHoldingAt(ctx, t.ID, "", profileID, nil, asked)
 		case err != nil:
 			return store.HoldingsChange{}, err
 		}
-		return s.st.ApplyMovieHolding(ctx, t.ID, m.ItemID, profileID, &store.HeldEpisode{ItemID: m.ItemID, Playable: m.Playable})
+		return s.st.ApplyMovieHoldingAt(ctx, t.ID, m.ItemID, profileID, &store.HeldEpisode{ItemID: m.ItemID, Playable: m.Playable}, asked)
 	}
 	sh, err := lookupByIdentity(t, func(kind, id string) (katalog.SeriesHoldings, error) {
 		return s.kc.SeriesHoldings(ctx, kind, id)
@@ -189,12 +192,12 @@ func (s *Service) reconcileTitle(ctx context.Context, t store.Title, ns *namesak
 		if err := ns.check(ctx, s.kc, t); err != nil {
 			return store.HoldingsChange{}, err
 		}
-		return s.st.ApplySeriesHoldings(ctx, t.ID, "", profileID, nil)
+		return s.st.ApplySeriesHoldingsAt(ctx, t.ID, "", profileID, nil, asked)
 	}
 	if err != nil {
 		return store.HoldingsChange{}, err
 	}
-	return s.st.ApplySeriesHoldings(ctx, t.ID, sh.SeriesID, profileID, heldEpisodes(sh))
+	return s.st.ApplySeriesHoldingsAt(ctx, t.ID, sh.SeriesID, profileID, heldEpisodes(sh), asked)
 }
 
 // heldEpisodes are the episodes a series' holdings hold, each once. A series
