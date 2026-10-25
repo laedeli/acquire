@@ -452,7 +452,7 @@ func sweepableSQL(delay string) string {
 // at them first; the old backlog is the rest.
 func newSQL(days string) string {
 	return `COALESCE((a.kind = 'episode' AND a.air_date >= (now() AT TIME ZONE 'UTC')::date - ` + days + `::int)
-	         OR (t.followed_at IS NOT NULL AND (a.kind = 'movie' OR a.added_at >= t.followed_at)), false)`
+	         OR (` + followedSQL + ` AND (a.kind = 'movie' OR a.added_at >= t.followed_at)), false)`
 }
 
 // DueOrder is how the sweep picks the targets it searches: with

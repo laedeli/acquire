@@ -77,10 +77,21 @@ func TestFollowingATitle(t *testing.T) {
 		t.Error("a title without a TMDB id was followed")
 	}
 
-	// The follow ends with its last request: a title the request made is not
-	// monitored any more; one the import tracks keeps its monitoring.
+	// A tracked title an admin monitors, followed too.
+	if err := s.UpsertTitle(ctx, Title{TMDBID: 78, Kind: "series", Title: "Monitored Show", Monitored: true, MonitorNew: false}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.FollowTitle(ctx, Title{TMDBID: 78, Kind: "series", Title: "Monitored Show"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The follow ends with its last request, and the monitoring is what it
+	// was before it began: a title the request made is not monitored any
+	// more, one an admin had stopped monitoring is stopped again, one an
+	// admin monitors is monitored still.
 	for _, w := range []Wanted{{ID: "w1", TMDBID: 9001, MediaType: "series", Title: "x", TitleID: "series:9001"},
-		{ID: "w2", TMDBID: 77, MediaType: "series", Title: "y", TitleID: "series:77"}} {
+		{ID: "w2", TMDBID: 77, MediaType: "series", Title: "y", TitleID: "series:77"},
+		{ID: "w3", TMDBID: 78, MediaType: "series", Title: "z", TitleID: "series:78"}} {
 		if err := s.CreateWanted(ctx, w); err != nil {
 			t.Fatal(err)
 		}
@@ -88,18 +99,27 @@ func TestFollowingATitle(t *testing.T) {
 	if err := s.UnfollowTitle(ctx, "series:9001"); err != nil {
 		t.Fatal(err)
 	}
-	if still, _ := s.TitleByID(ctx, "series:9001"); still.FollowedAt == nil || !still.Monitored {
+	if still, _ := s.TitleByID(ctx, "series:9001"); !still.Followed() || !still.Monitored {
 		t.Errorf("unfollowed while a request follows it: %+v", still)
 	}
-	_ = s.DeleteWanted(ctx, "w1")
-	_ = s.DeleteWanted(ctx, "w2")
-	for id, monitored := range map[string]bool{"series:9001": false, "series:77": true} {
+	for _, id := range []string{"w1", "w2", "w3"} {
+		_ = s.DeleteWanted(ctx, id)
+	}
+	for id, want := range map[string][2]bool{"series:9001": {false, false}, "series:77": {false, false}, "series:78": {true, false}} {
 		if err := s.UnfollowTitle(ctx, id); err != nil {
 			t.Fatal(err)
 		}
-		if got, _ := s.TitleByID(ctx, id); got.FollowedAt != nil || got.Monitored != monitored {
-			t.Errorf("%s after its last request: %+v", id, got)
+		got, _ := s.TitleByID(ctx, id)
+		if got.Followed() || got.FollowedAt == nil || got.UnfollowedAt == nil || got.Monitored != want[0] || got.MonitorNew != want[1] {
+			t.Errorf("%s after its last request: %+v, want monitored %v, monitor_new %v, its first follow kept", id, got, want[0], want[1])
 		}
+	}
+	// Followed again: from the first follow on, the monitoring of then
+	// kept for the next end.
+	firstSaga := *ti.FollowedAt
+	ti, _, _ = s.FollowTitle(ctx, Title{TMDBID: 9001, Kind: "series", Title: "The Example Saga"})
+	if !ti.Followed() || !ti.Monitored || ti.UnfollowedAt != nil || ti.FollowedAt == nil || !ti.FollowedAt.Equal(firstSaga) {
+		t.Errorf("followed again: %+v, want followed from %v", ti, firstSaga)
 	}
 }
 

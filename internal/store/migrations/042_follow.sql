@@ -21,7 +21,16 @@
 -- inventory_error why the last read failed. origin_country are the
 -- countries TMDB says the title comes from (ISO 3166-1): a release that names
 -- a series with a country after it (Show.Name.US) is of the series from there.
+-- unfollowed_at is when the last request went (NULL while one follows it);
+-- followed_at stays the first follow's, so what a follow added is still what
+-- was requested when the title is asked for again. pre_monitored and
+-- pre_monitor_new are what the title's monitoring was before the follow
+-- began, given back when the last request goes (NULL: a title the request
+-- created).
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS followed_at     timestamptz;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS unfollowed_at   timestamptz;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS pre_monitored   boolean;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS pre_monitor_new boolean;
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin          text NOT NULL DEFAULT '';
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_status     text NOT NULL DEFAULT '';
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS inventory_at    timestamptz;

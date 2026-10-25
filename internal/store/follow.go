@@ -23,9 +23,11 @@ import (
 // FollowTitle records that a request follows a title. A title acquire does
 // not track yet is created from what the request says of it — monitored,
 // origin request; TMDB fills in the rest when the title is first read. One
-// acquire tracks already is not made twice: it is monitored again, with the
-// seasons to come, and followed from the first request on. created reports
-// whether the title is new.
+// acquire tracks already is not made twice: it is monitored, with the seasons
+// to come, while the follow lasts — what its monitoring was before is kept,
+// and given back when the last request goes (UnfollowTitle) —, and it is
+// followed from the first request on, even one removed since. created
+// reports whether the title is new.
 func (s *Store) FollowTitle(ctx context.Context, t Title) (Title, bool, error) {
 	if t.TMDBID <= 0 {
 		return Title{}, false, fmt.Errorf("title %q has no tmdb id", t.Title)
@@ -41,21 +43,29 @@ func (s *Store) FollowTitle(ctx context.Context, t Title) (Title, bool, error) {
 		INSERT INTO titles AS t (id, tmdb_id, kind, title, sort_title, year, monitored, monitor_new, followed_at, origin)
 		VALUES ($1, $2, $3, $4, $5, NULLIF($6::int, 0), true, true, now(), $7)
 		ON CONFLICT (tmdb_id, kind) DO UPDATE
-		   SET monitored = true, monitor_new = true, followed_at = COALESCE(t.followed_at, now()), updated_at = now()
+		   SET pre_monitored = CASE WHEN `+followedSQL+` THEN t.pre_monitored ELSE t.monitored END,
+		       pre_monitor_new = CASE WHEN `+followedSQL+` THEN t.pre_monitor_new ELSE t.monitor_new END,
+		       monitored = true, monitor_new = true,
+		       followed_at = COALESCE(t.followed_at, now()), unfollowed_at = NULL, updated_at = now()
 		RETURNING `+titleCols+`, (t.xmax = 0)`,
 		t.ID, t.TMDBID, t.Kind, t.Title, SortTitle(t.Title), t.Year, OriginRequest), &created)
 	return out, created, err
 }
 
 // UnfollowTitle ends a follow once no request follows the title any more: it
-// is followed no longer, and a title a request created is not monitored any
-// more — nothing of it is hunted, and TMDB is not read for it. A title the
-// import tracks keeps its monitoring.
+// is followed no longer, and its monitoring is what it was before the follow
+// began — a title a request created is not monitored any more, nothing of it
+// hunted and TMDB not read for it; one an admin had stopped monitoring is
+// stopped again. Monitoring an admin turned off while the follow lasted stays
+// off.
 func (s *Store) UnfollowTitle(ctx context.Context, titleID string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE titles t
-		   SET followed_at = NULL, monitored = CASE WHEN t.origin = $2 THEN false ELSE t.monitored END, updated_at = now()
-		 WHERE t.id = $1 AND t.followed_at IS NOT NULL
+		   SET unfollowed_at = now(),
+		       monitored = t.monitored AND COALESCE(t.pre_monitored, t.origin <> $2),
+		       monitor_new = t.monitor_new AND COALESCE(t.pre_monitor_new, t.origin <> $2),
+		       pre_monitored = NULL, pre_monitor_new = NULL, updated_at = now()
+		 WHERE t.id = $1 AND `+followedSQL+`
 		   AND NOT EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id)`, titleID, OriginRequest)
 	return err
 }
@@ -429,7 +439,7 @@ func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Dura
 		 WHERE t.kind = 'series' AND t.monitored
 		   AND (t.inventory_at IS NULL
 		        OR t.inventory_at < now() - make_interval(secs => CASE WHEN r.running THEN $1::float8 ELSE $2::float8 END))
-		 ORDER BY (t.followed_at IS NOT NULL AND t.inventory_at IS NULL) DESC, r.running DESC, t.inventory_at NULLS FIRST, t.id
+		 ORDER BY (`+followedSQL+` AND t.inventory_at IS NULL) DESC, r.running DESC, t.inventory_at NULLS FIRST, t.id
 		 LIMIT $3`, running.Seconds(), ended.Seconds(), limit)
 	if err != nil {
 		return nil, err
@@ -456,7 +466,7 @@ func (s *Store) MovieInventoryDue(ctx context.Context, every time.Duration, limi
 		SELECT `+titleCols+`
 		  FROM titles t
 		  LEFT JOIN acquisition_targets a ON a.title_id = t.id AND a.season_number IS NULL AND a.episode_number IS NULL
-		 WHERE t.kind = 'movie' AND t.monitored AND t.followed_at IS NOT NULL
+		 WHERE t.kind = 'movie' AND t.monitored AND `+followedSQL+`
 		   AND (a.id IS NULL OR t.inventory_at IS NULL
 		        OR (a.state <> 'held' AND a.added_at IS NOT NULL
 		            AND (a.release_pending OR a.air_window_opens_at > now() OR a.release_kind = 'theatrical')))

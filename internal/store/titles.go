@@ -34,11 +34,13 @@ type Title struct {
 	CatalogID     string
 
 	// FollowedAt is when a request first made acquire follow the title; nil
-	// for a title only the import tracks. Origin is OriginRequest for a title
-	// a request created. TMDBStatus is TMDB's word on it (Returning Series,
-	// Ended, Released …); InventoryAt is when TMDB was last read for it, nil
-	// while never, and InventoryError why the last read failed.
+	// for a title only the import tracks. UnfollowedAt is when its last
+	// request went, nil while one follows it. Origin is OriginRequest for a
+	// title a request created. TMDBStatus is TMDB's word on it (Returning
+	// Series, Ended, Released …); InventoryAt is when TMDB was last read for
+	// it, nil while never, and InventoryError why the last read failed.
 	FollowedAt     *time.Time
+	UnfollowedAt   *time.Time
 	Origin         string
 	TMDBStatus     string
 	InventoryAt    *time.Time
@@ -54,21 +56,24 @@ const OriginRequest = "request"
 // HoldingsKnown reports whether acquire knows what the library holds of it.
 func (t Title) HoldingsKnown() bool { return t.HoldingsAt != nil }
 
-// Followed reports whether a request follows the title.
-func (t Title) Followed() bool { return t.FollowedAt != nil }
+// Followed reports whether a request follows the title now.
+func (t Title) Followed() bool { return t.FollowedAt != nil && t.UnfollowedAt == nil }
+
+// followedSQL is Title.Followed of the title t.
+const followedSQL = `(t.followed_at IS NOT NULL AND t.unfollowed_at IS NULL)`
 
 // titleCols are the columns scanTitle reads, under the alias t.
 const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.title, t.sort_title,
 	COALESCE(t.year,0), t.status, t.series_type, t.monitored, t.monitor_new, t.profile_id,
 	t.holdings_at, t.holdings_error, t.catalog_id,
-	t.followed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country`
+	t.followed_at, t.unfollowed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country`
 
 func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
 	err := r.Scan(append([]any{&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
 		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
 		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
-		&t.FollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries}, extra...)...)
+		&t.FollowedAt, &t.UnfollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries}, extra...)...)
 	return t, err
 }
 

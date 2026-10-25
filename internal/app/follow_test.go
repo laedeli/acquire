@@ -330,12 +330,46 @@ func TestARequestForATrackedSeriesFollowsIt(t *testing.T) {
 	if targets[0].ID != eps[0].ID || targets[0].AddedAt != nil || targets[2].AddedAt == nil {
 		t.Errorf("the episodes from before stay as they were, the new one is added: %+v / %+v", targets[0], targets[2])
 	}
-	// Its last request removed, the title the import tracks stays monitored.
+	// Its last request removed, the title the import tracks is as an admin
+	// left it: not monitored.
 	if err := r.svc.RemoveRequest(ctx, w.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := r.svc.st.TitleByID(ctx, title.ID); !got.Monitored || got.Followed() {
+	if got, _ := r.svc.st.TitleByID(ctx, title.ID); got.Monitored || !got.MonitorNew || got.Followed() {
 		t.Errorf("after its last request: %+v", got)
+	}
+}
+
+// A series requested, its request removed and requested again is followed
+// from its first request on: what that follow added is what was requested,
+// and is grabbed on its own as the new things are.
+func TestARequestAgainKeepsTheFirstFollow(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
+	w, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user")
+	r.settle(t, false)
+	if err := r.svc.RemoveRequest(ctx, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.svc.st.TitleByID(ctx, "series:9001"); got.Monitored || got.Followed() {
+		t.Fatalf("after its request was removed: %+v", got)
+	}
+	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, "user"); err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	title, _ := r.svc.st.TitleByID(ctx, "series:9001")
+	targets, _ := r.svc.st.TitleTargets(ctx, title.ID)
+	pol := SearchSettings{AutoGrabNew: true, NewWithinDays: 1}
+	n := 0
+	for _, x := range targets {
+		if x.AirDate != nil && x.AirDate.Before(*day(-5)) && pol.Grabs(title, x, time.Now()) {
+			n++
+		}
+	}
+	if !title.Followed() || !title.Monitored || n != 6 {
+		t.Errorf("requested again: %+v; %d of the six that aired over five days ago grabbed on their own", title, n)
 	}
 }
 

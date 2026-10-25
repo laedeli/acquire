@@ -42,12 +42,12 @@ func (s *Store) SeriesOverview(ctx context.Context) ([]SeriesRow, error) {
 		       count(*) FILTER (WHERE `+missingSQL+`),
 		       count(*) FILTER (WHERE `+missingSQL+` AND a.state IN ('grabbed','downloaded','waiting')),
 		       count(*) FILTER (WHERE a.id IS NOT NULL AND NOT `+airedSQL+`),
-		       t.holdings_at, t.holdings_error, t.followed_at IS NOT NULL
+		       t.holdings_at, t.holdings_error, `+followedSQL+`
 		  FROM titles t
 		  LEFT JOIN acquisition_targets a ON a.title_id = t.id
 		 WHERE t.kind = 'series'
 		 GROUP BY t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.status, t.series_type, t.monitored,
-		          t.holdings_at, t.holdings_error, t.followed_at
+		          t.holdings_at, t.holdings_error, t.followed_at, t.unfollowed_at
 		 ORDER BY t.sort_title, t.title`)
 	if err != nil {
 		return nil, err
