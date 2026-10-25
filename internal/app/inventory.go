@@ -37,7 +37,14 @@ import (
 // could not be read for is read again every followRetry until it is.
 //
 // With search.airTimes, a series read is followed by a read of its air times
-// at the schedule source (readSchedule): the moment each episode airs.
+// at the schedule source (readSchedule): how it airs, the moment each episode
+// airs and how long it runs. A scheduled run then reads the air times still
+// due of every series whose air times matter (readSchedules), at the source's
+// pace and outside TMDB's budget — up to scheduleCalls calls —, so the first
+// runs after air times are switched on read every series that runs, the ones
+// with an episode near its air date first; a series whose air times were
+// never read is tried again every followRetry while the source does not
+// answer. Until they are read, nothing of it is grabbed on its own.
 
 const (
 	// inventoryBudget bounds the TMDB calls one run starts titles with (the
@@ -67,7 +74,14 @@ const (
 	// not know is looked up again after a week.
 	scheduleEvery        = 30 * 24 * time.Hour
 	scheduleUnknownAgain = 7 * 24 * time.Hour
+	// scheduleCalls bounds the calls to the schedule source one run makes:
+	// at TVmaze's pace, under 20 minutes of the run's 30.
+	scheduleCalls = 2000
 )
+
+// scheduleEveryOf is how often a series' air times are read again, as
+// scheduleDue says.
+var scheduleEveryOf = store.ScheduleEvery{Running: runningEvery, Unknown: scheduleUnknownAgain, Other: scheduleEvery}
 
 // noTMDB is why nothing can be read without a TMDB key.
 const noTMDB = "TMDB is not configured (TMDB_API_KEY): a followed title's episodes and release dates cannot be read"
@@ -145,6 +159,7 @@ func (s *Service) RunInventory(ctx context.Context) {
 			return
 		case <-s.inventoryWake:
 		case <-retry.C:
+			s.retrySchedules(ctx)
 			if !s.retryFollows(ctx) {
 				continue
 			}
@@ -174,6 +189,52 @@ func (s *Service) retryFollows(ctx context.Context) bool {
 	}
 	s.inventoryMu.Unlock()
 	return true
+}
+
+// retrySchedules reads the air times of the series never read because the
+// schedule source did not answer when it was asked, now that it may.
+func (s *Service) retrySchedules(ctx context.Context) {
+	if s.st == nil || !s.grabPolicy(ctx).exactAirTimes() {
+		return
+	}
+	var run InventoryRun
+	s.readSchedules(ctx, &run, true)
+	if run.Scheduled > 0 || run.ScheduleError != "" {
+		line := fmt.Sprintf("acquire inventory-refresh: the air times of %d series read again", run.Scheduled)
+		if run.ScheduleError != "" {
+			line += "; the schedule source still does not answer: " + run.ScheduleError
+		}
+		log.Print(line)
+	}
+	if run.Scheduled > 0 {
+		s.notify()
+	}
+}
+
+// readSchedules reads the air times due (store.SchedulesDue) — of the series
+// never read because the source did not answer, with failed —, the ones never
+// read first, until the run has made scheduleCalls calls to the source or it
+// stops answering.
+func (s *Service) readSchedules(ctx context.Context, run *InventoryRun, failed bool) {
+	due, err := s.st.SchedulesDue(ctx, scheduleEveryOf, scheduleCalls, failed)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("acquire inventory-refresh: the air times due: %v", err)
+		}
+		return
+	}
+	for _, t := range due {
+		switch {
+		case ctx.Err() != nil, run.ScheduleError != "":
+			return
+		case run.ScheduleCalls+2 > scheduleCalls:
+			run.ScheduleLeft = true
+			return
+		}
+		if !s.readScheduleOf(ctx, t, run) {
+			return
+		}
+	}
 }
 
 // tmdbDown is TMDB not answering as it should — out of reach, failing,
@@ -216,18 +277,21 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 			// what the library holds of them.
 			s.RequestReconcile(reconcile...)
 		}
-		if run.Titles > 0 || run.Failed > 0 || run.Error != "" {
+		if run.Titles > 0 || run.Failed > 0 || run.Error != "" || run.Scheduled > 0 || run.ScheduleError != "" {
 			s.notify()
 			line := fmt.Sprintf("acquire inventory-refresh: %d title(s) read (%d followed), %d TMDB call(s), %d failed; "+
 				"%d target(s) added (%d aired), %d updated, %d renumbered; %d no longer listed (removed once a read a day later agrees), "+
-				"%d removed, %d kept as they hold something; the air times of %d series read",
+				"%d removed, %d kept as they hold something; the air times of %d series read (%d call(s) to the schedule source)",
 				run.Titles, run.Followed, run.Calls, run.Failed, run.Added, run.AddedAired, run.Updated, run.Renumbered, run.Gone,
-				run.Removed, run.Kept, run.Scheduled)
+				run.Removed, run.Kept, run.Scheduled, run.ScheduleCalls)
 			if run.ScheduleError != "" {
 				line += "; the schedule source stopped answering: " + run.ScheduleError
 			}
 			if run.Left {
 				line += "; the run's budget is spent, what is still due is read on the next runs"
+			}
+			if run.ScheduleLeft {
+				line += "; the run's calls to the schedule source are spent, the air times still due are read on the next runs"
 			}
 			if run.Error != "" {
 				line += "; stopped: " + run.Error
@@ -292,65 +356,72 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		}
 		return true
 	}
-	if !follows() || !scheduled {
-		return run, nil
-	}
-
-	movies, err := s.st.MovieInventoryDue(ctx, waitingEvery, budget)
-	if err != nil {
-		return run, err
-	}
-	for _, t := range movies {
+	err := func() error {
+		if !follows() || !scheduled {
+			return nil
+		}
+		movies, err := s.st.MovieInventoryDue(ctx, waitingEvery, budget)
+		if err != nil {
+			return err
+		}
+		for _, t := range movies {
+			if budget <= 0 {
+				run.Left = true
+				return nil
+			}
+			if !follows() || !read(t, t.InventoryAt == nil) {
+				return nil
+			}
+		}
 		if budget <= 0 {
 			run.Left = true
-			return run, nil
+			return nil
 		}
-		if !follows() || !read(t, t.InventoryAt == nil) {
-			return run, nil
+		// The series that run, but for a third of the budget, which the others
+		// — ended, or never read — get; what either leaves goes to the series
+		// that run.
+		running, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1, store.SeriesRunning)
+		if err != nil {
+			return err
 		}
-	}
-	if budget <= 0 {
-		run.Left = true
-		return run, nil
-	}
-	// The series that run, but for a third of the budget, which the others
-	// — ended, or never read — get; what either leaves goes to the series
-	// that run.
-	running, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1, store.SeriesRunning)
-	if err != nil {
-		return run, err
-	}
-	others, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1, store.SeriesOther)
-	if err != nil {
-		return run, err
-	}
-	reserve := s.inventoryBudget * inventoryReserve / 3
-	next := 0
-	readSeries := func(d store.DueTitle) bool { return follows() && read(d.Title, d.Title.InventoryAt == nil) }
-	for ; next < len(running) && budget > reserve; next++ {
-		if !readSeries(running[next]) {
-			return run, nil
+		others, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1, store.SeriesOther)
+		if err != nil {
+			return err
 		}
+		reserve := s.inventoryBudget * inventoryReserve / 3
+		next := 0
+		readSeries := func(d store.DueTitle) bool { return follows() && read(d.Title, d.Title.InventoryAt == nil) }
+		for ; next < len(running) && budget > reserve; next++ {
+			if !readSeries(running[next]) {
+				return nil
+			}
+		}
+		for _, d := range others {
+			if budget <= 0 {
+				run.Left = true
+				return nil
+			}
+			if !readSeries(d) {
+				return nil
+			}
+		}
+		for ; next < len(running); next++ {
+			if budget <= 0 {
+				run.Left = true
+				return nil
+			}
+			if !readSeries(running[next]) {
+				return nil
+			}
+		}
+		return nil
+	}()
+	// The air times still due, of every series whose air times matter,
+	// outside TMDB's budget.
+	if scheduled && schedule && ctx.Err() == nil {
+		s.readSchedules(ctx, &run, false)
 	}
-	for _, d := range others {
-		if budget <= 0 {
-			run.Left = true
-			return run, nil
-		}
-		if !readSeries(d) {
-			return run, nil
-		}
-	}
-	for ; next < len(running); next++ {
-		if budget <= 0 {
-			run.Left = true
-			return run, nil
-		}
-		if !readSeries(running[next]) {
-			return run, nil
-		}
-	}
-	return run, nil
+	return run, err
 }
 
 // readTitle reads one title from TMDB and applies it: a series' answer and

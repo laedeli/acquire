@@ -747,6 +747,117 @@ func TestTheSameShow(t *testing.T) {
 	}
 }
 
+// The air times of every series that runs are read on the first scheduled
+// runs, at TVmaze's pace and outside TMDB's budget: a library whose TMDB
+// reads take days has its air times in the first run, the ones with an
+// episode near its air date first. How far they are, the settings say.
+func TestTheFirstRunsReadEverySeriesAirTimes(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	f := newFakeSchedule(t, r.svc)
+	r.svc.inventoryBudget = 2
+	for i := int64(1); i <= 5; i++ {
+		title, _ := track(t, r.svc, 990760+i, fmt.Sprintf("Example Show %d", i), 1, true)
+		sqlExec(t, `UPDATE titles SET tvdb_id = $2 WHERE id = $1`, title.ID, 9907760+i)
+		f.set(func(f *fakeSchedule) {
+			f.shows[fmt.Sprintf("thetvdb=%d", 9907760+i)] = 560 + i
+			f.eps[560+i] = []map[string]any{airs(1, 1, local(-2, 21, 0, "America/New_York"))}
+		})
+	}
+	// One more that TVmaze does not know, and one it cannot be asked about.
+	unknown, _ := track(t, r.svc, 990770, "Example Unknown Show", 1, true)
+	sqlExec(t, `UPDATE titles SET tvdb_id = 9907770 WHERE id = $1`, unknown.ID)
+	track(t, r.svc, 990771, "Example Show Without Ids", 1, true)
+	if st, err := r.svc.AirTimesStatus(ctx); err != nil || !st.On || st.Running != 7 || st.Pending != 7 || st.Read != 0 {
+		t.Fatalf("before the first run: %+v %v", st, err)
+	}
+	run := r.settle(t, true)
+	if run.Calls > 2 || run.Scheduled != 5 || run.ScheduleCalls != 11 || run.ScheduleError != "" {
+		t.Errorf("the first run: %+v", run)
+	}
+	for i := int64(1); i <= 5; i++ {
+		if st := target(t, r.svc, fmt.Sprintf("series:%d:s01e001", 990760+i)); st.AirStamp == nil {
+			t.Errorf("Example Show %d has no air time", i)
+		}
+	}
+	st, err := r.svc.AirTimesStatus(ctx)
+	if err != nil || st.Running != 7 || st.Read != 5 || st.Unknown != 2 || st.Pending != 0 {
+		t.Errorf("after it: %+v %v", st, err)
+	}
+	// Read, they are not asked again until they are due.
+	calls := len(f.called())
+	if run := r.settle(t, true); run.ScheduleCalls != 0 || len(f.called()) != calls {
+		t.Errorf("the next run: %+v", run)
+	}
+}
+
+// Switching grabbing on its own on while series that run have no air times
+// yet is refused, saying how many, until an admin confirms it; switching it
+// on with air times off, or once they are read, is not.
+func TestGrabbingOnItsOwnWaitsForAirTimes(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	f := newFakeSchedule(t, r.svc)
+	title, _ := track(t, r.svc, 990781, "Example Show", 1, true)
+	sqlExec(t, `UPDATE titles SET tvdb_id = 9907781 WHERE id = $1`, title.ID)
+	f.set(func(f *fakeSchedule) {
+		f.shows["thetvdb=9907781"] = 581
+		f.eps[581] = []map[string]any{airs(1, 1, local(-2, 21, 0, "America/New_York"))}
+	})
+	on := SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, AutoGrabNew: true, AirDelayHours: 30, AirDelayAfterAirstampMinutes: 60}
+	_, err := r.svc.PutSearchSettings(ctx, on, 0, "admin", false)
+	var missing *AirTimesMissing
+	if !errors.As(err, &missing) || missing.Status.Pending != 1 ||
+		err.Error() != "1 of the 1 series that run has no air times from TVmaze yet: nothing of it is grabbed on its own until they are read, "+
+			"on the next refreshes — confirm to switch grabbing on its own on now" {
+		t.Fatalf("switched on without air times: %v", err)
+	}
+	if p := r.svc.grabPolicy(ctx); p.AutoGrabNew {
+		t.Errorf("refused, yet on: %+v", p)
+	}
+	off := on
+	off.AirTimes = AirTimesOff
+	if _, err := r.svc.PutSearchSettings(ctx, off, 0, "admin", false); err != nil {
+		t.Errorf("switched on with air times off: %v", err)
+	}
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if doc, err := r.svc.PutSearchSettings(ctx, on, 0, "admin", true); err != nil || !doc.AutoGrabNew {
+		t.Errorf("confirmed: %+v %v", doc, err)
+	}
+	// On already: another change goes through.
+	on.MaxConcurrentGrabs = 4
+	if _, err := r.svc.PutSearchSettings(ctx, on, 0, "admin", false); err != nil {
+		t.Errorf("a change with it on: %v", err)
+	}
+	// Read, everything missing switches on without asking.
+	r.settle(t, true)
+	on.AutoGrab = true
+	if _, err := r.svc.PutSearchSettings(ctx, on, 0, "admin", false); err != nil {
+		t.Errorf("everything missing, air times read: %v", err)
+	}
+}
+
+// A series whose air times were never read because TVmaze did not answer is
+// tried again every 15 minutes, not on the next refresh hours away.
+func TestAirTimesNeverReadAreTriedAgain(t *testing.T) {
+	r := newFollowRig(t)
+	f := newFakeSchedule(t, r.svc)
+	nightShow(r, f)
+	f.set(func(f *fakeSchedule) { f.down = true })
+	requestNightShow(t, r)
+	r.svc.retrySchedules(context.Background())
+	if ti, _ := r.svc.st.TitleByID(context.Background(), "series:990721"); ti.ScheduleAt != nil {
+		t.Errorf("read with TVmaze down: %+v", ti)
+	}
+	f.set(func(f *fakeSchedule) { f.down = false })
+	r.svc.retrySchedules(context.Background())
+	if one := target(t, r.svc, "series:990721:s01e001"); one.AirStamp == nil {
+		t.Errorf("not read again: %+v", one)
+	}
+}
+
 // TVmaze too slow to answer: the run goes on without it, and says so.
 func TestTVmazeTooSlow(t *testing.T) {
 	r := newFollowRig(t)

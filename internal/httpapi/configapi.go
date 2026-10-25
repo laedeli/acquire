@@ -217,6 +217,21 @@ func (s *Server) testDownloadClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// searchSettingsAnswer is the search and grab policy, with how far TVmaze's
+// air times are of the series that run (airTimesStatus, read only).
+type searchSettingsAnswer struct {
+	app.SearchSettingsDoc
+	AirTimesStatus *app.AirTimesStatus `json:"airTimesStatus,omitempty"`
+}
+
+func (s *Server) searchSettingsAnswer(r *http.Request, doc app.SearchSettingsDoc) searchSettingsAnswer {
+	out := searchSettingsAnswer{SearchSettingsDoc: doc}
+	if st, err := s.svc.AirTimesStatus(r.Context()); err == nil {
+		out.AirTimesStatus = &st
+	}
+	return out
+}
+
 // getSearchSettings returns the search and grab policy.
 //
 //	GET /api/settings/search
@@ -229,7 +244,7 @@ func (s *Server) getSearchSettings(w http.ResponseWriter, r *http.Request) {
 		writeConfigError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, doc)
+	writeJSON(w, http.StatusOK, s.searchSettingsAnswer(r, doc))
 }
 
 // getRequestSettings returns how requests are taken: whether a request from
@@ -269,9 +284,11 @@ func (s *Server) putRequestSettings(w http.ResponseWriter, r *http.Request) {
 
 // putSearchSettings stores the search and grab policy. The document is read
 // over the policy stored: a field it does not name — one a console from
-// before it does not know — keeps its value.
+// before it does not know — keeps its value. Switching grabbing on its own
+// on while series that run have no air times from TVmaze yet answers 409
+// with confirm "airTimes", until it is sent again with ?confirm=airTimes.
 //
-//	PUT /api/settings/search   If-Match: <revision>
+//	PUT /api/settings/search[?confirm=airTimes]   If-Match: <revision>
 func (s *Server) putSearchSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -290,10 +307,15 @@ func (s *Server) putSearchSettings(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	doc, err := s.svc.SaveSearchSettings(r.Context(), in, rev, actorFrom(r.Context()))
+	doc, err := s.svc.PutSearchSettings(r.Context(), in, rev, actorFrom(r.Context()), r.URL.Query().Get("confirm") == "airTimes")
+	var missing *app.AirTimesMissing
+	if errors.As(err, &missing) {
+		writeJSON(w, http.StatusConflict, map[string]any{"message": err.Error(), "confirm": "airTimes", "airTimesStatus": missing.Status})
+		return
+	}
 	if err != nil {
 		writeConfigError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, doc)
+	writeJSON(w, http.StatusOK, s.searchSettingsAnswer(r, doc))
 }

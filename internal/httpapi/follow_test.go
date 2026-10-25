@@ -216,3 +216,32 @@ func TestRequestsAwaitAnAdminsApproval(t *testing.T) {
 		t.Errorf("a user's request with autoApprove -> %v", auto)
 	}
 }
+
+// Switching grabbing on its own on while series that run have no air times
+// from TVmaze yet answers 409, saying how many, with confirm "airTimes"; sent
+// again with ?confirm=airTimes, it is saved. The settings say how far the air
+// times are.
+func TestSwitchingGrabbingOnWaitsForAirTimes(t *testing.T) {
+	s, st := testServer(t)
+	h := s.Handler()
+	if err := st.UpsertTitle(context.Background(), store.Title{TMDBID: 990011, Kind: "series", Title: "Example Show", Monitored: true,
+		Status: "continuing", TVDBID: 9900011}); err != nil {
+		t.Fatal(err)
+	}
+	_, doc := call(t, h, http.MethodGet, "/api/settings/search", "")
+	if at, _ := doc["airTimesStatus"].(map[string]any); at == nil || at["on"] != true || at["running"] != float64(1) || at["pending"] != float64(1) {
+		t.Fatalf("GET /api/settings/search -> %v", doc)
+	}
+	w, out := call(t, h, http.MethodPut, "/api/settings/search", `{"autoGrabNew":true}`)
+	if at, _ := out["airTimesStatus"].(map[string]any); w.Code != http.StatusConflict || out["confirm"] != "airTimes" || at == nil || at["pending"] != float64(1) ||
+		!strings.HasPrefix(out["message"].(string), "1 of the 1 series that run has no air times from TVmaze yet") {
+		t.Fatalf("switched on -> %d %s", w.Code, w.Body.String())
+	}
+	if _, doc := call(t, h, http.MethodGet, "/api/settings/search", ""); doc["autoGrabNew"] != false {
+		t.Errorf("refused, yet saved: %v", doc)
+	}
+	if w, saved := call(t, h, http.MethodPut, "/api/settings/search?confirm=airTimes", `{"autoGrabNew":true}`); w.Code != 200 || saved["autoGrabNew"] != true ||
+		saved["airTimesStatus"] == nil {
+		t.Errorf("confirmed -> %d %s", w.Code, w.Body.String())
+	}
+}

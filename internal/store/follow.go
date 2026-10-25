@@ -746,8 +746,10 @@ const (
 // SeriesInventoryDue are the monitored series whose read of TMDB is due: one
 // never read, one that runs and was read longer ago than running, any other
 // read longer ago than ended — of which (SeriesAll, SeriesRunning,
-// SeriesOther). A followed series never read comes first, then the ones that
-// run, then the ones read longest ago.
+// SeriesOther). A followed series never read comes first, then the ones with
+// an episode aired in the last 14 days or airing in the next 7 (nearAirSQL)
+// — what an automatic grab takes soonest, whose origin country and air times
+// it tells by —, then the ones that run, then the ones read longest ago.
 func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Duration, limit int, which string) ([]DueTitle, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+titleCols+`, r.running
@@ -756,7 +758,7 @@ func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Dura
 		 WHERE t.kind = 'series' AND t.monitored
 		   AND `+inventoryDueSQL("CASE WHEN r.running THEN $1::float8 ELSE $2::float8 END")+`
 		   AND ($4 = '' OR ($4 = 'running') = (r.running AND t.inventory_at IS NOT NULL))
-		 ORDER BY (`+followedSQL+` AND t.inventory_at IS NULL) DESC, r.running DESC, t.inventory_at NULLS FIRST, t.id
+		 ORDER BY (`+followedSQL+` AND t.inventory_at IS NULL) DESC, `+nearAirSQL+` DESC, r.running DESC, t.inventory_at NULLS FIRST, t.id
 		 LIMIT $3`, running.Seconds(), ended.Seconds(), limit, which)
 	if err != nil {
 		return nil, err

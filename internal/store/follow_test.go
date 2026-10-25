@@ -582,8 +582,10 @@ func TestARequestedMovieWaitsForItsRelease(t *testing.T) {
 }
 
 // What a run of the refresh reads: a followed series never read first, then
-// the ones that run, the ones read longest ago first; one that runs is due
-// again after the running interval, one that has ended after a week.
+// one with an episode near its air date — aired in the last 14 days or airing
+// in the next 7 —, then the ones that run, the ones read longest ago first;
+// one that runs is due again after the running interval, one that has ended
+// after a week.
 func TestWhichSeriesAreReadAgain(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -625,8 +627,8 @@ func TestWhichSeriesAreReadAgain(t *testing.T) {
 	for _, d := range due {
 		got = append(got, d.Title.Title)
 	}
-	want := []string{"Followed Never Read", "Continuing Never Read", "Returning Read A Day Ago",
-		"Ended Read A Day Ago With A New Episode", "Ended Never Read", "Ended Read Two Weeks Ago"}
+	want := []string{"Followed Never Read", "Ended Read A Day Ago With A New Episode", "Continuing Never Read", "Returning Read A Day Ago",
+		"Ended Never Read", "Ended Read Two Weeks Ago"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("due = %q\nwant  %q", got, want)
 	}
@@ -1047,5 +1049,80 @@ func TestASeasonWithAGoneEpisodeIsReadAgain(t *testing.T) {
 	}
 	if got, _ := s.SeasonsToRead(ctx, id, listed, false); fmt.Sprint(got) != "[2]" {
 		t.Errorf("seasons read again after: %v", got)
+	}
+}
+
+// Whose air times a run reads: a monitored series an automatic grab may take
+// anything of — not one held for an admin's approval, nor an anime or a
+// daily show —, never read first and of them the one with an episode near its
+// air date, then the ones due: one that runs after the running interval, one
+// the source did not know after a week, any other after a month. With failed,
+// only the ones never read because the source did not answer. How far they
+// are of the series that run is counted.
+func TestWhoseAirTimesAreRead(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	for _, ti := range []Title{
+		{TMDBID: 1, Kind: "series", Title: "Never Read", Monitored: true, Status: "continuing"},
+		{TMDBID: 2, Kind: "series", Title: "Never Read, Airing", Monitored: true, Status: "continuing"},
+		{TMDBID: 3, Kind: "series", Title: "Running, Read A Day Ago", Monitored: true, Status: "continuing"},
+		{TMDBID: 4, Kind: "series", Title: "Running, Read An Hour Ago", Monitored: true, Status: "continuing"},
+		{TMDBID: 5, Kind: "series", Title: "Unknown A Week Ago", Monitored: true, Status: "continuing"},
+		{TMDBID: 6, Kind: "series", Title: "Ended, Read A Week Ago", Monitored: true, Status: "ended"},
+		{TMDBID: 7, Kind: "series", Title: "Ended, Read Two Months Ago", Monitored: true, Status: "ended"},
+		{TMDBID: 8, Kind: "series", Title: "Not Monitored", Status: "continuing"},
+		{TMDBID: 9, Kind: "series", Title: "Daily", Monitored: true, Status: "continuing", SeriesType: "daily"},
+		{TMDBID: 10, Kind: "series", Title: "Never Read, Failed", Monitored: true, Status: "continuing"},
+	} {
+		if err := s.UpsertTitle(ctx, ti); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.RequestTitle(ctx, Title{TMDBID: 11, Kind: "series", Title: "Awaiting Approval"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 day' WHERE tmdb_id = 3;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '1 hour' WHERE tmdb_id = 4;
+		UPDATE titles SET schedule_at = now() - interval '8 days' WHERE tmdb_id = 5;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '7 days' WHERE tmdb_id = 6;
+		UPDATE titles SET schedule_id = 1, schedule_at = now() - interval '60 days' WHERE tmdb_id = 7;
+		UPDATE titles SET schedule_error = 'TVmaze did not answer: HTTP 503' WHERE tmdb_id = 10;
+		UPDATE titles SET monitored = true WHERE tmdb_id = 11;`); err != nil {
+		t.Fatal(err)
+	}
+	season, ep := 1, 1
+	if err := s.UpsertTarget(ctx, Target{ID: TargetID("series:2", &season, &ep), TitleID: "series:2", Kind: "episode",
+		SeasonNumber: &season, EpisodeNumber: &ep, Monitored: true, State: TargetWanted}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.SetAirWindow(ctx, TargetID("series:2", &season, &ep), day(2), 0)
+	every := ScheduleEvery{Running: 5*time.Hour + 30*time.Minute, Unknown: 7 * 24 * time.Hour, Other: 30 * 24 * time.Hour}
+	names := func(failed bool) []string {
+		t.Helper()
+		due, err := s.SchedulesDue(ctx, every, 50, failed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, ti := range due {
+			out = append(out, ti.Title)
+		}
+		return out
+	}
+	want := []string{"Never Read, Airing", "Never Read", "Never Read, Failed", "Unknown A Week Ago", "Running, Read A Day Ago",
+		"Ended, Read Two Months Ago"}
+	if got := names(false); !reflect.DeepEqual(got, want) {
+		t.Errorf("due = %q\nwant  %q", got, want)
+	}
+	if got := names(true); !reflect.DeepEqual(got, []string{"Never Read, Failed"}) {
+		t.Errorf("never read for TVmaze not answering: %q", got)
+	}
+	if lim, _ := s.SchedulesDue(ctx, every, 2, false); len(lim) != 2 {
+		t.Errorf("limit: %d", len(lim))
+	}
+	a, err := s.AirTimesOfRunning(ctx)
+	if err != nil || a.Running != 6 || a.Read != 2 || a.Unknown != 1 || a.Pending != 3 || a.LastError != "TVmaze did not answer: HTTP 503" {
+		t.Errorf("of the series that run: %+v %v", a, err)
 	}
 }

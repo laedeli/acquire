@@ -291,6 +291,62 @@ func (s *Service) SaveSearchSettings(ctx context.Context, in SearchSettings, ifR
 	return SearchSettingsDoc{SearchSettings: in, Revision: row.Revision, UpdatedAt: &row.UpdatedAt}, nil
 }
 
+// AirTimesStatus is how far the schedule source's air times are of the
+// series that run whose air times matter (store.AirTimes): On is whether they
+// are used — search.airTimes, and a source to ask.
+type AirTimesStatus struct {
+	On bool `json:"on"`
+	store.AirTimes
+}
+
+// AirTimesStatus reads it.
+func (s *Service) AirTimesStatus(ctx context.Context) (AirTimesStatus, error) {
+	out := AirTimesStatus{On: s.grabPolicy(ctx).exactAirTimes()}
+	if s.st == nil {
+		return out, nil
+	}
+	a, err := s.st.AirTimesOfRunning(ctx)
+	out.AirTimes = a
+	return out, err
+}
+
+// AirTimesMissing refuses switching grabbing on its own on — search.autoGrab
+// or search.autoGrabNew — while series that run have no air times from the
+// schedule source yet (AirTimesStatus.Pending), until an admin confirms it:
+// nothing of them is grabbed on its own until their air times are read.
+type AirTimesMissing struct{ Status AirTimesStatus }
+
+func (e *AirTimesMissing) Error() string {
+	why := ""
+	if e.Status.LastError != "" {
+		why = " (" + e.Status.LastError + ")"
+	}
+	has, them := "have", "them"
+	if e.Status.Pending == 1 {
+		has, them = "has", "it"
+	}
+	return fmt.Sprintf("%d of the %d series that run %s no air times from TVmaze yet%s: nothing of %s is grabbed on its own until "+
+		"they are read, on the next refreshes — confirm to switch grabbing on its own on now", e.Status.Pending, e.Status.Running, has, why, them)
+}
+
+// PutSearchSettings is SaveSearchSettings as an admin writes the policy:
+// switching grabbing on its own on while series that run have no air times
+// yet is refused (AirTimesMissing), unless confirmed.
+func (s *Service) PutSearchSettings(ctx context.Context, in SearchSettings, ifRevision int64, actor string, confirmed bool) (SearchSettingsDoc, error) {
+	if !confirmed {
+		cur := s.grabPolicy(ctx)
+		on := (in.AutoGrabNew && !cur.AutoGrabNew) || (in.AutoGrab && !cur.AutoGrab)
+		next := in
+		next.noSchedule = cur.noSchedule
+		if on && next.exactAirTimes() {
+			if st, err := s.AirTimesStatus(ctx); err == nil && st.Pending > 0 {
+				return SearchSettingsDoc{}, &AirTimesMissing{Status: st}
+			}
+		}
+	}
+	return s.SaveSearchSettings(ctx, in, ifRevision, actor)
+}
+
 func validateSearchSettings(in SearchSettings) []FieldError {
 	var fe []FieldError
 	add := func(field, msg string) {

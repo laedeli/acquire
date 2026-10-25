@@ -150,3 +150,82 @@ func (s *Store) ScheduleFailed(ctx context.Context, titleID, reason string, how 
 	}
 	return tx.Commit(ctx)
 }
+
+// scheduleTrackedSQL is "the series t's air times matter": a series
+// monitored, not held for an admin's approval, whose releases name the season
+// and episode acquire tracks (handsOffSQL) — what an automatic grab may take.
+const scheduleTrackedSQL = `t.kind = 'series' AND t.monitored AND NOT ` + heldForApprovalSQL + ` AND NOT ` + handsOffSQL
+
+// nearAirSQL is "an episode of the series t aired in the last 14 days or
+// airs in the next 7": what an automatic grab takes soonest.
+const nearAirSQL = `EXISTS (SELECT 1 FROM acquisition_targets x WHERE x.title_id = t.id AND x.kind = 'episode'
+	AND x.air_date BETWEEN (now() AT TIME ZONE 'UTC')::date - 14 AND (now() AT TIME ZONE 'UTC')::date + 7)`
+
+// ScheduleEvery is how often a series' air times are read again: one that
+// runs (runningSQL) every Running, a show the source did not know or knew
+// under another name after Unknown, any other every Other.
+type ScheduleEvery struct {
+	Running, Unknown, Other time.Duration
+}
+
+// SchedulesDue are the series whose air times are due to be read
+// (scheduleTrackedSQL): never read first — of them, the ones with an episode
+// near its air date (nearAirSQL) —, then the ones that run, then the ones
+// read longest ago. failed narrows them to the series never read because the
+// source did not answer when it was last asked.
+func (s *Store) SchedulesDue(ctx context.Context, every ScheduleEvery, limit int, failed bool) ([]Title, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+titleCols+`
+		  FROM titles t
+		  CROSS JOIN LATERAL (SELECT `+runningSQL+` AS running) r
+		 WHERE `+scheduleTrackedSQL+`
+		   AND (CASE WHEN t.schedule_at IS NULL THEN NOT $5 OR t.schedule_error <> ''
+		             WHEN $5 THEN false
+		             WHEN t.schedule_id IS NULL THEN t.schedule_at < now() - make_interval(secs => $3::float8)
+		             WHEN r.running THEN t.schedule_at < now() - make_interval(secs => $2::float8)
+		             ELSE t.schedule_at < now() - make_interval(secs => $4::float8) END)
+		 ORDER BY t.schedule_at IS NULL DESC, `+nearAirSQL+` DESC, r.running DESC, t.schedule_at NULLS FIRST, t.id
+		 LIMIT $1`, limit, every.Running.Seconds(), every.Unknown.Seconds(), every.Other.Seconds(), failed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Title
+	for rows.Next() {
+		t, err := scanTitle(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// AirTimes is how far the schedule source's air times are of the series that
+// run (runningSQL) whose air times matter (scheduleTrackedSQL): of Running,
+// Read are read; Unknown are told by their air dates alone — the source does
+// not know them, or knows them under another name; Pending are not read yet,
+// and an automatic grab takes nothing of them until they are. LastError is
+// why the source last failed to give a pending one's.
+type AirTimes struct {
+	Running   int    `json:"running"`
+	Read      int    `json:"read"`
+	Unknown   int    `json:"unknown"`
+	Pending   int    `json:"pending"`
+	LastError string `json:"lastError,omitempty"`
+}
+
+// AirTimesOfRunning counts them.
+func (s *Store) AirTimesOfRunning(ctx context.Context) (AirTimes, error) {
+	var a AirTimes
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE t.schedule_at IS NOT NULL AND t.schedule_id IS NOT NULL),
+		       count(*) FILTER (WHERE t.schedule_at IS NOT NULL AND t.schedule_id IS NULL),
+		       count(*) FILTER (WHERE t.schedule_at IS NULL),
+		       COALESCE((array_agg(t.schedule_error ORDER BY t.updated_at DESC)
+		                   FILTER (WHERE t.schedule_at IS NULL AND t.schedule_error <> ''))[1], '')
+		  FROM titles t
+		 WHERE `+scheduleTrackedSQL+` AND `+runningSQL).Scan(&a.Running, &a.Read, &a.Unknown, &a.Pending, &a.LastError)
+	return a, err
+}
