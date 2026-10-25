@@ -303,8 +303,11 @@ func TestMigrate042OverAnExistingInstall(t *testing.T) {
 			t.Errorf("%s: %+v %v", id, tg, err)
 		}
 	}
-	if held, _ := s.GetTarget(ctx, "series:990396:s01e002"); held.State != TargetHeld || held.HeldItemID != "item-2" {
+	if held, _ := s.GetTarget(ctx, "series:990396:s01e002"); held.State != TargetHeld || held.HeldItemID != "item-2" || !held.EverHeld {
 		t.Errorf("a held target: %+v", held)
+	}
+	if wanted, _ := s.GetTarget(ctx, "series:990396:s01e001"); wanted.EverHeld {
+		t.Errorf("a wanted target held once: %+v", wanted)
 	}
 	for _, id := range []string{"series:990396", "movie:990603"} {
 		ti, err := s.TitleByID(ctx, id)
@@ -369,5 +372,96 @@ func TestMigrationNumbersAreUnique(t *testing.T) {
 			t.Errorf("migration number %s claimed twice: %s and %s — see MIGRATIONS.md", num, prev, name)
 		}
 		seen[num] = name
+	}
+}
+
+// 042 over a production-shaped database — every other migration applied,
+// 2,500 titles, 20,000 targets, 3,000 requests — in well under a second; a
+// second boot changes nothing, the backlog is what it was, and every target
+// held now reads as held once.
+func TestMigrate042OverAProductionShape(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	migrateUpTo(t, pool, "042_follow.sql")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO titles (id, tmdb_id, kind, title, status, holdings_at, monitored)
+		SELECT 'series:'||g, g, 'series', 'Show '||g, 'continuing', now(), true FROM generate_series(1, 407) g;
+		INSERT INTO titles (id, tmdb_id, kind, title, status, holdings_at, monitored)
+		SELECT 'movie:'||g, g, 'movie', 'Film '||g, 'released', now(), true FROM generate_series(1, 2096) g;
+		INSERT INTO acquisition_targets (id, title_id, kind, season_number, episode_number, state, air_date, air_window_opens_at, monitored)
+		SELECT 'series:'||(1 + g % 407)||':s01e'||g, 'series:'||(1 + g % 407), 'episode', 1, g,
+		       CASE WHEN g % 8 = 0 THEN 'wanted' ELSE 'held' END, current_date - (g % 900), now() - make_interval(days => g % 900), true
+		  FROM generate_series(1, 17654) g;
+		INSERT INTO acquisition_targets (id, title_id, kind, state, monitored)
+		SELECT 'movie:'||g||':movie', 'movie:'||g, 'movie', CASE WHEN g % 5 = 0 THEN 'wanted' ELSE 'held' END, true FROM generate_series(1, 2096) g;
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status)
+		SELECT 'w_'||g, g, 'movie', 'Film '||g, 'fulfilled' FROM generate_series(1, 3000) g;`); err != nil {
+		t.Fatal(err)
+	}
+	var missing, targets, held int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE a.state <> 'held' AND a.monitored AND t.monitored AND t.holdings_at IS NOT NULL
+	                                AND COALESCE(a.air_window_opens_at <= now(), a.kind = 'movie')),
+	                              count(*), count(*) FILTER (WHERE a.state = 'held')
+	  FROM acquisition_targets a JOIN titles t ON t.id = a.title_id`).Scan(&missing, &targets, &held); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{pool: pool}
+	start := time.Now()
+	if err := migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Since(start)
+	if err := migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.Counts(ctx)
+	if err != nil || after.Missing != missing || after.Targets != targets {
+		t.Errorf("the backlog: missing %d → %d, targets %d → %d (%v)", missing, after.Missing, targets, after.Targets, err)
+	}
+	var everHeld int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM acquisition_targets WHERE ever_held`).Scan(&everHeld)
+	if everHeld != held {
+		t.Errorf("held once: %d, want the %d held now", everHeld, held)
+	}
+	if first > 10*time.Second {
+		t.Errorf("042 took %v on a production shape", first)
+	}
+}
+
+// 042 over a dev database that ran an earlier draft of it: the cursors of
+// the sources' newest releases, kept then by publication time, start over;
+// a request the draft linked to its title, approved by it as every request
+// was, reads as approved.
+func TestMigrate042OverAnEarlierDraft(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	migrateUpTo(t, pool, "042_follow.sql")
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE rss_cursors (indexer_id bigint NOT NULL, feed text NOT NULL, newest_at timestamptz,
+		  newest_guids text[] NOT NULL DEFAULT '{}', read_at timestamptz, detail text NOT NULL DEFAULT '', PRIMARY KEY (indexer_id, feed));
+		INSERT INTO rss_cursors (indexer_id, feed, newest_at, newest_guids, read_at) VALUES (7, 'tv', now(), '{a}', now());
+		ALTER TABLE wanted_items ADD COLUMN title_id text NOT NULL DEFAULT '';
+		INSERT INTO titles (id, tmdb_id, kind, title) VALUES ('series:990401', 990401, 'series', 'Example Show');
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, title_id)
+		VALUES ('w_draft', 990401, 'series', 'Example Show', 'following', 'series:990401');`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := migrate(ctx, pool); err != nil {
+			t.Fatalf("boot %d over the draft: %v", i+1, err)
+		}
+	}
+	s := &Store{pool: pool}
+	c, err := s.GetRSSCursor(ctx, 7, "tv")
+	if err != nil || len(c.Seen) != 0 {
+		t.Errorf("the draft's cursor: %+v %v", c, err)
+	}
+	c.Add("b", time.Now())
+	if err := s.SaveRSSCursor(ctx, c); err != nil {
+		t.Errorf("a cursor saved over the draft's: %v", err)
+	}
+	w, err := s.GetWanted(ctx, "w_draft")
+	if err != nil || w.Approval != ApprovalApproved || w.DecidedBy != "acquire" || w.DecidedAt == nil {
+		t.Errorf("the draft's request: %+v %v", w, err)
 	}
 }

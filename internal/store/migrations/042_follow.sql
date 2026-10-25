@@ -10,7 +10,9 @@
 -- first read become targets too. The schedule rss-sync reads each source's
 -- newest releases and matches them to what is wanted.
 -- No foreign keys, as everywhere in the WANT model (010): these files re-run
--- on every boot, and links are soft text columns.
+-- on every boot, and links are soft text columns. Every statement holds over
+-- a database that ran this file before, and over one that ran an earlier
+-- draft of it.
 
 -- titles: followed_at is when a request first made acquire follow the title
 -- (NULL: tracked by the import alone); origin is 'request' for a title a
@@ -145,3 +147,18 @@ CREATE TABLE IF NOT EXISTS rss_cursors (
   detail     text        NOT NULL DEFAULT '',
   PRIMARY KEY (indexer_id, feed)
 );
+-- An earlier draft kept the newest publication time looked at instead: its
+-- rows start over, each feed read once more as never read.
+ALTER TABLE rss_cursors ADD COLUMN IF NOT EXISTS seen_ids bigint[] NOT NULL DEFAULT '{}';
+ALTER TABLE rss_cursors ADD COLUMN IF NOT EXISTS seen_at  bigint[] NOT NULL DEFAULT '{}';
+ALTER TABLE rss_cursors DROP COLUMN IF EXISTS newest_at;
+ALTER TABLE rss_cursors DROP COLUMN IF EXISTS newest_guids;
+
+-- What the library holds now it held once: the targets held before ever_held
+-- was kept. Every hold sets it since, so a later boot finds none to set.
+UPDATE acquisition_targets SET ever_held = true WHERE state = 'held' AND NOT ever_held;
+
+-- A request an earlier draft linked to its title was approved by it, as every
+-- request then was.
+UPDATE wanted_items SET approval = 'approved', decided_by = 'acquire', decided_at = COALESCE(decided_at, updated_at)
+ WHERE title_id <> '' AND approval = '';
