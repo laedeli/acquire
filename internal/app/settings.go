@@ -293,10 +293,13 @@ func (s *Service) SaveSearchSettings(ctx context.Context, in SearchSettings, ifR
 
 // AirTimesStatus is how far the schedule source's air times are of the
 // series that run whose air times matter (store.AirTimes): On is whether they
-// are used — search.airTimes, and a source to ask.
+// are used — search.airTimes, and a source to ask. Warning is set when more
+// than a third of them are not known to TVmaze: their ids may be wrong, or
+// TVmaze answer for them amiss.
 type AirTimesStatus struct {
 	On bool `json:"on"`
 	store.AirTimes
+	Warning string `json:"warning,omitempty"`
 }
 
 // AirTimesStatus reads it.
@@ -307,6 +310,10 @@ func (s *Service) AirTimesStatus(ctx context.Context) (AirTimesStatus, error) {
 	}
 	a, err := s.st.AirTimesOfRunning(ctx)
 	out.AirTimes = a
+	if out.On && a.Running > 0 && a.Unknown*3 > a.Running {
+		out.Warning = fmt.Sprintf("%d of the %d series that run are not known to TVmaze — more than a third: their TVDB or IMDb ids may be "+
+			"missing or wrong; they are told by their air dates alone", a.Unknown, a.Running)
+	}
 	return out, err
 }
 

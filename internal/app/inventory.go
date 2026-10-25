@@ -420,6 +420,9 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 	// outside TMDB's budget.
 	if scheduled && schedule && ctx.Err() == nil {
 		s.readSchedules(ctx, &run, false)
+		if st, err := s.AirTimesStatus(ctx); err == nil && st.Warning != "" {
+			log.Printf("acquire inventory-refresh: %s", st.Warning)
+		}
 	}
 	return run, err
 }
@@ -513,9 +516,11 @@ func (s *Service) readSchedule(ctx context.Context, titleID string, run *Invento
 // it runs, kept on its target. A show whose name is neither the series' nor
 // one of its aliases is another show behind the same id: none of its air
 // times is taken, and it is looked up again in a week. It reports false when
-// the source does not answer as it should: no other series would fare better
-// this run. Nothing fails of the series either way; an episode without an
-// air time is told by its air date.
+// the source does not answer as it should — out of reach, failing, limiting,
+// refusing —: no other series would fare better this run. An answer that
+// cannot be read leaves the series unread, to be read again, and the run goes
+// on. Nothing fails of the series either way; an episode without an air time
+// is told by its air date.
 func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *InventoryRun) bool {
 	if t.TVDBID == 0 && t.IMDBID == "" {
 		_ = s.st.ScheduleFailed(ctx, t.ID, "no TVDB or IMDb id to look it up at TVmaze by; looked up again in a week", store.ScheduleUnknown)
@@ -526,13 +531,16 @@ func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *Invent
 		case errors.Is(err, tvmaze.ErrNotFound):
 			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze does not know "+what+"; looked up again in a week", store.ScheduleUnknown)
 			return true
-		case tvmaze.Unavailable(err):
-			run.ScheduleError = err.Error()
-			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze did not answer: "+err.Error(), store.ScheduleDown)
-			return false
+		case errors.Is(err, tvmaze.ErrUnreadable):
+			log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
+			_ = s.st.ScheduleFailed(ctx, t.ID, err.Error()+"; read again on the next refresh", store.ScheduleDown)
+			return true
 		}
-		_ = s.st.ScheduleFailed(ctx, t.ID, err.Error(), store.ScheduleUnreadable)
-		return true
+		// TVmaze not answering as it should (tvmaze.Unavailable): out of
+		// reach, failing, limiting, refusing.
+		run.ScheduleError = err.Error()
+		_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze did not answer: "+err.Error(), store.ScheduleDown)
+		return false
 	}
 	id := t.ScheduleID
 	if id == 0 {

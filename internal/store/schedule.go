@@ -105,16 +105,14 @@ type ScheduleFailure int
 
 const (
 	// ScheduleDown: the source did not answer as it should — out of reach,
-	// failing, limiting. Nothing it gave before is changed; a series never
-	// read stays so, and is read again on the next run.
+	// failing, limiting, refusing, or answering what cannot be read. Nothing
+	// it gave before is changed; a series never read stays so, and is read
+	// again soon.
 	ScheduleDown ScheduleFailure = iota
 	// ScheduleUnknown: the source does not know the series by its ids, or
 	// it has none to be asked by. Its show id is forgotten, and it is looked
 	// up again after a week; the air times it gave stay.
 	ScheduleUnknown
-	// ScheduleUnreadable: the source answered what cannot be read. It is
-	// read again as a series read is.
-	ScheduleUnreadable
 	// ScheduleOtherShow: the show the source answers by the series' ids is
 	// another — a name neither the series' nor one of its aliases: its show
 	// id, how it airs and every air time taken from it are dropped, and it

@@ -65,6 +65,12 @@ func (f *fake) server(t *testing.T) *httptest.Server {
 			  "_embedded":{"episodes":[]}}`))
 		case r.URL.Path == "/shows/79":
 			http.Error(w, "boom", http.StatusBadGateway)
+		case r.URL.Path == "/shows/83":
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case r.URL.Path == "/shows/84":
+			_, _ = w.Write([]byte(`<html>a proxy's page</html>`))
+		case r.URL.Path == "/shows/85":
+			_, _ = w.Write([]byte(`{"id":86,"name":"Another Show","_embedded":{"episodes":[]}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -141,7 +147,18 @@ func TestAShowAndItsEpisodes(t *testing.T) {
 	if _, err := c.Show(ctx, 79); !Unavailable(err) {
 		t.Errorf("TVmaze failing: %v", err)
 	}
-	if Unavailable(ErrNotFound) || !Unavailable(&HTTPError{Status: 429}) {
+	// TVmaze refusing — a 403, any 4xx but 404 — is TVmaze not answering as
+	// it should; an answer that cannot be read, or of another show, is
+	// neither the show's absence nor TVmaze down.
+	if _, err := c.Show(ctx, 83); !Unavailable(err) {
+		t.Errorf("TVmaze refusing: %v", err)
+	}
+	for _, id := range []int64{84, 85} {
+		if _, err := c.Show(ctx, id); !errors.Is(err, ErrUnreadable) || Unavailable(err) {
+			t.Errorf("show %d, an answer that cannot be read: %v", id, err)
+		}
+	}
+	if Unavailable(ErrNotFound) || !Unavailable(&HTTPError{Status: 429}) || !Unavailable(&HTTPError{Status: 401}) || Unavailable(&HTTPError{Status: 404}) {
 		t.Error("what is TVmaze's fault")
 	}
 	if (&Client{}).Enabled() || (*Client)(nil).Enabled() {

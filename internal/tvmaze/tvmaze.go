@@ -48,15 +48,20 @@ type HTTPError struct {
 func (e *HTTPError) Error() string { return fmt.Sprintf("TVmaze %s: HTTP %d", e.Path, e.Status) }
 
 // Unavailable reports whether err is TVmaze not answering as it should — out
-// of reach, failing, limiting —, not the show's fault: no other show would
-// fare better now.
+// of reach, failing, limiting, refusing (any 4xx but 404, which is a show it
+// does not know) —, not the show's fault: no other show would fare better
+// now.
 func Unavailable(err error) bool {
 	var he *HTTPError
 	if errors.As(err, &he) {
-		return he.Status == http.StatusTooManyRequests || he.Status >= 500
+		return he.Status != http.StatusNotFound
 	}
-	return err != nil && !errors.Is(err, ErrNotFound)
+	return err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrUnreadable)
 }
+
+// ErrUnreadable is an answer of TVmaze's that cannot be read: not the show
+// asked for, not JSON — a proxy's page, say.
+var ErrUnreadable = errors.New("TVmaze answered what cannot be read")
 
 // Client asks TVmaze. Its zero value is off (Enabled).
 type Client struct {
@@ -150,11 +155,11 @@ func (c *Client) lookup(ctx context.Context, q url.Values) (int64, error) {
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		loc, err := url.Parse(resp.Header.Get("Location"))
 		if err != nil {
-			return 0, fmt.Errorf("TVmaze lookup: a redirect to %q", resp.Header.Get("Location"))
+			return 0, fmt.Errorf("TVmaze lookup: %w: a redirect to %q", ErrUnreadable, resp.Header.Get("Location"))
 		}
 		id, err := strconv.ParseInt(path.Base(loc.Path), 10, 64)
 		if err != nil || id <= 0 || path.Base(path.Dir(loc.Path)) != "shows" {
-			return 0, fmt.Errorf("TVmaze lookup: a redirect to %q", loc.Path)
+			return 0, fmt.Errorf("TVmaze lookup: %w: a redirect to %q", ErrUnreadable, loc.Path)
 		}
 		return id, nil
 	case resp.StatusCode == http.StatusOK:
@@ -162,7 +167,7 @@ func (c *Client) lookup(ctx context.Context, q url.Values) (int64, error) {
 			ID int64 `json:"id"`
 		}
 		if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&show); err != nil || show.ID <= 0 {
-			return 0, fmt.Errorf("TVmaze lookup: an answer that names no show")
+			return 0, fmt.Errorf("TVmaze lookup: %w: an answer that names no show", ErrUnreadable)
 		}
 		return show.ID, nil
 	}
@@ -210,12 +215,12 @@ func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
 		} `json:"_embedded"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&raw); err != nil {
-		return Show{}, fmt.Errorf("TVmaze %s: decode: %w", p, err)
+		return Show{}, fmt.Errorf("TVmaze %s: %w: %v", p, ErrUnreadable, err)
 	}
-	show := Show{ID: raw.ID, Name: strings.TrimSpace(raw.Name)}
-	if show.ID == 0 {
-		show.ID = id
+	if raw.ID != 0 && raw.ID != id {
+		return Show{}, fmt.Errorf("TVmaze %s: %w: the record of show %d", p, ErrUnreadable, raw.ID)
 	}
+	show := Show{ID: id, Name: strings.TrimSpace(raw.Name)}
 	country := func(ch *channel) string {
 		if ch.Country == nil {
 			return ""
