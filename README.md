@@ -25,7 +25,9 @@ builds on are documented canonically in the platform docs:
   from its release on. Each source's newest releases are read every fifteen
   minutes and matched to what is wanted. Whether new episodes and requests are
   grabbed on their own, and whether the whole backlog is, are two switches in
-  the console, both off until you turn them on.
+  the console, both off until you turn them on; an automatic grab waits a
+  while after an episode's air date, and a request from someone who is not an
+  admin waits for an admin's approval unless requests are approved at once.
 - **[download-gateway](https://github.com/laedeli/download-gateway)** — the
   download plane: one API + Kafka events (`download.client.*`) in front of the
   actual download clients.

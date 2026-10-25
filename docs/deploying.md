@@ -423,10 +423,10 @@ stays open while the series runs, its episodes tracked and grabbed one by one
 —, and a movie request is its movie's target, searched from its release on.
 TMDB is read again on the clock for what runs, so the episodes it announces
 later become targets, and the sources' newest releases are read and matched
-to what is wanted. Migration `042` (follows, what TMDB was read for, the
-newest releases' cursors) is applied on start, and two schedules are
-registered: `inventory-refresh` (every six hours) and `rss-sync` (every
-fifteen minutes) — see [schedules](./acquire.md#schedules).
+to what is wanted. Migration `042` (follows and their approval, what TMDB was
+read for, the newest releases' cursors) is applied on start, and two
+schedules are registered: `inventory-refresh` (every six hours) and
+`rss-sync` (every fifteen minutes) — see [schedules](./acquire.md#schedules).
 
 - **Nothing is grabbed on its own that was not before.** The new switch
   **new episodes and requests** (`search.autoGrabNew`) is off after the
@@ -435,7 +435,17 @@ fifteen minutes) — see [schedules](./acquire.md#schedules).
   read at all. To have new episodes and what is requested arrive by
   themselves, switch it on in settings → search and grab; the old backlog
   stays with **everything missing** (`search.autoGrab`), which keeps its
-  meaning.
+  meaning. Either way an automatic grab now waits `search.airDelayHours` (30)
+  after an air date — TMDB dates the day, not the hour —, takes no release
+  published before the day its episode aired, and leaves a series the import
+  says is anime or daily to the missing tab: their releases name an absolute
+  number or a date, not the season and episode acquire tracks.
+- **Requests now wait for an admin.** A request someone who is not an admin
+  makes awaits an admin's approval (`requests.autoApprove`, off): its title is
+  followed, but nothing of it is searched or grabbed on its own until an admin
+  approves it in the requests tab. An admin's own request is approved at once.
+  Switch on **approve requests** in settings → requests to approve everyone's
+  at once, as requests were before.
 - **The sources' allowance.** With a switch on, every source is read every
   fifteen minutes — its TV feed and its movie feed, each only while
   something of its kind can be grabbed, or one search over both for a source
@@ -454,6 +464,13 @@ fifteen minutes) — see [schedules](./acquire.md#schedules).
 - **Requests from before.** A series or movie request made before 0.6.0
   follows nothing until it is asked for again (discover → request), which
   answers the request there is and makes it follow its title.
+- **Rolling back to 0.5.x.** Switch **new episodes and requests** and
+  **everything missing** off in settings → search and grab before you roll
+  back. 0.5.x knows nothing of follows, approvals or the air delay: with
+  `search.autoGrab` on, its sweep would grab the episodes a follow added —
+  those of a request awaiting an admin's approval too — as soon as they air.
+  Migration `042` only adds, so nothing is lost; 0.5.x leaves the new columns
+  and the `rss_cursors` table alone.
 
 ### Moving an existing deployment to the chart
 
