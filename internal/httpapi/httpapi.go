@@ -10,6 +10,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -385,7 +386,7 @@ func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.svc.ApproveForGrab(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context())); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), approveForGrabStatus(err))
 		return
 	}
 	if err := s.svc.GrabCandidate(r.Context(), chi.URLParam(r, "id"), c); err != nil {
@@ -580,28 +581,43 @@ func (s *Server) createWanted(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, view)
 }
 
-// decideWanted approves or declines a request that follows a title (admin).
-// An approved request's title is grabbed on its own as the search and grab
-// policy allows; a declined one stays, saying so, and its follow ends.
+// decideWanted approves or declines a request that follows a title (admin),
+// as it was when the admin decided — from, in the body: awaiting (also when
+// the body names none), declined or approved. An approved request's title is
+// grabbed on its own as the search and grab policy allows; a declined one
+// stays, saying so, and its follow ends. A request decided otherwise
+// meanwhile answers 409, saying what it is now.
 //
-//	POST /api/wanted/{id}/approve
-//	POST /api/wanted/{id}/decline
+//	POST /api/wanted/{id}/approve   {"from": "awaiting"}
+//	POST /api/wanted/{id}/decline   {"from": "awaiting"}
 func (s *Server) decideWanted(approve bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.requireAdmin(w, r) {
 			return
 		}
-		decide := s.svc.DeclineRequest
-		if approve {
-			decide = s.svc.ApproveRequest
+		var body struct {
+			From string `json:"from"`
 		}
-		out, err := decide(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context()))
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch body.From {
+		case "", store.ApprovalAwaiting, store.ApprovalApproved, store.ApprovalDeclined:
+		default:
+			http.Error(w, `from must be "awaiting", "approved" or "declined"`, http.StatusBadRequest)
+			return
+		}
+		out, err := s.svc.DecideRequest(r.Context(), chi.URLParam(r, "id"), approve, body.From, actorFrom(r.Context()))
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		case app.IsNoFollow(err):
 			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		case app.IsDecided(err):
+			http.Error(w, err.Error()+" — reload to see it", http.StatusConflict)
 			return
 		case err != nil:
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -613,6 +629,15 @@ func (s *Server) decideWanted(approve bool) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, view)
 	}
+}
+
+// approveForGrabStatus is the status of a grab whose approval failed: 409
+// when the request was declined meanwhile.
+func approveForGrabStatus(err error) int {
+	if app.IsDecided(err) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }
 
 // deleteWanted removes a request; the last one that follows a title ends its
@@ -654,7 +679,7 @@ func (s *Server) grabWanted(w http.ResponseWriter, r *http.Request) {
 		client = body.Adapter
 	}
 	if err := s.svc.ApproveForGrab(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context())); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), approveForGrabStatus(err))
 		return
 	}
 	if err := s.svc.Grab(r.Context(), chi.URLParam(r, "id"), body.Source, client); err != nil {
@@ -671,7 +696,7 @@ func (s *Server) autograbWanted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.svc.ApproveForGrab(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context())); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), approveForGrabStatus(err))
 		return
 	}
 	if err := s.svc.AutoGrab(r.Context(), chi.URLParam(r, "id")); err != nil {

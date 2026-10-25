@@ -1410,3 +1410,38 @@ func TestATitleAskedForAtOnceGetsOneRequest(t *testing.T) {
 		t.Errorf("the requests: %+v", all)
 	}
 }
+
+// An admin approving a request while another declines it: one decision is
+// taken, the other refused, saying what the request is now; the title is
+// followed as the one taken says.
+func TestOneDecisionOnARequestIsTaken(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	for round := int64(0); round < 4; round++ {
+		id := 990810 + round
+		r.tmdb.set(func(f *fakeTMDB) { f.series[id] = sevenHarbours() })
+		w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: id, MediaType: "series", Title: "Example Saga"}, Requester{Sub: "user"})
+		if err != nil || w.Approval != store.ApprovalAwaiting {
+			t.Fatalf("a user's request: %+v %v", w, err)
+		}
+		var approved, declined error
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); _, approved = r.svc.ApproveRequest(ctx, w.ID, "admin-1") }()
+		go func() { defer wg.Done(); _, declined = r.svc.DeclineRequest(ctx, w.ID, "admin-2") }()
+		wg.Wait()
+		if (approved == nil) == (declined == nil) || (approved != nil && !IsDecided(approved)) || (declined != nil && !IsDecided(declined)) {
+			t.Fatalf("round %d: approve %v, decline %v — want one taken, the other refused", round, approved, declined)
+		}
+		now, _ := r.svc.st.GetWanted(ctx, w.ID)
+		title, _ := r.svc.st.TitleByID(ctx, w.TitleID)
+		if approved == nil && (now.Approval != store.ApprovalApproved || now.DecidedBy != "admin-1" || !title.Followed() ||
+			declined.Error() != "the request is approved now, by admin-1") {
+			t.Errorf("round %d, approved: %+v %+v %v", round, now, title, declined)
+		}
+		if declined == nil && (now.Approval != store.ApprovalDeclined || now.DecidedBy != "admin-2" || title.Followed() ||
+			approved.Error() != "the request is declined now, by admin-2") {
+			t.Errorf("round %d, declined: %+v %+v %v", round, now, title, approved)
+		}
+	}
+}

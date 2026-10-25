@@ -174,8 +174,22 @@ func TestRequestsAwaitAnAdminsApproval(t *testing.T) {
 	if w, out := call(t, h, http.MethodPost, "/api/wanted/"+id+"/approve", ""); w.Code != 200 || out["approval"] != "approved" || out["status"] != "following" {
 		t.Errorf("approve -> %d %s", w.Code, w.Body.String())
 	}
-	if w, out := call(t, h, http.MethodPost, "/api/wanted/"+id+"/decline", ""); w.Code != 200 || out["approval"] != "declined" || out["status"] != "declined" {
+	// A decision is made on the request as the admin saw it: one awaiting,
+	// unless the body says otherwise; a request decided otherwise meanwhile
+	// answers 409, saying what it is now.
+	if w, _ := call(t, h, http.MethodPost, "/api/wanted/"+id+"/decline", ""); w.Code != http.StatusConflict ||
+		!strings.Contains(w.Body.String(), "the request is approved now, by local") {
+		t.Errorf("decline an approved request as one awaiting -> %d %s", w.Code, w.Body.String())
+	}
+	if w, out := call(t, h, http.MethodPost, "/api/wanted/"+id+"/decline", `{"from":"approved"}`); w.Code != 200 || out["approval"] != "declined" ||
+		out["status"] != "declined" {
 		t.Errorf("decline -> %d %s", w.Code, w.Body.String())
+	}
+	if w, _ := call(t, h, http.MethodPost, "/api/wanted/"+id+"/approve", `{"from":"everything"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("approve from a word it does not know -> %d", w.Code)
+	}
+	if w, out := call(t, h, http.MethodPost, "/api/wanted/"+id+"/approve", `{"from":"declined"}`); w.Code != 200 || out["approval"] != "approved" {
+		t.Errorf("approve a declined request -> %d %s", w.Code, w.Body.String())
 	}
 	if w, _ := call(t, h, http.MethodPost, "/api/wanted/w_none/approve", ""); w.Code != http.StatusNotFound {
 		t.Errorf("approve no request -> %d", w.Code)

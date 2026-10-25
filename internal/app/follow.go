@@ -111,7 +111,11 @@ func (s *Service) Request(ctx context.Context, w store.Wanted, by Requester) (ou
 		if !by.Admin || prev.Approval == store.ApprovalApproved {
 			return prev, false, nil
 		}
-		out, err := s.ApproveRequest(ctx, prev.ID, decidedBy)
+		out, err := s.DecideRequest(ctx, prev.ID, true, prev.Approval, decidedBy)
+		if IsDecided(err) {
+			// Another decided it first: the request as it is now.
+			out, err = s.st.GetWanted(ctx, prev.ID)
+		}
 		return out, false, err
 	}
 	if prev, err := s.st.FindRequestFor(ctx, w.TMDBID, mediaTypesOf(kind)); err == nil {
@@ -177,12 +181,27 @@ func (s *Service) requested(ctx context.Context, kind string, w store.Wanted, ap
 // errNoFollow: approving or declining a request that follows no title.
 var errNoFollow = errors.New("this request follows no title: there is nothing to approve or decline")
 
-// ApproveRequest approves a request that follows a title — awaiting
-// approval, or declined before —: the title is followed, its episodes made
-// from TMDB, and what it follows is grabbed on its own as the search and grab
-// policy allows. A title whose follow ended when the request was declined is
-// followed again.
+// ApproveRequest approves a request awaiting approval (DecideRequest).
 func (s *Service) ApproveRequest(ctx context.Context, id, by string) (store.Wanted, error) {
+	return s.DecideRequest(ctx, id, true, store.ApprovalAwaiting, by)
+}
+
+// DeclineRequest declines a request awaiting approval (DecideRequest).
+func (s *Service) DeclineRequest(ctx context.Context, id, by string) (store.Wanted, error) {
+	return s.DecideRequest(ctx, id, false, store.ApprovalAwaiting, by)
+}
+
+// DecideRequest records an admin's word on a request that follows a title,
+// decided on it as it was — from: awaiting approval, declined or approved;
+// awaiting when "" —, at once: of two decisions on one request, one is taken,
+// and the other is refused, saying what the request is now (IsDecided).
+// Approved — awaiting, or declined before —, its title is followed, its
+// episodes made from TMDB, and what it follows is grabbed on its own as the
+// search and grab policy allows; a title whose follow ended when the request
+// was declined is followed again. Declined — awaiting, or approved before —,
+// it stays, saying so, and its title's follow, if it was approved, ends
+// (store.UnfollowTitle).
+func (s *Service) DecideRequest(ctx context.Context, id string, approve bool, from, by string) (store.Wanted, error) {
 	w, err := s.st.GetWanted(ctx, id)
 	if err != nil {
 		return store.Wanted{}, err
@@ -190,38 +209,32 @@ func (s *Service) ApproveRequest(ctx context.Context, id, by string) (store.Want
 	if w.TitleID == "" {
 		return store.Wanted{}, errNoFollow
 	}
-	if err := s.st.DecideWanted(ctx, id, store.ApprovalApproved, by); err != nil {
+	if from == "" {
+		from = store.ApprovalAwaiting
+	}
+	to := store.ApprovalDeclined
+	if approve {
+		to = store.ApprovalApproved
+	}
+	if err := s.st.DecideWanted(ctx, id, from, to, by); err != nil {
 		return store.Wanted{}, err
 	}
-	if title, err := s.st.TitleByID(ctx, w.TitleID); err == nil && !title.Followed() {
-		if _, err := s.follow(ctx, title.Kind, store.Wanted{TMDBID: title.TMDBID, Title: title.Title, Year: title.Year}); err != nil {
-			return store.Wanted{}, err
+	if approve {
+		if title, err := s.st.TitleByID(ctx, w.TitleID); err == nil && !title.Followed() {
+			if _, err := s.follow(ctx, title.Kind, store.Wanted{TMDBID: title.TMDBID, Title: title.Title, Year: title.Year}); err != nil {
+				return store.Wanted{}, err
+			}
 		}
+	} else if err := s.st.UnfollowTitle(ctx, w.TitleID); err != nil {
+		return store.Wanted{}, err
 	}
 	s.notify()
 	return s.st.GetWanted(ctx, id)
 }
 
-// DeclineRequest declines a request that follows a title: it stays, saying
-// so, and its title's follow, if it was approved before, ends
-// (store.UnfollowTitle).
-func (s *Service) DeclineRequest(ctx context.Context, id, by string) (store.Wanted, error) {
-	w, err := s.st.GetWanted(ctx, id)
-	if err != nil {
-		return store.Wanted{}, err
-	}
-	if w.TitleID == "" {
-		return store.Wanted{}, errNoFollow
-	}
-	if err := s.st.DecideWanted(ctx, id, store.ApprovalDeclined, by); err != nil {
-		return store.Wanted{}, err
-	}
-	if err := s.st.UnfollowTitle(ctx, w.TitleID); err != nil {
-		return store.Wanted{}, err
-	}
-	s.notify()
-	return s.st.GetWanted(ctx, id)
-}
+// IsDecided reports whether a decision on a request was refused because
+// another decided it first: its message says what it is now.
+func IsDecided(err error) bool { return errors.Is(err, store.ErrDecided) }
 
 // IsNoFollow reports whether an approval was refused because the request
 // follows no title.
@@ -381,6 +394,11 @@ func (s *Service) ApproveForGrab(ctx context.Context, id, by string) error {
 		return nil
 	}
 	_, err = s.ApproveRequest(ctx, id, by)
+	var d *store.DecidedError
+	if errors.As(err, &d) && d.Approval == store.ApprovalApproved {
+		// Approved meanwhile: what the grab is for.
+		return nil
+	}
 	return err
 }
 

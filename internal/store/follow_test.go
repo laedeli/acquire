@@ -116,7 +116,7 @@ func TestARequestAwaitingApprovalChangesNothing(t *testing.T) {
 	}
 
 	// Approved: followed, and monitored with its new seasons.
-	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalApproved, "admin"); err != nil {
+	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalAwaiting, ApprovalApproved, "admin"); err != nil {
 		t.Fatal(err)
 	}
 	followed, _, err := s.FollowTitle(ctx, Title{TMDBID: 990602, Kind: "series", Title: "x"})
@@ -145,7 +145,7 @@ func TestARequestAwaitingApprovalChangesNothing(t *testing.T) {
 	// The follow ends: the second season, which only the follow monitored,
 	// is not monitored any more; the first season's new episode, the
 	// admin's season's, is.
-	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalDeclined, "admin"); err != nil {
+	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalApproved, ApprovalDeclined, "admin"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.UnfollowTitle(ctx, imported.ID); err != nil {
@@ -158,7 +158,7 @@ func TestARequestAwaitingApprovalChangesNothing(t *testing.T) {
 		t.Errorf("the title after the follow: %+v", ti)
 	}
 	// Followed again: monitored again.
-	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalApproved, "admin"); err != nil {
+	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalDeclined, ApprovalApproved, "admin"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.FollowTitle(ctx, Title{TMDBID: 990602, Kind: "series", Title: "x"}); err != nil {
@@ -1208,7 +1208,8 @@ func TestWhoseAirTimesAreRead(t *testing.T) {
 
 // A request that follows a title is made once per TMDB id and kind of title
 // — a series asked for as tv is a series —; one that follows none, any number
-// of times.
+// of times. A decision is taken on a request as it was: of two at once, the
+// second answers what it is now.
 func TestOneRequestFollowsATitle(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -1229,5 +1230,22 @@ func TestOneRequestFollowsATitle(t *testing.T) {
 		if err := s.CreateWanted(ctx, Wanted{ID: id, TMDBID: 990802, MediaType: "movie", Title: "Plain"}); err != nil {
 			t.Errorf("a request that follows nothing, %s: %v", id, err)
 		}
+	}
+	if err := s.DecideWanted(ctx, "w1", ApprovalAwaiting, ApprovalApproved, "admin-1"); err != nil {
+		t.Fatal(err)
+	}
+	err := s.DecideWanted(ctx, "w1", ApprovalAwaiting, ApprovalDeclined, "admin-2")
+	var d *DecidedError
+	if !errors.Is(err, ErrDecided) || !errors.As(err, &d) || d.Approval != ApprovalApproved || d.By != "admin-1" {
+		t.Errorf("declined as it awaited, approved meanwhile: %v", err)
+	}
+	if err := s.DecideWanted(ctx, "w1", ApprovalApproved, ApprovalApproved, "admin-2"); !errors.Is(err, ErrDecided) {
+		t.Errorf("approved again: %v", err)
+	}
+	if err := s.DecideWanted(ctx, "w_none", ApprovalAwaiting, ApprovalApproved, "admin"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no request: %v", err)
+	}
+	if w, _ := s.GetWanted(ctx, "w1"); w.Approval != ApprovalApproved || w.DecidedBy != "admin-1" {
+		t.Errorf("the request: %+v", w)
 	}
 }

@@ -160,19 +160,45 @@ func (s *Store) CreateWanted(ctx context.Context, w Wanted) error {
 	return nil
 }
 
+// ErrDecided: a request's approval is not what a decision on it was made
+// from — another decided it first (DecidedError).
+var ErrDecided = errors.New("decided otherwise meanwhile")
+
+// DecidedError is a decision refused because the request's approval was not
+// what it was decided from: its approval now, and who decided it.
+type DecidedError struct {
+	Approval, By string
+}
+
+func (e *DecidedError) Error() string {
+	if e.By == "" {
+		return "the request is " + e.Approval + " now"
+	}
+	return "the request is " + e.Approval + " now, by " + e.By
+}
+
+func (e *DecidedError) Is(target error) bool { return target == ErrDecided }
+
 // DecideWanted records an admin's word on a request — approved or declined —
-// and who said it.
-func (s *Store) DecideWanted(ctx context.Context, id, approval, by string) error {
+// and who said it, if its approval is still from: of two decisions on a
+// request at once, one is recorded, and the other answers a DecidedError
+// saying what the request is now.
+func (s *Store) DecideWanted(ctx context.Context, id, from, approval, by string) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE wanted_items SET approval = $2, decided_by = $3, decided_at = now(), updated_at = now() WHERE id = $1`,
-		id, approval, by)
+		UPDATE wanted_items SET approval = $2, decided_by = $3, decided_at = now(), updated_at = now()
+		 WHERE id = $1 AND approval = $4 AND approval <> $2`,
+		id, approval, by, from)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+	if tag.RowsAffected() == 1 {
+		return nil
 	}
-	return nil
+	w, err := s.GetWanted(ctx, id)
+	if err != nil {
+		return err
+	}
+	return &DecidedError{Approval: w.Approval, By: w.DecidedBy}
 }
 
 // FindRequestFor returns the newest request for a TMDB id whose media type is
