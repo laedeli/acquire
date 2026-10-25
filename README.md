@@ -26,8 +26,8 @@ builds on are documented canonically in the platform docs:
   minutes and matched to what is wanted. Whether new episodes and requests are
   grabbed on their own, and whether the whole backlog is, are two switches in
   the console, both off until you turn them on; an automatic grab waits a
-  while after an episode airs — by TVmaze's public air times when it knows
-  them, asked by the series' TVDB or IMDb id alone — and takes nothing
+  while after a broadcast ends or an episode streams — by TVmaze's public air
+  times, asked by the series' TVDB or IMDb id alone — and takes nothing
   published before, and a request from someone who is not an admin changes
   nothing until an admin approves it, unless requests are approved at once.
 - **[download-gateway](https://github.com/laedeli/download-gateway)** — the

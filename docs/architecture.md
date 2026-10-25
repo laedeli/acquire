@@ -187,7 +187,7 @@ flowchart TB
     ACQ --> DB
     ACQ -->|"search · newest releases · fetch release files"| SRC
     ACQ -->|"discover · a request's episodes and release dates, read again"| TM
-    ACQ -->|"air times, by a series' TVDB or IMDb id"| TVM
+    ACQ -->|"how a series airs · air times and runtimes, by its TVDB or IMDb id"| TVM
     ACQ -->|"push clients · add downloads"| GW
     GW --> DC
     GW --> MDC

@@ -108,7 +108,12 @@ it lists, a movie's release dates —, no episode is made, and nothing of it is
 searched, missing or grabbed, from the missing tab neither. The request says
 so. An admin approves or declines it in the requests tab
 (`POST /api/wanted/{id}/approve`, `/decline`); approved, it is followed and
-its episodes are made. A find & grab of a movie request, a release an admin
+its episodes are made. A decision is taken on the request as the admin saw
+it — awaiting, or what the call names (`{"from": "declined"}` approves a
+declined one, `{"from": "approved"}` declines an approved one) —, in one
+write: of two admins approving and declining it at once, one decision is
+taken, and the other answers `409`, saying what the request is now and by
+whom. A find & grab of a movie request, a release an admin
 picks for one or a link handed to it approves it too; a series request is
 grabbed episode by episode, and nothing on its row approves it. An admin's own
 request is approved at once, and an admin asking for a title that awaits
@@ -122,7 +127,10 @@ A title acquire tracks already is not made twice: an approved request follows
 it, and it is monitored while the follow lasts, with its seasons to come. Its
 episodes from before — the import's — stay the old backlog ([what is grabbed
 on its own](#what-is-grabbed-on-its-own)). Asking for a title again answers
-the request there is (`200`, not `201`); a request from before follows existed
+the request there is (`200`, not `201`): one request follows a title, per
+TMDB id and kind of title (a series asked for as `tv` is a series) — two
+people asking at once get the one request, and an admin among them approves
+it —; a request from before follows existed
 (a series request that failed, as they did) follows its title once it is asked
 for again. Removing the last approved request that follows a title — or
 declining it — ends the follow, and the title is as it was before the follow
@@ -522,7 +530,11 @@ one with an episode the last read did not list. Then:
   held at its new number, by the same file, never wanted again; the number it
   left is another episode now, held by nothing. The catalog goes on naming
   the file by its old number (`held_as`), and a reconcile reads that as the
-  episode at its new one. Two episodes TMDB swaps swap their holdings;
+  episode at its new one. Two episodes TMDB swaps swap their holdings. A
+  holding moves only where nothing is lost: not onto a number a grab under
+  way holds, nor onto one that holds another file — then it stays held where
+  it is, saying why, and a later read moves it once it can; the library's
+  file is held at one number, never at none;
 - an episode TMDB no longer lists (in a season read, or of a season it no
   longer lists) is marked gone, and grabbed by nobody; its season is read
   again on the next run, and it is removed once a read a day or more later
@@ -545,8 +557,11 @@ is read on every run. One that has ended is read at most weekly. A requested
 movie that waits for its release is read daily, for the date TMDB names, and
 so is one whose window is 90 days after cinemas, until TMDB dates a release
 to watch at home; one that is out is not read again. The followed titles
-never read come first, then the ones that run, the ones read longest ago
-first. A title TMDB does not know, or answers nothing readable for, is read
+never read come first, then the series with an episode aired in the last 14
+days or airing in the next 7 — what an automatic grab takes soonest, whose
+origin country an episode dated to the day alone is told by —, then the ones
+that run, the ones read longest ago first. A title TMDB does not know, or
+answers nothing readable for, is read
 again a week on — a series, a movie, a request awaiting approval alike — and
 not before.
 
@@ -562,21 +577,49 @@ every 15 minutes.
 ### Exact air times
 
 TMDB dates an episode by its day, not its hour. With `search.airTimes`
-`tvmaze` (the default), acquire reads the moment an episode airs from
-TVmaze's public schedule — no key, no account. It looks a series up once, by
-its TVDB id or, without one, its IMDb id, and keeps TVmaze's id of the show on
-the title; then it reads the show's episodes and keeps the moment each airs
-on its target (`air_stamp`), when TVmaze gives the hour and dates the episode
-within a day of TMDB — numbers the two count differently are not taken for
-the same episode. Only those ids leave acquire: nothing of its users, its
-requests or its library. The air times are read again with the series' read
-of TMDB: on every read of a series that runs, monthly of any other; a show
-TVmaze does not know is looked up again a week on. Calls are spaced under
-TVmaze's limit of 20 every 10 seconds, and a `429` is waited out. TVmaze not
-answering fails nothing — the air times it gave stay, and the refresh asks it
-no more that run. TMDB moving an episode's day by more than one drops its air
-time until TVmaze is read again. With `search.airTimes` `off`, TVmaze is
-never asked and every episode is told by its air date alone.
+`tvmaze` (the default), acquire reads from TVmaze's public schedule — no key,
+no account — how a series airs and when each episode airs. It looks a series
+up once, by its TVDB id or, without one, its IMDb id, and keeps TVmaze's id of
+the show on the title; then it reads the show's record with its episodes in
+one call (`/shows/{id}?embed=episodes`): whether it is **broadcast**, on a
+network, or **streamed**, on a web channel, and that one's country; and, of
+each episode, the moment it airs (`air_stamp`) and how long it runs
+(`air_runtime`) — the episode's runtime, else the show's —, kept on its target
+when TVmaze gives the hour and dates the episode within a day of TMDB:
+numbers the two count differently are not taken for the same episode. A show
+whose name is neither the series' nor one of its aliases — compared as
+release names are, without a qualifier in brackets (`(US)`, `(2005)`) or a
+leading "the" — is another show behind the same id: none of its air times is
+taken, those taken from it before go, the series is told by its air dates,
+the title says why, and it is looked up again a week on. Only those ids leave
+acquire: nothing of its users, its requests or its library.
+
+**When they are read.** A series' air times are read right after a read of
+it at TMDB — at once for a follow —, and every scheduled `inventory-refresh`
+then reads the air times still due of every series an automatic grab may
+take, whether or not TMDB was read for it that run: never read first — of
+them the ones with an episode aired in the last 14 days or airing in the next
+7 —, then the ones that run, again on every run, any other monthly; a show
+TVmaze does not know is looked up again a week on. A run makes at most 2,000
+calls to TVmaze, spaced under its limit of 20 every 10 seconds — the first run
+after air times are on reads every series that runs, about 15 minutes for 800
+of them —, and a `429` is waited out. TVmaze not answering fails nothing: the
+air times it gave stay, and the run asks it no more; a series whose air times
+were never read is tried again every 15 minutes. TMDB moving an episode's day
+by more than one drops its air time until TVmaze is read again. With
+`search.airTimes` `off`, TVmaze is never asked and every episode is told by
+its air date alone.
+
+**Until they are read**, nothing of a series is grabbed on its own — the
+sweep does not search it, no feed is read for it —: the day alone cannot tell
+an evening's fake from the real release. Its request says so, and why TVmaze
+has not given them. Settings → search and grab says how far the air times of
+the series that run are — read, not known to TVmaze (told by their air
+date), not read yet —, and switching grabbing on its own on while one is not
+read yet asks an admin to confirm it (`PUT /api/settings/search` answers
+`409` with `confirm: airTimes` until it is sent again with
+`?confirm=airTimes`). A series whose releases name no season and episode,
+which no automatic grab takes, waits for nothing.
 
 #### A release published too early
 
@@ -584,26 +627,40 @@ A release named for an episode before the episode aired is most often a
 fake. An automatic grab — the sweep's, the sources' newest releases' — takes
 none published before:
 
-- of an episode whose air time is known: 30 minutes before it;
+- of a broadcast whose air time is known: the end of the broadcast — the
+  moment it airs and its runtime, an hour when TVmaze gives none, at most
+  four hours. A fake posted shortly before or during the broadcast is often
+  the only release there is an hour after a one-hour show ended;
+- of a streamed episode whose air time is known: 30 minutes before it
+  streams;
+- of a streamed episode dated to the day alone, of a service of the United
+  States — or, of a service TVmaze names no country for, of a series from
+  there —: 03:00 in New York on its air date, midnight on the Pacific coast,
+  the hour such services put an episode out as a rule. Of a service of any
+  other country, as of any other episode:
 - of any other episode: midnight of its air date where its series comes
   from — the zone of the first country of TMDB's `origin_country` that
   acquire knows (for a country of several zones, its first, where most of its
   broadcasts are scheduled: the United States New York, Canada Toronto,
   Mexico Mexico City, Brazil São Paulo, Australia Sydney, Russia Moscow,
-  Indonesia Jakarta), else UTC. A broadcast in Tokyo at 02:00 on the day TMDB
-  dates is out before that day begins in UTC, and is no fake;
+  Indonesia Jakarta) — before TMDB was read for the series, the country of
+  its network or service at TVmaze —, else UTC; where the clocks jump past
+  midnight, the day begins when they jump. A broadcast in Tokyo at 02:00 on
+  the day TMDB dates is out before that day begins in UTC, and is no fake;
 - of a requested movie out to watch at home: midnight of the day it came
   out, where it came out (TMDB's country of that release).
 
 Of a release of several episodes, the last of them to air tells. Such a
 release is skipped with its reason — `published before the episode aired
-(published 2026-10-24 10:00 UTC; S01E01 aired 2026-10-25 01:00 UTC): most
-likely a fake` —, never blocked: the day it is told by may be a guess. A grab
-now in the missing tab says so instead of "no releases", the feeds note it on
-the episode, and a person may still pick the release in the picker. An
-episode whose air time is known is grabbed `search.airDelayAfterAirstampMinutes`
-(`60`) after it airs, and searched by the sweep from then on; any other
-`search.airDelayHours` (`30`) after 00:00 UTC of its air date.
+(published 2026-10-24 01:20 UTC; S01E01 aired 2026-10-24 01:00 UTC, a
+broadcast until 02:00 UTC): most likely a fake` —, never blocked: the day it
+is told by may be a guess. A grab now in the missing tab says so instead of
+"no releases", the feeds note it on the episode, and a person may still pick
+the release in the picker. A broadcast whose air time is known is grabbed
+`search.airDelayAfterAirstampMinutes` (`60`) after it ended, and searched by
+the sweep from then on; a streamed episode whose air time is known as long
+after it streams; any other `search.airDelayHours` (`30`) after 00:00 UTC of
+its air date.
 
 ### The sources' newest releases
 
@@ -690,10 +747,10 @@ the missing tab or a request's row.
 
 | Setting | Grabs on its own |
 |---|---|
-| `autoGrabNew` (`false`) | the **new things**: an episode that aired in the last `newWithinDays` days (`14`), of any tracked series; and what an approved request asked for — an episode a follow or a read of TMDB added after its series was first requested, so every episode of a series someone requested, and a requested movie once it is out to watch at home |
+| `autoGrabNew` (`false`) | the **new things**: an episode that aired in the last `newWithinDays` days (`14`), of any tracked series; and what an approved request asked for — an episode a follow or a read of TMDB added after its series was first requested: every episode of a series a request made, its back catalogue too, and of a series acquire tracked before, the episodes TMDB lists after it was requested —, and a requested movie once it is out to watch at home |
 | `autoGrab` (`false`) | **everything missing**: the old backlog too — the import's episodes and movies, however long ago they aired |
 | `airTimes` (`tvmaze`) | not a switch of what: where the moment an episode airs comes from — TVmaze's public schedule, or `off`, the air date alone ([exact air times](#exact-air-times)) |
-| `airDelayAfterAirstampMinutes` (`60`, 0 to 1440) | how long an automatic grab waits after the moment an episode airs, when it is known |
+| `airDelayAfterAirstampMinutes` (`60`, 0 to 1440) | how long an automatic grab waits after a broadcast ends, or after an episode streams, when its air time is known |
 | `airDelayHours` (`30`, 0 to 168) | how long an automatic grab waits after an air date — 00:00 UTC of the day TMDB dates — of an episode whose air time is not known, and after the day a requested movie comes out to watch at home. TMDB dates the day, not the hour: the window opens a day before an evening broadcast in the Americas reaches UTC. `0` grabs from the air date on |
 
 `autoGrab` keeps its meaning; with it on, `autoGrabNew` changes nothing. With
@@ -707,6 +764,10 @@ and the downloads at once, and never:
 
 - what is not monitored, or of a title whose holdings are unknown;
 - what a request awaiting an admin's approval asks for ([approval](#approval));
+- anything of a series whose air times TVmaze has not given yet, with exact
+  air times on ([exact air times](#exact-air-times)) — switching either
+  switch on while a series that runs is not read yet asks an admin to
+  confirm it;
 - a requested movie TMDB dates in cinemas only: before a release to watch at
   home, a release is most often a recording made in a cinema — it is
   searched, and an admin grabs it;
@@ -728,7 +789,7 @@ changed — its interval, or switched off — is left as it is.
 | `backlog-sweep` | 30 minutes | searches ten due targets ([the sweep](#the-backlog-sweep)) — the new things first with `autoGrabNew` — and grabs what the policy allows |
 | `retry-failed` | 15 minutes | the same for targets whose searches found nothing or failed, once their backoff ran out |
 | `rss-sync` | 15 minutes | reads every source's newest releases, matches them to what is wanted and grabs what the policy allows ([the newest releases](#the-sources-newest-releases)) — nothing while nothing could be grabbed; in a worker of its own |
-| `inventory-refresh` | 6 hours | reads TMDB for what runs, what ended (weekly) and the requested movies that wait (daily), at most 300 calls a run, a third kept for the series that ended or were never read ([TMDB, read again](#tmdb-read-again)), and the air times of the series it reads at TVmaze ([exact air times](#exact-air-times)); in a worker of its own, which also reads every follow at once, and every 15 minutes a request whose title TMDB could not be read for yet |
+| `inventory-refresh` | 6 hours | reads TMDB for what runs, what ended (weekly) and the requested movies that wait (daily), at most 300 calls a run, a third kept for the series that ended or were never read ([TMDB, read again](#tmdb-read-again)), and then, outside that budget, the air times still due of every series an automatic grab may take at TVmaze, at most 2,000 calls a run ([exact air times](#exact-air-times)); in a worker of its own, which also reads every follow at once, and every 15 minutes a request whose title TMDB could not be read for yet and a series whose air times TVmaze did not give |
 | `holdings-reconcile` | 6 hours | asks the catalog what the library holds ([what the library holds](#what-the-library-holds)); in a worker of its own |
 | `grab-recovery` | 1 hour | makes failed targets wanted again once their wait ran out, and gives up stale grabs ([when a grab fails](#when-a-grab-fails)) |
 | `subtitles-sweep` | 15 minutes | a pass of the [subtitles](#subtitles) worker |
@@ -945,9 +1006,9 @@ dev (every caller is treated as admin).
 | `GET` | `/readyz` | public | DB ping (503 when down) |
 | `GET` | `/api/config` | public | what the console reads: the admin role and the `autoGrab` flag — whether **find & grab** has a source and a client to work with, not the sweep's `search.autoGrab` |
 | `GET` | `/api/events` | any signed-in¹ | live stream: change pings + download telemetry |
-| `GET` | `/api/wanted` | any signed-in | list requests; one that follows its title reads as what acquire does with it now, with `titleId`, `approval` (`awaiting`, `approved`, `declined`), `progress` (a series' episodes held, on the way, missing, not aired yet, the next to air; a movie's target) and `autoGrab` (whether what it waits for is grabbed on its own) |
-| `POST` | `/api/wanted` | **user** or admin | create a request `{tmdbId, mediaType, title, year, posterUrl}`, `201`; a series (`series`, `tv`) or a movie with a `tmdbId` follows its title, approved at once for an admin, or with `requests.autoApprove`, else awaiting approval; asking for one again answers the request there is, `200` (an admin's asking approves one that awaits approval) |
-| `POST` | `/api/wanted/{id}/approve` · `/decline` | **admin** | approve a request that follows its title (what it follows is grabbed on its own as the policy allows; one declined before is followed again), or decline it (its follow ends); `409` for one that follows nothing |
+| `GET` | `/api/wanted` | any signed-in | list requests; one that follows its title reads as what acquire does with it now, with `titleId`, `approval` (`awaiting`, `approved`, `declined`), `progress` (a series' episodes held, on the way, missing, not aired yet, the next to air, when its air times were read; a movie's target), `autoGrab` (whether what it waits for is grabbed on its own) and, of a series, `autoGrabAired` (whether the episodes that aired before it was asked for are too) |
+| `POST` | `/api/wanted` | **user** or admin | create a request `{tmdbId, mediaType, title, year, posterUrl}`, `201`; a series (`series`, `tv`) or a movie with a `tmdbId` follows its title, approved at once for an admin, or with `requests.autoApprove`, else awaiting approval; asking for one again — or at once from elsewhere — answers the request there is, `200` (an admin's asking approves one that awaits approval) |
+| `POST` | `/api/wanted/{id}/approve` · `/decline` | **admin** | approve a request that follows its title (what it follows is grabbed on its own as the policy allows; one declined before is followed again), or decline it (its follow ends), as it was when the admin decided: `{"from": "awaiting"}` — the default —, `declined` or `approved`; `409` for one that follows nothing, and for one decided otherwise meanwhile, saying what it is now |
 | `GET` | `/api/discover?q=` | any signed-in | TMDB search, flags in-library hits |
 | `GET` | `/api/status?tmdbId=` | any signed-in | the newest request for a TMDB id `{status, state, detail, approval, id}`: `status` in the five words of a request before it could follow a title — `pending` (waiting, awaiting approval, following a series with nothing on the way), `downloading` (a series with episodes on the way too), `packaging`, `fulfilled`, `failed` (declined too) — for a client that knows those alone; `state` as it reads now (`following`, `waiting`, `awaiting`, `declined` …). No client of the platform reads it at present |
 | `POST` | `/api/wanted/{id}/grab` | **admin** | hand a magnet/URL to a client (a request that follows its movie: as a grab of the movie's target) |
@@ -996,7 +1057,7 @@ own data, edited by admins only:
 | `PUT` · `DELETE` | `/api/download-clients/{id}` | replace · remove a client (`409` while downloads are in flight, and for a managed client) |
 | `GET` | `/api/download-clients/types` | the client types the gateway runs |
 | `POST` | `/api/download-clients/test` | reach a client through the gateway without saving it |
-| `GET` · `PUT` | `/api/settings/search` | the search and grab policy: `preferProtocol`, `storageFloorGb`, `maxConcurrentGrabs`, `autoGrab` (everything missing is grabbed on its own; `false` by default), `autoGrabNew` (the new things are; `false`), `newWithinDays` (how recently an episode aired to be new; `14`, 1 to 365), `airDelayHours` (how long an automatic grab waits after an air date when the air time is not known; `30`, 0 to 168), `airTimes` (where exact air times come from: `tvmaze`, the default, or `off`) and `airDelayAfterAirstampMinutes` (how long it waits after the moment an episode airs; `60`, 0 to 1440) — see [what is grabbed on its own](#what-is-grabbed-on-its-own). A `PUT` is read over the policy stored: a field it does not name keeps its value |
+| `GET` · `PUT` | `/api/settings/search` | the search and grab policy: `preferProtocol`, `storageFloorGb`, `maxConcurrentGrabs`, `autoGrab` (everything missing is grabbed on its own; `false` by default), `autoGrabNew` (the new things are; `false`), `newWithinDays` (how recently an episode aired to be new; `14`, 1 to 365), `airDelayHours` (how long an automatic grab waits after an air date when the air time is not known; `30`, 0 to 168), `airTimes` (where exact air times come from: `tvmaze`, the default, or `off`) and `airDelayAfterAirstampMinutes` (how long it waits after a broadcast ends or an episode streams; `60`, 0 to 1440) — see [what is grabbed on its own](#what-is-grabbed-on-its-own) —, and, read only, `airTimesStatus` `{on, running, read, unknown, pending, lastError}`: how far TVmaze's air times are of the series that run. A `PUT` is read over the policy stored: a field it does not name keeps its value; one switching `autoGrab` or `autoGrabNew` on while a series that runs is not read yet answers `409` `{message, confirm: "airTimes", airTimesStatus}`, until it is sent again with `?confirm=airTimes` |
 | `GET` · `PUT` | `/api/settings/requests` | how requests are taken: `autoApprove` (a request from someone who is not an admin is approved at once, by `autoApprove`; `false` by default — it awaits an admin's approval, and changes nothing until then) — see [approval](#approval) |
 
 Writes send the revision they were based on in `If-Match` and get `409` when it
@@ -1104,8 +1165,11 @@ Tabs:
   downloads at once, and what is grabbed on its own: **new episodes and
   requests**, with the days that make an episode new and the wait after the
   air date, **everything missing**, **exact air times** — TVmaze's schedule,
-  or off — and the wait after an episode airs — see [what is grabbed on its
-  own](#what-is-grabbed-on-its-own)), requests (whether a request from
+  or off, with how far its air times are of the series that run — and the
+  wait after a broadcast ends or an episode streams — see [what is grabbed on
+  its own](#what-is-grabbed-on-its-own); switching grabbing on its own on
+  while a series that runs has no air times yet asks to confirm it),
+  requests (whether a request from
   someone who is not an admin is approved at once), subtitles (their
   languages and source, the day's downloads, whether they are downloaded on
   their own and whether a machine translation may be taken) and the quality
@@ -1154,7 +1218,8 @@ acquire owns a small Postgres schema (applied on boot, idempotent):
 **`wanted_items`** — `id`, `tmdb_id`, `media_type` (`movie`/`series`), `title`,
 `year`, `poster_url`, `requested_by` (Keycloak sub), `requested_at`, `status`,
 `detail` (last status message), `item_id` (catalog id once created), `updated_at`,
-and `title_id`, the title the request follows (`''` for one that follows none).
+and `title_id`, the title the request follows (`''` for one that follows none) —
+one per TMDB id and kind of title (`wanted_follow_uq`).
 
 **`grabs`** — `wanted_id` (FK, cascade), `adapter` (the client id),
 `client_job_id`, `source` (the link with its credentials removed), plus the
@@ -1204,7 +1269,8 @@ date (`release_pending`) and what its window is (`release_kind`: `digital`,
 `physical`, `tv`, `theatrical`), whether the library held it once
 (`ever_held`), TMDB's id of the episode (`tmdb_episode_id`) and when a read of
 TMDB first did not list it (`tmdb_gone_at`), the moment it airs as the
-schedule source says it (`air_stamp`), where a requested movie's release to
+schedule source says it (`air_stamp`) and how long it runs (`air_runtime`),
+where a requested movie's release to
 watch at home comes out (`release_country`), whether its monitoring is a
 follow's (`follow_monitored`, also of `seasons`), and the number the catalog
 knows a file held at a new number by (`held_as`). A title's `holdings_at` is when
@@ -1219,7 +1285,8 @@ many seasons TMDB lists of it, `inventory_at` and `inventory_error` when TMDB
 was last read for it and why that failed, `inventory_retry_at` when one TMDB
 did not know is read again, and `schedule_id`, `schedule_at` and
 `schedule_error` its show id at the schedule source, when its air times were
-read and why that failed. A request's `approval` (`awaiting`, `approved`, `declined`),
+read and why that failed, `schedule_kind` whether it is broadcast or streamed
+and `schedule_country` the country of its network or service. A request's `approval` (`awaiting`, `approved`, `declined`),
 `decided_by` and `decided_at` are an admin's word on it.
 
 **`target_grabs`** — one row per release handed over for targets: the title,

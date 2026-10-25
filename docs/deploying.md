@@ -435,21 +435,36 @@ schedules are registered: `inventory-refresh` (every six hours) and
   read at all. To have new episodes and what is requested arrive by
   themselves, switch it on in settings → search and grab; the old backlog
   stays with **everything missing** (`search.autoGrab`), which keeps its
-  meaning. Either way an automatic grab now waits an hour after an episode
-  airs, by TVmaze's air times (`search.airDelayAfterAirstampMinutes`, 60), or
-  `search.airDelayHours` (30) after its air date when TVmaze gives none —
-  TMDB dates the day, not the hour —; it takes no release published before
-  the episode aired (skipped, never blocked: a person may still pick it); and
-  it leaves to the missing tab a movie TMDB dates in cinemas only, and a
-  series whose releases name no season and episode acquire can tell: one the
-  import says is anime or daily, one TMDB files as animation from Japan or as
-  a talk or news show.
+  meaning. Either way an automatic grab now waits, by TVmaze's air times, an
+  hour after a broadcast ends — its start and runtime — or after an episode
+  streams (`search.airDelayAfterAirstampMinutes`, 60), or
+  `search.airDelayHours` (30) after its air date when TVmaze gives no hour —
+  TMDB dates the day, not the hour —; it takes no release published before a
+  broadcast ended, more than 30 minutes before an episode streams, or before
+  the episode's day began where the series comes from (03:00 in New York of
+  a series streamed from the United States) — skipped, never blocked: a person
+  may still pick it —; it takes nothing of a series whose air times TVmaze has
+  not given yet; and it leaves to the missing tab a movie TMDB dates in
+  cinemas only, and a series whose releases name no season and episode
+  acquire can tell: one the import says is anime or daily, one TMDB files as
+  animation from Japan or as a talk or news show.
 - **TVmaze.** acquire now asks TVmaze's public schedule (`api.tvmaze.com`,
-  HTTPS, no key) for the moment an episode airs, sending a series' TVDB or
-  IMDb id and nothing else, again with every read of TMDB, at under 20 calls
-  in 10 seconds — the first runs look every series up once, a few minutes for
-  a large library. Without a way out to it, episodes are told by their air
-  date, as with **exact air times** off in settings → search and grab.
+  HTTPS, no key) how a series airs — broadcast or streamed — and when each
+  episode airs and how long it runs, sending a series' TVDB or IMDb id and
+  nothing else, at under 20 calls in 10 seconds. The first `inventory-refresh`
+  runs within a minute of the upgrade: after its reads of TMDB, it
+  looks up the air times of every tracked series that runs, whatever TMDB's
+  budget — two calls each, about 15 minutes for 800 series —, and the ones
+  that ended over the next runs, at most 2,000 calls a run; after that a run
+  reads the series that run again, the others monthly. Until a series' air
+  times are read, nothing of it is grabbed on its own: settings → search and
+  grab says how many series that run are not read yet, and switching
+  **new episodes and requests** or **everything missing** on before then asks
+  you to confirm it. A series TVmaze does not know is told by its air date.
+  Without a way out to TVmaze, switch **exact air times** off in settings →
+  search and grab — then every episode is told by its air date, and nothing
+  waits for TVmaze —; with it on, nothing of a series would be grabbed on its
+  own.
 - **Requests now wait for an admin.** A request someone who is not an admin
   makes awaits an admin's approval (`requests.autoApprove`, off), and changes
   nothing until an admin approves it in the requests tab: a title acquire
@@ -469,9 +484,13 @@ schedules are registered: `inventory-refresh` (every six hours) and
   allowance is tighter: the feeds stop at 70 % of it and leave the rest to
   the sweep and to your searches, and a source at its limit is not asked.
 - **TMDB.** The first runs read every tracked series once — a few thousand
-  calls for a large library, at most 300 a run, so it takes a few days —;
-  after that a run reads only what runs, the ended series weekly. It needs
-  `tmdb.apiKey`.
+  calls for a large library, at most 300 a run, four runs a day, so it takes
+  a few days —, the series with an episode aired in the last 14 days or
+  airing in the next 7 first: until a series is read, its origin country is
+  not known, and an episode dated to the day alone begins at midnight where
+  TVmaze says its network or service is, else at midnight UTC. After that a
+  run reads only what runs, the ended series weekly. It needs `tmdb.apiKey`.
+  TVmaze's air times do not wait for it (above).
 - **Requests from before.** A series or movie request made before 0.6.0
   follows nothing until it is asked for again (discover → request), which
   answers the request there is and makes it follow its title.
