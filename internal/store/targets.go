@@ -91,6 +91,8 @@ type Target struct {
 	WindowAt       *time.Time `json:"windowAt,omitempty"`
 	ReleasePending bool       `json:"releasePending,omitempty"`
 	ReleaseKind    string     `json:"releaseKind,omitempty"`
+	// EverHeld is set once the library has held it.
+	EverHeld bool `json:"everHeld,omitempty"`
 }
 
 // targetCols are the columns scanTarget reads, under the alias a.
@@ -98,7 +100,7 @@ const targetCols = `a.id, a.title_id, a.kind, a.season_number, a.episode_number,
 	a.detail, a.grab_id, a.reserved_by, a.grab_failures, a.retry_at, a.handed_over_at,
 	a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
 	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source,
-	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind`
+	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind, a.ever_held`
 
 func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 	var t Target
@@ -106,7 +108,7 @@ func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 		&t.Detail, &t.GrabID, &t.ReservedBy, &t.GrabFailures, &t.RetryAt, &t.HandedOverAt,
 		&t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
 		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource,
-		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind)
+		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind, &t.EverHeld)
 	return t, err
 }
 
@@ -252,7 +254,7 @@ func (s *Store) HoldTarget(ctx context.Context, h Hold) error {
 		       held_at = CASE WHEN held_item_id = $2 AND held_at IS NOT NULL THEN held_at ELSE now() END,
 		       held_item_id = $2, held_via = $3, held_release = $5, held_source = $6,
 		       held_score_profile = $7, held_quality = $8, held_score = $9, held_scored_at = now(),
-		       state = 'held', detail = $10, grab_requested_at = NULL, grab_claimed_until = NULL,
+		       state = 'held', ever_held = true, detail = $10, grab_requested_at = NULL, grab_claimed_until = NULL,
 		       handed_over_at = CASE WHEN $11 THEN now() ELSE handed_over_at END,
 		       grab_failures = 0, retry_at = NULL, reserved_by = '',
 		       updated_at = now()
@@ -349,7 +351,7 @@ func (s *Store) ApplyHolding(ctx context.Context, targetID, itemID, release, pro
 		       held_score = $5, held_score_profile = $6, held_source = $7,
 		       held_scored_at = now(),
 		       held_at = COALESCE(held_at, now()),
-		       state = 'held',
+		       state = 'held', ever_held = true,
 		       updated_at = now()
 		 WHERE id = $1`,
 		targetID, itemID, release, q, score, profileID, source)
@@ -363,7 +365,7 @@ const releaseHeldSQL = `
 		   SET held_item_id = '', held_via = '', held_playable = false, held_release = '',
 		       held_quality = '{}'::jsonb, held_score = 0, held_score_profile = '', held_source = '',
 		       held_scored_at = NULL, held_at = NULL,
-		       state = 'wanted',
+		       state = 'wanted', ever_held = true,
 		       detail = CASE WHEN a.monitored AND t.monitored THEN 'no longer in the library; wanted again'
 		                     ELSE 'no longer in the library; not monitored, so not hunted' END,
 		       updated_at = now()`
@@ -445,22 +447,42 @@ func sweepableSQL(delay string) string {
 	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + autoOpenSQL(delay)
 }
 
+// recentSQL is the condition "this target aired in the last days days" (the
+// parameter named): an episode by its air date, a requested movie by the day
+// it came out — never one the library held once.
+func recentSQL(days string) string {
+	return `COALESCE(NOT a.ever_held AND a.air_date >= (now() AT TIME ZONE 'UTC')::date - ` + days + `::int, false)`
+}
+
+// requestedSQL is the condition "a request asked for this target": a
+// requested movie, or an episode a follow or a read of TMDB added after its
+// title was first followed — never one the library held once.
+const requestedSQL = `COALESCE(NOT a.ever_held AND ` + followedSQL + ` AND (a.kind = 'movie' OR a.added_at >= t.followed_at), false)`
+
 // newSQL is the condition "this target is one of the new things": an episode
-// aired in the last $days days (the parameter named), an episode a follow or
-// a read of TMDB added after its title was followed, or a requested movie.
-// search.autoGrabNew lets an automatic grab take these, and the sweep looks
-// at them first; the old backlog is the rest.
+// aired in the last days days (the parameter named), or what a request asked
+// for (requestedSQL) — never one the library held once: a deletion, or a
+// reconcile that missed it, does not make it new again. search.autoGrabNew
+// lets an automatic grab take these, and the sweep looks at them first —
+// what aired recently, then what was requested; the old backlog is the rest.
 func newSQL(days string) string {
-	return `COALESCE((a.kind = 'episode' AND a.air_date >= (now() AT TIME ZONE 'UTC')::date - ` + days + `::int)
-	         OR (` + followedSQL + ` AND (a.kind = 'movie' OR a.added_at >= t.followed_at)), false)`
+	return `((a.kind = 'episode' AND ` + recentSQL(days) + `) OR ` + requestedSQL + `)`
 }
 
 // DueOrder is how the sweep picks the targets it searches: with
-// NewWithinDays, the new things first (newSQL); none before AirDelay has
+// NewWithinDays, the new things first — what aired in the last NewWithinDays
+// days, then what a request asked for (newSQL) —; none before AirDelay has
 // passed since its air date (autoOpenSQL).
 type DueOrder struct {
 	NewWithinDays int
 	AirDelay      time.Duration
+}
+
+// newFirstSQL orders the new things first: what aired in the last days days
+// (the parameter named), then what a request asked for — yesterday's episode
+// before a requested series' back catalogue.
+func newFirstSQL(days string) string {
+	return recentSQL(days) + ` DESC, ` + requestedSQL + ` DESC, `
 }
 
 // DueTargets returns the targets the backlog sweep searches next: wanted,
@@ -484,7 +506,7 @@ func (s *Store) DueTargetsBy(ctx context.Context, limit int, o DueOrder) ([]Targ
 	order := `a.last_search_at NULLS FIRST, a.air_window_opens_at NULLS FIRST, a.id`
 	args := []any{limit, o.AirDelay.Seconds()}
 	if o.NewWithinDays > 0 {
-		order = newSQL("$3") + ` DESC, ` + order
+		order = newFirstSQL("$3") + order
 		args = append(args, o.NewWithinDays)
 	}
 	rows, err := s.pool.Query(ctx, `
@@ -661,7 +683,7 @@ func holdSet(profileParam string) string {
 			       held_at = CASE WHEN ` + same + ` AND a.held_at IS NOT NULL THEN a.held_at ELSE now() END,
 			       held_item_id = h.item, held_via = h.via, held_playable = h.playable,
 			       detail = CASE WHEN a.state = 'held' THEN a.detail ELSE 'in the library' END,
-			       state = 'held', grab_requested_at = NULL, grab_claimed_until = NULL,
+			       state = 'held', ever_held = true, grab_requested_at = NULL, grab_claimed_until = NULL,
 			       grab_failures = 0, retry_at = NULL, reserved_by = '',
 			       updated_at = now()`
 }

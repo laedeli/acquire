@@ -309,7 +309,7 @@ func (s *Store) RetryableTargetsBy(ctx context.Context, limit int, o DueOrder) (
 	order := `a.search_backoff_until`
 	args := []any{limit, o.AirDelay.Seconds()}
 	if o.NewWithinDays > 0 {
-		order = newSQL("$3") + ` DESC, ` + order
+		order = newFirstSQL("$3") + order
 		args = append(args, o.NewWithinDays)
 	}
 	rows, err := s.pool.Query(ctx, `

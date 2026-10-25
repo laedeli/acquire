@@ -563,6 +563,33 @@ func TestNewThingsFirst(t *testing.T) {
 	if eps, _, _ := s.WantedForFeeds(ctx, FeedsWant{NewWithinDays: 1}); eps != 1 {
 		t.Errorf("new within a day: %d, want only the followed one", eps)
 	}
+
+	// What aired recently comes before what a request asked for, even
+	// never searched: yesterday's episode before a requested back catalogue.
+	_ = s.RecordSearch(ctx, fresh, SearchRecord{Outcome: SearchNone, Base: time.Millisecond, Max: time.Millisecond})
+	_, _ = s.pool.Exec(ctx, `UPDATE acquisition_targets SET last_search_at = NULL WHERE id = $1`, f.ID+":s01e001")
+	time.Sleep(10 * time.Millisecond)
+	if got := ids(func() []Target { d, _ := s.DueTargetsBy(ctx, 3, DueOrder{NewWithinDays: 14}); return d }()); len(got) != 3 ||
+		got[0] != fresh || got[1] != f.ID+":s01e001" || got[2] != old {
+		t.Errorf("new first = %v, want what aired recently, then what was requested, then the old backlog", got)
+	}
+
+	// Held once, and lost: not new any more.
+	if _, err := s.ApplySeriesHoldings(ctx, "series:1", "", "default", []HeldEpisode{{Season: 1, Episode: 2, ItemID: "item-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE acquisition_targets SET handed_over_at = NULL WHERE id = $1`, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySeriesHoldings(ctx, "series:1", "", "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	if x, _ := s.GetTarget(ctx, fresh); x.State != TargetWanted || !x.EverHeld {
+		t.Fatalf("held, then lost: %+v", x)
+	}
+	if eps, _, _ := s.WantedForFeeds(ctx, FeedsWant{NewWithinDays: 14}); eps != 1 {
+		t.Errorf("new wants once the recent one was held and lost: %d, want the followed one", eps)
+	}
 }
 
 // An automatic grab waits the air delay after an air date — 00:00 UTC of the

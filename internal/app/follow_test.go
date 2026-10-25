@@ -665,6 +665,9 @@ func TestWhatIsNew(t *testing.T) {
 		{"a refresh added it, nobody follows", tracked, ep(day(-400), &after), false},
 		{"a requested movie", store.Title{Kind: "movie", FollowedAt: &followed}, store.Target{Kind: "movie"}, true},
 		{"the import's movie", store.Title{Kind: "movie"}, store.Target{Kind: "movie", AddedAt: &after}, false},
+		{"a requested movie the library held once", store.Title{Kind: "movie", FollowedAt: &followed}, store.Target{Kind: "movie", EverHeld: true}, false},
+		{"aired yesterday, held once", tracked, store.Target{Kind: "episode", AirDate: day(-1), EverHeld: true}, false},
+		{"a follow added it, held once", requested, store.Target{Kind: "episode", AirDate: day(-400), AddedAt: &after, EverHeld: true}, false},
 	} {
 		if got := isNew(tc.title, tc.t, 14, now); got != tc.want {
 			t.Errorf("%s: isNew = %v", tc.name, got)

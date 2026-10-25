@@ -439,6 +439,36 @@ func TestARunOfEpisodesIsGrabbedOnlyAsThePolicyTakesEach(t *testing.T) {
 	}
 }
 
+// An episode the library held once and lost — deleted, or missed by a
+// reconcile — is not one of the new things any more: with only those grabbed
+// on their own, the feeds do not grab it again; with everything, they do.
+func TestWhatWasHeldOnceIsNotNewAgain(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	title, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
+	if _, err := r.svc.st.ApplySeriesHoldings(ctx, title.ID, "", "default", []store.HeldEpisode{{Season: 1, Episode: 1, ItemID: "item-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.st.ApplySeriesHoldings(ctx, title.ID, "", "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	feedSrc := newFeedSource(t, true, tv("Show.Name.S01E01.1080p.WEB.h264-GRP", ago(time.Hour)))
+	addFeed(t, r.svc, "feed", feedSrc)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Feeds != 0 || len(r.gw.added()) != 0 {
+		t.Errorf("with only the new things: %+v", run)
+	}
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Grabbed != 1 {
+		t.Errorf("with everything: %+v", run)
+	}
+}
+
 // A requested movie is matched only by a release the feed files as a movie
 // that names its title, its year and then tags only: no trailer, no
 // making-of, no longer title that starts with its name, nothing a TV category

@@ -47,7 +47,11 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin_country  text[] NOT NULL DEFA
 -- (air_window_opens_at) is: digital, physical or tv, its first release to
 -- watch at home; theatrical when TMDB dates none of those and the window is
 -- set from its theatrical release.
+-- ever_held is set once the library has held the target: what it held once
+-- is not one of the new things any more, so a deletion, or a reconcile that
+-- missed it, does not have it grabbed again on its own.
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS added_at        timestamptz;
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS ever_held       boolean NOT NULL DEFAULT false;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS episode_title   text NOT NULL DEFAULT '';
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_pending boolean NOT NULL DEFAULT false;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_kind    text NOT NULL DEFAULT '';

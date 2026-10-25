@@ -94,8 +94,13 @@ func (p SearchSettings) newWithin() int {
 // isNew reports whether a target is one of the new things: an episode aired
 // in the last days days (by its air date, as TMDB dates it), an episode a
 // follow or a read of TMDB added after its series was first requested, or a
-// requested movie. Everything else is the old backlog.
+// requested movie — never one the library held once: a deletion, or a
+// reconcile that missed it, does not have it grabbed again on its own.
+// Everything else is the old backlog.
 func isNew(title store.Title, t store.Target, days int, now time.Time) bool {
+	if t.EverHeld {
+		return false
+	}
 	if t.Kind == "movie" {
 		return title.Followed()
 	}
