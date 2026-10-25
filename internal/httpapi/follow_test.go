@@ -73,14 +73,14 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	s, _ := testServer(t)
 	h := s.Handler()
 	w, created := call(t, h, http.MethodPost, "/api/wanted",
-		`{"tmdbId":9001,"mediaType":"series","title":"Example Saga","year":2026,"status":"fulfilled"}`)
-	if w.Code != http.StatusCreated || created["titleId"] != "series:9001" || created["status"] != "following" {
+		`{"tmdbId":990001,"mediaType":"series","title":"Example Saga","year":2026,"status":"fulfilled"}`)
+	if w.Code != http.StatusCreated || created["titleId"] != "series:990001" || created["status"] != "following" {
 		t.Fatalf("POST /api/wanted -> %d %s", w.Code, w.Body.String())
 	}
 	if p, _ := created["progress"].(map[string]any); p == nil || p["kind"] != "series" || created["autoGrab"] != false {
 		t.Errorf("the created request's progress: %s", w.Body.String())
 	}
-	if w, again := call(t, h, http.MethodPost, "/api/wanted", `{"tmdbId":9001,"mediaType":"tv","title":"Example Saga"}`); w.Code != http.StatusOK || again["id"] != created["id"] {
+	if w, again := call(t, h, http.MethodPost, "/api/wanted", `{"tmdbId":990001,"mediaType":"tv","title":"Example Saga"}`); w.Code != http.StatusOK || again["id"] != created["id"] {
 		t.Errorf("asked again: %d %s, want 200 and the request there is", w.Code, w.Body.String())
 	}
 	w = httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list) != 1 || list[0]["detail"] != "reading its episodes from TMDB" {
 		t.Errorf("GET /api/wanted -> %s", w.Body.String())
 	}
-	if w, st := call(t, h, http.MethodGet, "/api/status?tmdbId=9001", ""); w.Code != 200 || st["status"] != "following" {
+	if w, st := call(t, h, http.MethodGet, "/api/status?tmdbId=990001", ""); w.Code != 200 || st["status"] != "following" {
 		t.Errorf("GET /api/status -> %s", w.Body.String())
 	}
 
@@ -139,7 +139,7 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	if w, _ := call(t, h, http.MethodDelete, "/api/wanted/"+created["id"].(string), ""); w.Code != http.StatusNotFound {
 		t.Errorf("DELETE again -> %d", w.Code)
 	}
-	if ti, err := s.st.TitleByID(context.Background(), "series:9001"); err != nil || ti.Monitored || ti.Followed() {
+	if ti, err := s.st.TitleByID(context.Background(), "series:990001"); err != nil || ti.Monitored || ti.Followed() {
 		t.Errorf("the title after its request: %+v %v", ti, err)
 	}
 }
@@ -164,7 +164,7 @@ func TestRequestsAwaitAnAdminsApproval(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec, out
 	}
-	w, created := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":9001,"mediaType":"series","title":"Example Saga"}`)
+	w, created := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":990001,"mediaType":"series","title":"Example Saga"}`)
 	if w.Code != http.StatusCreated || created["approval"] != "awaiting" || created["status"] != "awaiting" || created["requestedBy"] != "user-1" {
 		t.Fatalf("a user's request -> %d %s", w.Code, w.Body.String())
 	}
@@ -192,7 +192,7 @@ func TestRequestsAwaitAnAdminsApproval(t *testing.T) {
 	if w, doc := call(t, h, http.MethodPut, "/api/settings/requests", `{"autoApprove":true}`); w.Code != 200 || doc["autoApprove"] != true {
 		t.Errorf("PUT /api/settings/requests -> %d %s", w.Code, w.Body.String())
 	}
-	if _, auto := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":9002,"mediaType":"movie","title":"Example Film"}`); auto["approval"] != "approved" {
+	if _, auto := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":990002,"mediaType":"movie","title":"Example Film"}`); auto["approval"] != "approved" {
 		t.Errorf("a user's request with autoApprove -> %v", auto)
 	}
 }

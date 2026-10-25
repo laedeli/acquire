@@ -133,7 +133,7 @@ func (f *fakeTMDB) client(t *testing.T) *tmdb.Client {
 // and airs in weekly batches — three, three, three, then four next week —,
 // returning. The name is invented.
 func sevenHarbours() *tmdbSeries {
-	s := &tmdbSeries{name: "Example Saga: Seven Harbours", status: "Returning Series", tvdb: 424242, firstAir: day(-16), countries: []string{"US"},
+	s := &tmdbSeries{name: "Example Saga: Seven Harbours", status: "Returning Series", tvdb: 9904242, firstAir: day(-16), countries: []string{"US"},
 		aliases: []string{"Seven Harbours", "Example Saga: Seven Harbours"}, seasons: map[int][]tmdbEpisode{0: {{title: "Special", air: day(-30)}}}}
 	for i, d := range []int{-16, -16, -16, -9, -9, -9, -2, -2, -2, 5, 5, 5, 5} {
 		s.seasons[1] = append(s.seasons[1], tmdbEpisode{title: fmt.Sprintf("Harbour %d", i+1), air: day(d)})
@@ -229,14 +229,14 @@ func (r *followRig) view(t *testing.T, id string) RequestView {
 func TestARequestFollowsTheSeries(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990001] = sevenHarbours() })
 
-	w, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "tv", Title: "Example Saga: Seven Harbours", Year: 2026,
+	w, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "tv", Title: "Example Saga: Seven Harbours", Year: 2026,
 		Status: "fulfilled", TitleID: "series:1"}, asAdmin("user-1"))
 	if err != nil || !created {
 		t.Fatal(err)
 	}
-	if w.TitleID != "series:9001" || w.MediaType != "series" || w.Status != "following" || w.RequestedBy != "user-1" {
+	if w.TitleID != "series:990001" || w.MediaType != "series" || w.Status != "following" || w.RequestedBy != "user-1" {
 		t.Fatalf("the request: %+v", w)
 	}
 	if v := r.view(t, w.ID); v.Status != "following" || v.Detail != "reading its episodes from TMDB" {
@@ -247,8 +247,8 @@ func TestARequestFollowsTheSeries(t *testing.T) {
 	if run.Followed != 1 || run.Added != 13 || run.AddedAired != 9 || run.Calls != 2 {
 		t.Errorf("the follow's read: %+v", run)
 	}
-	title, err := r.svc.st.TitleByID(ctx, "series:9001")
-	if err != nil || title.TVDBID != 424242 || !title.Followed() || title.Origin != store.OriginRequest || title.TMDBStatus != "Returning Series" ||
+	title, err := r.svc.st.TitleByID(ctx, "series:990001")
+	if err != nil || title.TVDBID != 9904242 || !title.Followed() || title.Origin != store.OriginRequest || title.TMDBStatus != "Returning Series" ||
 		title.Year != 2026 || !title.HoldingsKnown() || strings.Join(title.Countries, ",") != "US" {
 		t.Fatalf("the title: %+v %v", title, err)
 	}
@@ -274,7 +274,7 @@ func TestARequestFollowsTheSeries(t *testing.T) {
 		t.Errorf("missing = %d, want the 9 aired", len(miss))
 	}
 
-	again, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Seven Harbours"}, asAdmin("user-2"))
+	again, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Seven Harbours"}, asAdmin("user-2"))
 	if err != nil || again.ID != w.ID {
 		t.Errorf("asked again: %+v %v", again, err)
 	}
@@ -292,13 +292,13 @@ func TestARequestFollowsTheSeries(t *testing.T) {
 func TestARequestFromBeforeFollowsOnceAskedAgain(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	if err := r.svc.st.CreateWanted(ctx, store.Wanted{ID: "w_old", TMDBID: 9001, MediaType: "series", Title: "Example Saga"}); err != nil {
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990001] = sevenHarbours() })
+	if err := r.svc.st.CreateWanted(ctx, store.Wanted{ID: "w_old", TMDBID: 990001, MediaType: "series", Title: "Example Saga"}); err != nil {
 		t.Fatal(err)
 	}
 	_ = r.svc.st.SetStatus(ctx, "w_old", "failed", "a series request cannot be handed over")
-	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
-	if err != nil || w.ID != "w_old" || w.TitleID != "series:9001" || w.Status != "following" {
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
+	if err != nil || w.ID != "w_old" || w.TitleID != "series:990001" || w.Status != "following" {
 		t.Fatalf("asked again: %+v %v", w, err)
 	}
 }
@@ -308,19 +308,19 @@ func TestARequestFromBeforeFollowsOnceAskedAgain(t *testing.T) {
 func TestARequestForATrackedSeriesFollowsIt(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	title, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	title, eps := track(t, r.svc, 990711, "Show Name", 2, true)
 	sqlExec(t, `UPDATE titles SET monitored = false WHERE id = $1`, title.ID)
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.series[4711] = &tmdbSeries{name: "Show Name", status: "Returning Series", tvdb: 362753,
+		f.series[990711] = &tmdbSeries{name: "Show Name", status: "Returning Series", tvdb: 9903627,
 			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-2)}, {title: "Two", air: day(-2)}, {title: "Three", air: day(-1)}}}}
 	})
-	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 4711, MediaType: "series", Title: "Show Name"}, asAdmin("user"))
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990711, MediaType: "series", Title: "Show Name"}, asAdmin("user"))
 	if err != nil || w.TitleID != title.ID {
 		t.Fatalf("request: %+v %v", w, err)
 	}
 	r.settle(t, false)
 	got, _ := r.svc.st.TitleByID(ctx, title.ID)
-	if !got.Monitored || !got.Followed() || got.Origin != "" || got.TVDBID != 362753 {
+	if !got.Monitored || !got.Followed() || got.Origin != "" || got.TVDBID != 9903627 {
 		t.Errorf("the tracked title: %+v", got)
 	}
 	targets, _ := r.svc.st.TitleTargets(ctx, title.ID)
@@ -346,20 +346,20 @@ func TestARequestForATrackedSeriesFollowsIt(t *testing.T) {
 func TestARequestAgainKeepsTheFirstFollow(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990001] = sevenHarbours() })
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	r.settle(t, false)
 	if err := r.svc.RemoveRequest(ctx, w.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := r.svc.st.TitleByID(ctx, "series:9001"); got.Monitored || got.Followed() {
+	if got, _ := r.svc.st.TitleByID(ctx, "series:990001"); got.Monitored || got.Followed() {
 		t.Fatalf("after its request was removed: %+v", got)
 	}
-	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user")); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, asAdmin("user")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
-	title, _ := r.svc.st.TitleByID(ctx, "series:9001")
+	title, _ := r.svc.st.TitleByID(ctx, "series:990001")
 	targets, _ := r.svc.st.TitleTargets(ctx, title.ID)
 	pol := SearchSettings{AutoGrabNew: true, NewWithinDays: 1}
 	n := 0
@@ -377,13 +377,13 @@ func TestARequestAgainKeepsTheFirstFollow(t *testing.T) {
 func TestRemovingTheLastRequestEndsTheFollow(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990001] = sevenHarbours() })
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	r.settle(t, false)
 	if err := r.svc.RemoveRequest(ctx, w.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := r.svc.st.TitleByID(ctx, "series:9001"); got.Monitored || got.Followed() {
+	if got, _ := r.svc.st.TitleByID(ctx, "series:990001"); got.Monitored || got.Followed() {
 		t.Errorf("the title after its last request: %+v", got)
 	}
 	if miss, _ := r.svc.st.Missing(ctx, 50); len(miss) != 0 {
@@ -404,18 +404,18 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.series[9001] = sevenHarbours()
-		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+		f.series[990001] = sevenHarbours()
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
 			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
 	})
 	user := Requester{Sub: "user"}
-	w, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, user)
-	if err != nil || !created || w.Approval != store.ApprovalAwaiting || w.TitleID != "series:9001" {
+	w, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, user)
+	if err != nil || !created || w.Approval != store.ApprovalAwaiting || w.TitleID != "series:990001" {
 		t.Fatalf("a user's request: %+v %v", w, err)
 	}
 	r.settle(t, false)
-	if targets, _ := r.svc.st.TitleTargets(ctx, "series:9001"); len(targets) != 13 {
+	if targets, _ := r.svc.st.TitleTargets(ctx, "series:990001"); len(targets) != 13 {
 		t.Errorf("its episodes, read from TMDB meanwhile: %d", len(targets))
 	}
 	v := r.view(t, w.ID)
@@ -436,7 +436,7 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	}
 
 	// Asked again by the user: the same request, still awaiting.
-	if again, created, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "x"}, user); again.ID != w.ID || created ||
+	if again, created, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "x"}, user); again.ID != w.ID || created ||
 		again.Approval != store.ApprovalAwaiting {
 		t.Errorf("asked again by the user: %+v", again)
 	}
@@ -452,7 +452,7 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	}
 
 	// Declined: it stays, saying so, and its movie is not followed.
-	m, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, user)
+	m, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, user)
 	r.settle(t, false)
 	if _, err := r.svc.DeclineRequest(ctx, m.ID, "admin"); err != nil {
 		t.Fatal(err)
@@ -460,15 +460,15 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	if v := r.view(t, m.ID); v.Status != "declined" || v.Detail != "an admin declined it: acquire does not follow it for this request" {
 		t.Errorf("declined: %s %q", v.Status, v.Detail)
 	}
-	if title, _ := r.svc.st.TitleByID(ctx, "movie:9100"); title.Followed() || title.Monitored {
+	if title, _ := r.svc.st.TitleByID(ctx, "movie:990100"); title.Followed() || title.Monitored {
 		t.Errorf("the declined request's movie: %+v", title)
 	}
 	// An admin asking for it approves it, and it is followed again.
-	if again, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film"}, asAdmin("admin")); err != nil ||
+	if again, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film"}, asAdmin("admin")); err != nil ||
 		created || again.ID != m.ID || again.Approval != store.ApprovalApproved {
 		t.Errorf("an admin asking for it: %+v %v", again, err)
 	}
-	if title, _ := r.svc.st.TitleByID(ctx, "movie:9100"); !title.Followed() || !title.Monitored || !title.Approved {
+	if title, _ := r.svc.st.TitleByID(ctx, "movie:990100"); !title.Followed() || !title.Monitored || !title.Approved {
 		t.Errorf("approved by an admin's asking: %+v", title)
 	}
 	if _, err := r.svc.ApproveRequest(ctx, "w_none", "admin"); !errors.Is(err, store.ErrNotFound) {
@@ -483,9 +483,9 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 		t.Errorf("the request settings: %+v", got)
 	}
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.series[9002] = &tmdbSeries{name: "Another Saga", status: "Ended", seasons: map[int][]tmdbEpisode{}}
+		f.series[990002] = &tmdbSeries{name: "Another Saga", status: "Ended", seasons: map[int][]tmdbEpisode{}}
 	})
-	if auto, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9002, MediaType: "series", Title: "Another Saga"}, user); auto.Approval != store.ApprovalApproved {
+	if auto, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990002, MediaType: "series", Title: "Another Saga"}, user); auto.Approval != store.ApprovalApproved {
 		t.Errorf("with autoApprove: %+v", auto)
 	}
 	// A request that follows nothing has nothing to approve.
@@ -504,8 +504,8 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 func TestTheRefreshAddsWhatTMDBAnnounces(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990001] = sevenHarbours() })
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	r.settle(t, false)
 	if run := r.settle(t, true); run.Titles != 0 {
 		t.Errorf("read again right away: %+v", run)
@@ -514,12 +514,12 @@ func TestTheRefreshAddsWhatTMDBAnnounces(t *testing.T) {
 	// A week on: TMDB moves E10 a day later, drops E13 and announces a
 	// second season of two.
 	r.tmdb.set(func(f *fakeTMDB) {
-		s := f.series[9001]
+		s := f.series[990001]
 		s.seasons[1][9].air = day(6)
 		s.seasons[1] = s.seasons[1][:12]
 		s.seasons[2] = []tmdbEpisode{{title: "Return", air: day(40)}, {title: "", air: nil}}
 	})
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:9001'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:990001'`)
 	before := len(r.tmdb.called())
 	run := r.settle(t, true)
 	if run.Titles != 1 || run.Added != 2 || run.Gone != 1 || run.Removed != 0 || run.Updated != 1 {
@@ -530,20 +530,20 @@ func TestTheRefreshAddsWhatTMDBAnnounces(t *testing.T) {
 		t.Errorf("calls = %v", calls)
 	}
 	// E13 goes once a read a day or more later agrees.
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:9001'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:990001'`)
 	sqlExec(t, `UPDATE acquisition_targets SET tmdb_gone_at = now() - interval '25 hours' WHERE tmdb_gone_at IS NOT NULL`)
 	if run := r.settle(t, true); run.Removed != 1 {
 		t.Errorf("a day later: %+v", run)
 	}
-	targets, _ := r.svc.st.TitleTargets(ctx, "series:9001")
+	targets, _ := r.svc.st.TitleTargets(ctx, "series:990001")
 	if len(targets) != 14 {
 		t.Fatalf("targets = %d, want 12 of season 1 and 2 of season 2", len(targets))
 	}
-	ten, _ := r.svc.st.GetTarget(ctx, "series:9001:s01e010")
+	ten, _ := r.svc.st.GetTarget(ctx, "series:990001:s01e010")
 	if !ten.AirDate.Equal(*day(6)) {
 		t.Errorf("E10's air date = %v", ten.AirDate)
 	}
-	two, _ := r.svc.st.GetTarget(ctx, "series:9001:s02e001")
+	two, _ := r.svc.st.GetTarget(ctx, "series:990001:s02e001")
 	if !two.Monitored || two.AddedAt == nil {
 		t.Errorf("the new season of a followed series: %+v", two)
 	}
@@ -627,10 +627,10 @@ func TestTMDBNotAnswering(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.series[9001] = sevenHarbours()
+		f.series[990001] = sevenHarbours()
 		f.down = true
 	})
-	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
+	w, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, asAdmin("user"))
 	run := r.settle(t, false)
 	if run.Error == "" || run.Titles != 0 {
 		t.Errorf("a run against TMDB down: %+v", run)
@@ -690,13 +690,13 @@ func TestARequestedMovie(t *testing.T) {
 	ctx := context.Background()
 	theatrical := day(-44)
 	movie := map[string]any{
-		"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(theatrical), "imdb_id": "tt0009100",
+		"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(theatrical), "imdb_id": "tt99009100",
 		"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 			"release_dates": []map[string]any{{"type": 3, "release_date": theatrical.Format(time.RFC3339)}}}}},
 	}
-	r.tmdb.set(func(f *fakeTMDB) { f.movies[9100] = movie })
-	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend"))
-	if err != nil || w.TitleID != "movie:9100" || w.Status != "pending" {
+	r.tmdb.set(func(f *fakeTMDB) { f.movies[990100] = movie })
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend"))
+	if err != nil || w.TitleID != "movie:990100" || w.Status != "pending" {
 		t.Fatalf("the request: %+v %v", w, err)
 	}
 	r.settle(t, false)
@@ -712,12 +712,12 @@ func TestARequestedMovie(t *testing.T) {
 
 	// TMDB dates its digital release, yesterday.
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.movies[9100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+		f.movies[990100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 			"release_dates": []map[string]any{
 				{"type": 3, "release_date": theatrical.Format(time.RFC3339)},
 				{"type": 4, "release_date": day(-1).Format(time.RFC3339)}}}}}
 	})
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:990100'`)
 	r.settle(t, true)
 	if v := r.view(t, w.ID); v.Status != "pending" || v.Detail != "out digitally since "+dateOf(day(-1))+"; not searched yet" {
 		t.Errorf("once out: %s %q", v.Status, v.Detail)
@@ -734,7 +734,7 @@ func TestARequestedMovie(t *testing.T) {
 	if err := r.svc.AutoGrab(ctx, w.ID); err != nil {
 		t.Fatal(err)
 	}
-	tg, _ := r.svc.st.TargetAt(ctx, "movie:9100", nil, nil)
+	tg, _ := r.svc.st.TargetAt(ctx, "movie:990100", nil, nil)
 	if tg.State != store.TargetGrabbed || !store.IsTargetGrab(tg.GrabID) {
 		t.Fatalf("find & grab grabbed the target: %+v", tg)
 	}
@@ -762,31 +762,31 @@ func TestAMovieInCinemasIsReadUntilItIsOutAtHome(t *testing.T) {
 	festival, cinema := day(-200), day(-100)
 	dates := []map[string]any{{"type": 1, "release_date": festival.Format(time.RFC3339)}, {"type": 3, "release_date": cinema.Format(time.RFC3339)}}
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(festival),
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(festival),
 			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US", "release_dates": dates}}}}
 	})
-	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
-	tg, _ := r.svc.st.TargetAt(ctx, "movie:9100", nil, nil)
+	tg, _ := r.svc.st.TargetAt(ctx, "movie:990100", nil, nil)
 	if tg.ReleaseKind != "theatrical" || tg.WindowAt == nil || !tg.WindowAt.Equal(cinema.Add(theatricalWait)) || !tg.AirDate.Equal(*cinema) {
 		t.Fatalf("the window: %+v", tg)
 	}
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:990100'`)
 	if run := r.settle(t, true); run.Titles != 1 {
 		t.Errorf("a movie whose window is a guess, read a day ago: %+v", run)
 	}
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.movies[9100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+		f.movies[990100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 			"release_dates": append(dates, map[string]any{"type": 4, "release_date": day(-3).Format(time.RFC3339)})}}}
 	})
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:990100'`)
 	r.settle(t, true)
-	if tg, _ := r.svc.st.TargetAt(ctx, "movie:9100", nil, nil); tg.ReleaseKind != "digital" || !tg.WindowAt.Equal(*day(-3)) {
+	if tg, _ := r.svc.st.TargetAt(ctx, "movie:990100", nil, nil); tg.ReleaseKind != "digital" || !tg.WindowAt.Equal(*day(-3)) {
 		t.Errorf("once out at home: %+v", tg)
 	}
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:990100'`)
 	if run := r.settle(t, true); run.Titles != 0 {
 		t.Errorf("a movie out at home read again: %+v", run)
 	}
@@ -846,9 +846,15 @@ func TestWhatIsNew(t *testing.T) {
 		if tc.pol.Grabs(tracked, old, now) != tc.old || tc.pol.Grabs(tracked, fresh, now) != tc.fresh || tc.pol.GrabsAnything() != tc.grabsAnyThng {
 			t.Errorf("%s: old %v fresh %v anything %v", tc.name, tc.pol.Grabs(tracked, old, now), tc.pol.Grabs(tracked, fresh, now), tc.pol.GrabsAnything())
 		}
-		// A title held for an admin's approval: nothing on its own.
+		// A title held for an admin's approval, a series the import says is
+		// anime or daily: nothing on its own.
 		if tc.pol.Grabs(store.Title{Kind: "series", FollowedAt: &followed, Origin: store.OriginRequest}, fresh, now) {
 			t.Errorf("%s: a title held for approval is grabbed on its own", tc.name)
+		}
+		for _, kind := range []string{"anime", "daily"} {
+			if tc.pol.Grabs(store.Title{Kind: "series", SeriesType: kind}, fresh, now) {
+				t.Errorf("%s: a series of type %s is grabbed on its own", tc.name, kind)
+			}
 		}
 	}
 }
@@ -946,7 +952,7 @@ func TestRequestState(t *testing.T) {
 func TestTheSweepGrabsOnlyTheNewThings(t *testing.T) {
 	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB-DL.x265-G", "Show.Name.S01E02.1080p.WEB-DL.x265-G")
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 2, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-300), 0)
 	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, AutoGrabNew: true}, 0, "test"); err != nil {
 		t.Fatal(err)
@@ -992,7 +998,7 @@ func TestTheSweepTakesNothingFromBeforeTheAirDate(t *testing.T) {
 	fake, real := "Show.Name.S01E01.2160p.WEB-DL.DDP5.1.x265-FAKE", "Show.Name.S01E01.720p.WEB.h264-GRP"
 	r := newTargetRig(t, fake, real)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 2, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-2), 0)
 	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(0), 0)
 	r.src.mu.Lock()
@@ -1023,11 +1029,11 @@ func TestTheSweepTakesNothingFromBeforeTheAirDate(t *testing.T) {
 	// A requested movie, out at home two days ago: a release from before.
 	m := newFollowRig(t)
 	m.tmdb.set(func(f *fakeTMDB) {
-		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
 			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
 	})
-	if _, _, err := m.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
+	if _, _, err := m.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
 		t.Fatal(err)
 	}
 	m.settle(t, false)
@@ -1045,7 +1051,7 @@ func TestTheSweepTakesNothingFromBeforeTheAirDate(t *testing.T) {
 	if got := handedOver(t, m.targetRig); len(got) != 1 || got[0] != out {
 		t.Errorf("the sweep handed over %v, want the movie's release from after it came out", got)
 	}
-	if blocked, _ := m.svc.st.BlockedFor(ctx, "movie:9100:movie"); !strings.Contains(blocked[early], "before the movie came out on "+dateOf(day(-2))) {
+	if blocked, _ := m.svc.st.BlockedFor(ctx, "movie:990100:movie"); !strings.Contains(blocked[early], "before the movie came out on "+dateOf(day(-2))) {
 		t.Errorf("the early release is not blocked: %v", blocked)
 	}
 }

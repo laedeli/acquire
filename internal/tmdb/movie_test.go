@@ -15,7 +15,7 @@ func movieServer(t *testing.T, body map[string]any) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/movie/9100":
+		case r.URL.Path == "/movie/990100":
 			if got := r.URL.Query().Get("append_to_response"); got != "external_ids,alternative_titles,release_dates" {
 				t.Errorf("append_to_response = %q", got)
 			}
@@ -33,7 +33,7 @@ func movieServer(t *testing.T, body map[string]any) *httptest.Server {
 // release: what decides when a requested movie is searched.
 func TestMovieReadsItsReleases(t *testing.T) {
 	srv := movieServer(t, map[string]any{
-		"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": "2026-09-11",
+		"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": "2026-09-11",
 		"imdb_id": "tt99000001", "original_title": "Example Clay Film", "production_countries": []map[string]any{{"iso_3166_1": "US"}},
 		"alternative_titles": map[string]any{"titles": []map[string]any{{"iso_3166_1": "US", "title": "Example Clay Film"},
 			{"iso_3166_1": "GB", "title": "Clay Film"}, {"iso_3166_1": "DE", "title": "Der Lehmfilm"}}},
@@ -50,11 +50,11 @@ func TestMovieReadsItsReleases(t *testing.T) {
 		}},
 	})
 	c := testClient(srv)
-	m, err := c.Movie(context.Background(), 9100)
+	m, err := c.Movie(context.Background(), 990100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.TMDBID != 9100 || m.IMDBID != "tt99000001" || m.Title != "Example Clay Film" || m.Year() != 2026 || m.Status != "Released" ||
+	if m.TMDBID != 990100 || m.IMDBID != "tt99000001" || m.Title != "Example Clay Film" || m.Year() != 2026 || m.Status != "Released" ||
 		strings.Join(m.Countries, ",") != "US" {
 		t.Errorf("movie = %+v", m)
 	}

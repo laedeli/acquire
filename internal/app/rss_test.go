@@ -188,14 +188,14 @@ func (r *followRig) grabbed(t *testing.T) map[string]string {
 func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	r.tmdb.set(func(f *fakeTMDB) { f.series[9001] = sevenHarbours() })
-	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, asAdmin("user")); err != nil {
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990001] = sevenHarbours() })
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga: Seven Harbours"}, asAdmin("user")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
 	feedSrc := newFeedSource(t, true,
 		tv("Example.Saga.Seven.Harbours.S01E07.720p.WEB.h264-GRP", ago(3*time.Hour)),
-		tv("Example.Saga.Seven.Harbours.S01E07.1080p.WEB.h264-GRP", ago(3*time.Hour), "tvdbid", "424242"),
+		tv("Example.Saga.Seven.Harbours.S01E07.1080p.WEB.h264-GRP", ago(3*time.Hour), "tvdbid", "9904242"),
 		tv("Example.Saga.Seven.Harbours.S01E08.1080p.WEB.h264-GRP", ago(2*time.Hour)),
 		tv("Example.Saga.Seven.Harbours.S01E09.1080p.WEB.h264-GRP", ago(2*time.Hour), "tvdbid", "1"),
 		tv("Example.Saga.Seven.Harbours.S01E11.1080p.WEB.h264-GRP", ago(time.Hour)),
@@ -235,12 +235,12 @@ func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 		t.Errorf("reads = %v, want one tv read of the TV category (no movie is wanted), every attribute asked for", reads)
 	}
 	for _, e := range []string{"s01e007", "s01e008", "s01e004"} {
-		if st := target(t, r.svc, "series:9001:"+e); st.State != store.TargetGrabbed {
+		if st := target(t, r.svc, "series:990001:"+e); st.State != store.TargetGrabbed {
 			t.Errorf("%s: %+v", e, st)
 		}
 	}
 	for _, e := range []string{"s01e009", "s01e011"} {
-		if st := target(t, r.svc, "series:9001:"+e); st.State != store.TargetWanted {
+		if st := target(t, r.svc, "series:990001:"+e); st.State != store.TargetWanted {
 			t.Errorf("%s: %+v", e, st)
 		}
 	}
@@ -251,7 +251,7 @@ func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 		t.Errorf("read again: %+v %v (adds %d)", again, err, len(r.gw.added()))
 	}
 	// The right E09 turns up.
-	feedSrc.add(tv("Example.Saga.Seven.Harbours.S01E09.1080p.WEB.h264-OTHER", ago(time.Minute), "tvdbid", "424242"))
+	feedSrc.add(tv("Example.Saga.Seven.Harbours.S01E09.1080p.WEB.h264-OTHER", ago(time.Minute), "tvdbid", "9904242"))
 	third, _ := r.svc.SyncRSS(ctx)
 	if third.New != 1 || third.Grabbed != 1 {
 		t.Errorf("the next release: %+v", third)
@@ -269,7 +269,7 @@ func TestTheFeedsGrabTheNewEpisodesAsTheyTurnUp(t *testing.T) {
 func TestTheFeedsTakeNothingFromBeforeTheAirDate(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 2, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
 	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(0), 0)
 	fake := "Show.Name.S01E01.1080p.WEB.h264-FAKE"
@@ -315,7 +315,7 @@ func TestTheFeedsTakeNothingFromBeforeTheAirDate(t *testing.T) {
 func TestTheFeedsGrabWhatThePolicyAllows(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 2, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-300), 0)
 	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(-2), 0)
 	feedSrc := newFeedSource(t, false,
@@ -360,11 +360,11 @@ func TestTheFeedsGrabARequestedMovieOnceOut(t *testing.T) {
 	ctx := context.Background()
 	out := day(3)
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": "2026-09-11",
-			"imdb_id": "tt0009100", "release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": "2026-09-11",
+			"imdb_id": "tt99009100", "release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 				"release_dates": []map[string]any{{"type": 4, "release_date": out.Format(time.RFC3339)}}}}}}
 	})
-	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("friend")); err != nil {
 		t.Fatal(err)
 	}
 	r.settle(t, false)
@@ -381,10 +381,10 @@ func TestTheFeedsGrabARequestedMovieOnceOut(t *testing.T) {
 	// Out now; a release from before its date, still in the feed, is looked
 	// at once it is.
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.movies[9100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+		f.movies[990100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 			"release_dates": []map[string]any{{"type": 4, "release_date": day(-1).Format(time.RFC3339)}}}}}
 	})
-	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:990100'`)
 	r.settle(t, true)
 	run, err := r.svc.SyncRSS(ctx)
 	if err != nil || run.Grabbed != 1 {
@@ -406,7 +406,7 @@ func TestTheFeedsGrabARequestedMovieOnceOut(t *testing.T) {
 func TestARunOfEpisodesIsGrabbedOnlyAsThePolicyTakesEach(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 4, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 4, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-300), 0) // the old backlog
 	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(-2), 0)   // new
 	_ = r.svc.st.SetAirWindow(ctx, eps[2].ID, day(-2), 0)   // new
@@ -445,7 +445,7 @@ func TestARunOfEpisodesIsGrabbedOnlyAsThePolicyTakesEach(t *testing.T) {
 func TestWhatWasHeldOnceIsNotNewAgain(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	title, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	title, eps := track(t, r.svc, 990711, "Show Name", 1, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
 	if _, err := r.svc.st.ApplySeriesHoldings(ctx, title.ID, "", "default", []store.HeldEpisode{{Season: 1, Episode: 1, ItemID: "item-1"}}); err != nil {
 		t.Fatal(err)
@@ -479,13 +479,13 @@ func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	r.tmdb.set(func(f *fakeTMDB) {
-		f.series[9001] = sevenHarbours()
-		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+		f.series[990001] = sevenHarbours()
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
 			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
 				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
 	})
-	for _, w := range []store.Wanted{{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"},
-		{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}} {
+	for _, w := range []store.Wanted{{TMDBID: 990001, MediaType: "series", Title: "Example Saga: Seven Harbours"},
+		{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}} {
 		if _, _, err := r.svc.Request(ctx, w, asAdmin("user")); err != nil {
 			t.Fatal(err)
 		}
@@ -524,7 +524,7 @@ func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
 	// A typed search rejects an extra as well.
 	src := newFakeSource(t, "usenet", "K", "Example.Clay.Film.2026.Official.Trailer.2160p.WEB-DL.x265-GRP")
 	addSource(t, r.svc, "example", src, nil)
-	cands, err := r.svc.SearchTarget(ctx, "movie:9100:movie")
+	cands, err := r.svc.SearchTarget(ctx, "movie:990100:movie")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
 func TestTheFeedsAreNotReadWhileNothingCanBeGrabbed(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 3, true)
 	for _, e := range eps {
 		_ = r.svc.st.SetAirWindow(ctx, e.ID, day(-1), 0)
 	}
@@ -619,7 +619,7 @@ func TestTheFeedsAreNotReadWhileNothingCanBeGrabbed(t *testing.T) {
 func TestAFailingSourceDoesNotFailTheRun(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 1, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
 	down := newFeedSource(t, true, tv("Show.Name.S01E01.2160p.WEB.h265-DOWN", ago(time.Hour)))
 	good := newFeedSource(t, true, tv("Show.Name.S01E01.1080p.WEB.h264-GRP", ago(time.Hour)))
@@ -654,7 +654,7 @@ func TestAFailingSourceDoesNotFailTheRun(t *testing.T) {
 func TestAFeedIsReadBackToItsCursor(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 9, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 9, true)
 	for _, e := range eps {
 		_ = r.svc.st.SetAirWindow(ctx, e.ID, day(-1), 0)
 	}
@@ -698,7 +698,7 @@ func TestAFeedIsReadBackToItsCursor(t *testing.T) {
 func TestEachReleaseIsLookedAtOnce(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	_, eps := track(t, r.svc, 990711, "Show Name", 1, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
 	ahead := time.Now().Add(time.Hour).Truncate(time.Second)
 	var items []feedItem
@@ -762,7 +762,7 @@ func TestMatchingAReleaseToATitle(t *testing.T) {
 			into[release.MatchKey(n)] = append(into[release.MatchKey(n)], t)
 		}
 	}
-	saga := store.Title{ID: "series:9001", Title: "Example Saga: Seven Harbours", Year: 2026, TVDBID: 424242, Kind: "series"}
+	saga := store.Title{ID: "series:990001", Title: "Example Saga: Seven Harbours", Year: 2026, TVDBID: 9904242, Kind: "series"}
 	remake := store.Title{ID: "series:2", Title: "Twin Show", Year: 2019, Kind: "series"}
 	original := store.Title{ID: "series:3", Title: "Twin Show", Year: 1990, Kind: "series"}
 	bureau := store.Title{ID: "series:4", Title: "Example Bureau", Year: 2011, Kind: "series", Countries: []string{"GB"}, TVDBID: 77}
@@ -774,7 +774,7 @@ func TestMatchingAReleaseToATitle(t *testing.T) {
 	add(m.series, bureau)
 	add(m.series, american)
 	add(m.series, named)
-	clay := store.Title{ID: "movie:9100", Title: "Example Clay Film", Year: 2026, IMDBID: "tt0009100", Kind: "movie"}
+	clay := store.Title{ID: "movie:990100", Title: "Example Clay Film", Year: 2026, IMDBID: "tt99009100", Kind: "movie"}
 	add(m.movies, clay)
 	for _, tc := range []struct {
 		name string
@@ -794,12 +794,12 @@ func TestMatchingAReleaseToATitle(t *testing.T) {
 		{"a title that names its country", release.Release{Title: "Example.Clinic.US.S01E01.720p.HDTV"}, named.ID},
 		{"an episode's own IMDb id", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", IMDBID: "tt99000009"}, saga.ID},
 		{"the feed says another series", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", TVDBID: 7}, ""},
-		{"the feed agrees", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", TVDBID: 424242}, saga.ID},
+		{"the feed agrees", release.Release{Title: "Seven.Harbours.S01E07.1080p.WEB", TVDBID: 9904242}, saga.ID},
 		{"a longer name", release.Release{Title: "Example.Saga.Seven.Harbours.Aftershow.S01E07.1080p"}, ""},
 		{"a movie", release.Release{Title: "Example.Clay.Film.2026.1080p.WEB-DL"}, clay.ID},
 		{"a movie, another year", release.Release{Title: "Example.Clay.Film.2025.1080p.WEB-DL"}, ""},
-		{"a movie a year off, its IMDb id", release.Release{Title: "Example.Clay.Film.2025.1080p.WEB-DL", IMDBID: "tt0009100"}, clay.ID},
-		{"a movie, another IMDb id", release.Release{Title: "Example.Clay.Film.2026.1080p.WEB-DL", IMDBID: "tt0000001"}, ""},
+		{"a movie a year off, its IMDb id", release.Release{Title: "Example.Clay.Film.2025.1080p.WEB-DL", IMDBID: "tt99009100"}, clay.ID},
+		{"a movie, another IMDb id", release.Release{Title: "Example.Clay.Film.2026.1080p.WEB-DL", IMDBID: "tt99000001"}, ""},
 		{"a movie without its year", release.Release{Title: "Example.Clay.Film.1080p.WEB-DL"}, ""},
 	} {
 		got := ""

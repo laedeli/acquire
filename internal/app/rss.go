@@ -495,7 +495,7 @@ func identitiesAgree(t store.Title, r release.Release) bool {
 	return true
 }
 
-// imdbNumber is the number of an IMDb id (tt0903747 is 903747), 0 for none.
+// imdbNumber is the number of an IMDb id (tt0012345 is 12345), 0 for none.
 func imdbNumber(id string) int64 {
 	n, err := strconv.ParseInt(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(id)), "tt"), 10, 64)
 	if err != nil || n < 0 {

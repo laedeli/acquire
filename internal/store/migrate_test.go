@@ -276,14 +276,14 @@ func TestMigrate042OverAnExistingInstall(t *testing.T) {
 	migrateUpTo(t, pool, "042_follow.sql")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO titles (id, tmdb_id, kind, title, tvdb_id, status, holdings_at) VALUES
-		  ('series:1396', 1396, 'series', 'Example Show', 81189, 'continuing', now()),
-		  ('movie:603', 603, 'movie', 'Example Film', NULL, 'released', now());
+		  ('series:990396', 990396, 'series', 'Example Show', 9908118, 'continuing', now()),
+		  ('movie:990603', 990603, 'movie', 'Example Film', NULL, 'released', now());
 		INSERT INTO acquisition_targets (id, title_id, kind, season_number, episode_number, state, air_date, air_window_opens_at, held_item_id)
-		VALUES ('series:1396:s01e001', 'series:1396', 'episode', 1, 1, 'wanted', current_date - 3, now() - interval '3 days', ''),
-		       ('series:1396:s01e002', 'series:1396', 'episode', 1, 2, 'held', current_date - 3, now() - interval '3 days', 'item-2'),
-		       ('movie:603:movie', 'movie:603', 'movie', NULL, NULL, 'wanted', NULL, NULL, '');
+		VALUES ('series:990396:s01e001', 'series:990396', 'episode', 1, 1, 'wanted', current_date - 3, now() - interval '3 days', ''),
+		       ('series:990396:s01e002', 'series:990396', 'episode', 1, 2, 'held', current_date - 3, now() - interval '3 days', 'item-2'),
+		       ('movie:990603:movie', 'movie:990603', 'movie', NULL, NULL, 'wanted', NULL, NULL, '');
 		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, detail)
-		VALUES ('w_1', 1396, 'series', 'Example Show', 'failed', 'a series request cannot be handed over');`); err != nil {
+		VALUES ('w_1', 990396, 'series', 'Example Show', 'failed', 'a series request cannot be handed over');`); err != nil {
 		t.Fatal(err)
 	}
 	s := &Store{pool: pool}
@@ -297,16 +297,16 @@ func TestMigrate042OverAnExistingInstall(t *testing.T) {
 	if err != nil || len(after) != 2 {
 		t.Fatalf("missing after 042: %+v %v", after, err)
 	}
-	for _, id := range []string{"series:1396:s01e001", "series:1396:s01e002", "movie:603:movie"} {
+	for _, id := range []string{"series:990396:s01e001", "series:990396:s01e002", "movie:990603:movie"} {
 		tg, err := s.GetTarget(ctx, id)
 		if err != nil || tg.AddedAt != nil || tg.EpisodeTitle != "" || tg.ReleasePending || tg.ReleaseKind != "" {
 			t.Errorf("%s: %+v %v", id, tg, err)
 		}
 	}
-	if held, _ := s.GetTarget(ctx, "series:1396:s01e002"); held.State != TargetHeld || held.HeldItemID != "item-2" {
+	if held, _ := s.GetTarget(ctx, "series:990396:s01e002"); held.State != TargetHeld || held.HeldItemID != "item-2" {
 		t.Errorf("a held target: %+v", held)
 	}
-	for _, id := range []string{"series:1396", "movie:603"} {
+	for _, id := range []string{"series:990396", "movie:990603"} {
 		ti, err := s.TitleByID(ctx, id)
 		if err != nil || ti.Followed() || ti.Origin != "" || ti.TMDBStatus != "" || ti.InventoryAt != nil || !ti.HoldingsKnown() {
 			t.Errorf("%s: %+v %v", id, ti, err)

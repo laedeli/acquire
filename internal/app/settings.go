@@ -75,13 +75,24 @@ func (p SearchSettings) dueOrder() store.DueOrder {
 
 // Grabs reports whether the policy lets an automatic grab — the sweep's, a
 // newest release's — take a target: any with AutoGrab, a new one with
-// AutoGrabNew; nothing of a title held for an admin's approval. Whether the
+// AutoGrabNew; nothing of a title held for an admin's approval, and nothing
+// of a series the import says is anime or daily (handsOff). Whether the
 // target can be grabbed at all is the caller's.
 func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) bool {
-	if title.HeldForApproval() {
+	if title.HeldForApproval() || handsOff(title) {
 		return false
 	}
 	return p.AutoGrab || (p.AutoGrabNew && isNew(title, t, p.newWithin(), now))
+}
+
+// handsOff reports whether no automatic grab takes anything of a series: one
+// the import says is anime, whose releases are mostly numbered by an
+// absolute episode number, or daily, whose releases are named by their air
+// date — neither names the season and episode acquire tracks, so a release
+// found for one cannot be told to be it. They are searched, and grabbed from
+// the missing tab.
+func handsOff(title store.Title) bool {
+	return title.Kind == "series" && (title.SeriesType == "anime" || title.SeriesType == "daily")
 }
 
 // GrabsAnything reports whether the policy lets automatic grabs take

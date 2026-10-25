@@ -121,11 +121,11 @@ func TestAFollowHeldForApproval(t *testing.T) {
 func TestFollowingATitle(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	ti, created, err := s.FollowTitle(ctx, Title{TMDBID: 9001, Kind: "series", Title: "The Example Saga", Year: 2026})
+	ti, created, err := s.FollowTitle(ctx, Title{TMDBID: 990001, Kind: "series", Title: "The Example Saga", Year: 2026})
 	if err != nil || !created {
 		t.Fatalf("follow: %+v %v %v", ti, created, err)
 	}
-	if ti.ID != "series:9001" || !ti.Monitored || !ti.MonitorNew || ti.FollowedAt == nil || ti.Origin != OriginRequest ||
+	if ti.ID != "series:990001" || !ti.Monitored || !ti.MonitorNew || ti.FollowedAt == nil || ti.Origin != OriginRequest ||
 		ti.SortTitle != "example saga" || ti.Year != 2026 || ti.HoldingsKnown() || ti.InventoryAt != nil {
 		t.Errorf("a followed title: %+v", ti)
 	}
@@ -167,23 +167,23 @@ func TestFollowingATitle(t *testing.T) {
 	// was before it began: a title the request made is not monitored any
 	// more, one an admin had stopped monitoring is stopped again, one an
 	// admin monitors is monitored still.
-	for _, w := range []Wanted{{ID: "w1", TMDBID: 9001, MediaType: "series", Title: "x", TitleID: "series:9001"},
+	for _, w := range []Wanted{{ID: "w1", TMDBID: 990001, MediaType: "series", Title: "x", TitleID: "series:990001"},
 		{ID: "w2", TMDBID: 77, MediaType: "series", Title: "y", TitleID: "series:77"},
 		{ID: "w3", TMDBID: 78, MediaType: "series", Title: "z", TitleID: "series:78"}} {
 		if err := s.CreateWanted(ctx, w); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.UnfollowTitle(ctx, "series:9001"); err != nil {
+	if err := s.UnfollowTitle(ctx, "series:990001"); err != nil {
 		t.Fatal(err)
 	}
-	if still, _ := s.TitleByID(ctx, "series:9001"); !still.Followed() || !still.Monitored {
+	if still, _ := s.TitleByID(ctx, "series:990001"); !still.Followed() || !still.Monitored {
 		t.Errorf("unfollowed while a request follows it: %+v", still)
 	}
 	for _, id := range []string{"w1", "w2", "w3"} {
 		_ = s.DeleteWanted(ctx, id)
 	}
-	for id, want := range map[string][2]bool{"series:9001": {false, false}, "series:77": {false, false}, "series:78": {true, false}} {
+	for id, want := range map[string][2]bool{"series:990001": {false, false}, "series:77": {false, false}, "series:78": {true, false}} {
 		if err := s.UnfollowTitle(ctx, id); err != nil {
 			t.Fatal(err)
 		}
@@ -195,7 +195,7 @@ func TestFollowingATitle(t *testing.T) {
 	// Followed again: from the first follow on, the monitoring of then
 	// kept for the next end.
 	firstSaga := *ti.FollowedAt
-	ti, _, _ = s.FollowTitle(ctx, Title{TMDBID: 9001, Kind: "series", Title: "The Example Saga"})
+	ti, _, _ = s.FollowTitle(ctx, Title{TMDBID: 990001, Kind: "series", Title: "The Example Saga"})
 	if !ti.Followed() || !ti.Monitored || ti.UnfollowedAt != nil || ti.FollowedAt == nil || !ti.FollowedAt.Equal(firstSaga) {
 		t.Errorf("followed again: %+v, want followed from %v", ti, firstSaga)
 	}
@@ -243,7 +243,7 @@ func TestASeriesReadOfTMDB(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
 	if err := s.UpsertTitle(ctx, Title{TMDBID: 55, Kind: "series", Title: "Imported Show", Monitored: true, MonitorNew: false,
-		TVDBID: 5005, Status: "continuing"}); err != nil {
+		TVDBID: 9905005, Status: "continuing"}); err != nil {
 		t.Fatal(err)
 	}
 	id := "series:55"
@@ -252,7 +252,7 @@ func TestASeriesReadOfTMDB(t *testing.T) {
 	}
 	// The first read is the series' inventory: every season of it monitored,
 	// as a derivation monitors it.
-	first := SeriesRead{TVDBID: 9999, IMDBID: "tt0000055", Name: "Imported Show: Renamed", Year: 2020, Status: "Returning Series",
+	first := SeriesRead{TVDBID: 9909999, IMDBID: "tt99000055", Name: "Imported Show: Renamed", Year: 2020, Status: "Returning Series",
 		Running: true, Aliases: []string{"Imported Show", "Another Name"}, Seasons: map[int]int{1: 3}, Read: []int{1},
 		Episodes: episodesOf(1, day(-30), day(-23), day(-16))}
 	ch, err := s.ApplySeriesInventory(ctx, id, first)
@@ -270,7 +270,7 @@ func TestASeriesReadOfTMDB(t *testing.T) {
 		t.Errorf("a new season: %+v %v", ch, err)
 	}
 	ti, _ := s.TitleByID(ctx, id)
-	if ti.TVDBID != 5005 || ti.IMDBID != "tt0000055" || ti.TMDBStatus != "Returning Series" || ti.InventoryAt == nil ||
+	if ti.TVDBID != 9905005 || ti.IMDBID != "tt99000055" || ti.TMDBStatus != "Returning Series" || ti.InventoryAt == nil ||
 		ti.Title != "Imported Show" || ti.Status != "continuing" {
 		t.Errorf("an imported title keeps its id and name, and gains what it had not: %+v", ti)
 	}
@@ -375,7 +375,7 @@ func TestASeriesReadOfTMDB(t *testing.T) {
 func TestATargetAddedSinceTheHoldingsWaitsForTheNextReconcile(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	ti, _, _ := s.FollowTitle(ctx, Title{TMDBID: 9001, Kind: "series", Title: "Example"})
+	ti, _, _ := s.FollowTitle(ctx, Title{TMDBID: 990001, Kind: "series", Title: "Example"})
 	if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -406,11 +406,11 @@ func TestATargetAddedSinceTheHoldingsWaitsForTheNextReconcile(t *testing.T) {
 func TestARequestedMovieWaitsForItsRelease(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	m := approvedFollow(t, s, Title{TMDBID: 9100, Kind: "movie", Title: "Example Clay Film", Year: 2026})
+	m := approvedFollow(t, s, Title{TMDBID: 990100, Kind: "movie", Title: "Example Clay Film", Year: 2026})
 	if _, err := s.ApplyMovieHolding(ctx, m.ID, "", "default", nil); err != nil {
 		t.Fatal(err)
 	}
-	read := MovieRead{IMDBID: "tt0009100", Name: "Example Clay Film", Year: 2026, Status: "Released"}
+	read := MovieRead{IMDBID: "tt99009100", Name: "Example Clay Film", Year: 2026, Status: "Released"}
 	tg, err := s.ApplyMovieInventory(ctx, m.ID, read)
 	if err != nil {
 		t.Fatal(err)
@@ -446,7 +446,7 @@ func TestARequestedMovieWaitsForItsRelease(t *testing.T) {
 	if n := due(); n != 1 {
 		t.Errorf("not searched once out: %d due", n)
 	}
-	if ti, _ := s.TitleByID(ctx, m.ID); ti.IMDBID != "tt0009100" || ti.TMDBStatus != "Released" || ti.Status != "released" {
+	if ti, _ := s.TitleByID(ctx, m.ID); ti.IMDBID != "tt99009100" || ti.TMDBStatus != "Released" || ti.Status != "released" {
 		t.Errorf("the movie's title: %+v", ti)
 	}
 
@@ -592,7 +592,7 @@ func TestSeasonsToRead(t *testing.T) {
 func TestTitleProgress(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	ti, _, _ := s.FollowTitle(ctx, Title{TMDBID: 9001, Kind: "series", Title: "Example"})
+	ti, _, _ := s.FollowTitle(ctx, Title{TMDBID: 990001, Kind: "series", Title: "Example"})
 	if _, err := s.ApplySeriesInventory(ctx, ti.ID, SeriesRead{Status: "Returning Series", Running: true,
 		Seasons: map[int]int{1: 5}, Read: []int{1},
 		Episodes: episodesOf(1, day(-9), day(-9), day(-2), day(5), day(12)), MonitorAll: true}); err != nil {
@@ -604,7 +604,7 @@ func TestTitleProgress(t *testing.T) {
 	if _, err := s.SetTargetState(ctx, ti.ID+":s01e002", nil, TargetGrabbed, "grabbed"); err != nil {
 		t.Fatal(err)
 	}
-	m, _, _ := s.FollowTitle(ctx, Title{TMDBID: 9100, Kind: "movie", Title: "Film"})
+	m, _, _ := s.FollowTitle(ctx, Title{TMDBID: 990100, Kind: "movie", Title: "Film"})
 	if _, err := s.ApplyMovieInventory(ctx, m.ID, MovieRead{Window: day(20), Kind: "digital"}); err != nil {
 		t.Fatal(err)
 	}
