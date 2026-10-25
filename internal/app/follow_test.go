@@ -1305,3 +1305,25 @@ func TestATitleTMDBDoesNotKnowIsReadAgainInAWeek(t *testing.T) {
 		t.Errorf("awaiting: %q", v.Detail)
 	}
 }
+
+// What a request reads as in the five words of a request before it could
+// follow a title, for a client that knows those alone.
+func TestLegacyStatus(t *testing.T) {
+	onTheWay := &store.Progress{Kind: "series", OnTheWay: 2}
+	for _, tc := range []struct {
+		v    RequestView
+		want string
+	}{
+		{RequestView{Wanted: store.Wanted{Status: "waiting"}}, "pending"},
+		{RequestView{Wanted: store.Wanted{Status: "awaiting"}}, "pending"},
+		{RequestView{Wanted: store.Wanted{Status: "following"}, Progress: &store.Progress{Kind: "series"}}, "pending"},
+		{RequestView{Wanted: store.Wanted{Status: "following"}, Progress: onTheWay}, "downloading"},
+		{RequestView{Wanted: store.Wanted{Status: "declined"}}, "failed"},
+		{RequestView{Wanted: store.Wanted{Status: "packaging"}}, "packaging"},
+		{RequestView{Wanted: store.Wanted{Status: "fulfilled"}}, "fulfilled"},
+	} {
+		if got := LegacyStatus(tc.v); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.v.Status, got, tc.want)
+		}
+	}
+}

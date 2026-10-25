@@ -689,7 +689,10 @@ func (s *Server) discover(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, hits)
 }
 
-// status returns the newest request state for a tmdb id (the chino slot's feed).
+// status returns the newest request for a tmdb id: status in the five words a
+// request read in before it could follow a title (app.LegacyStatus), for a
+// client that knows those alone, and state, detail and approval as it reads
+// now.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	var tmdbID int64
 	if v := r.URL.Query().Get("tmdbId"); v != "" {
@@ -707,10 +710,14 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	wnt, err := s.svc.RequestStatus(r.Context(), tmdbID)
 	if err != nil {
-		writeJSON(w, 200, map[string]any{"status": ""})
+		writeJSON(w, 200, map[string]any{"status": "", "state": ""})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": wnt.Status, "id": wnt.ID})
+	// status stays in the words it had before a request could follow a
+	// title, for a client that knows those alone; state is what the request
+	// reads as now.
+	writeJSON(w, 200, map[string]any{"status": app.LegacyStatus(wnt), "state": wnt.Status, "detail": wnt.Detail,
+		"approval": wnt.Approval, "id": wnt.ID})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

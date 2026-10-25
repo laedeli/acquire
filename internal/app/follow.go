@@ -372,6 +372,27 @@ func (s *Service) ApproveForGrab(ctx context.Context, id, by string) error {
 	return err
 }
 
+// LegacyStatus is a request's status in the five words a request read in
+// before it could follow a title — pending, downloading, packaging,
+// fulfilled, failed —, for a client that knows those alone: a request
+// waiting for its release, for an admin's approval or following a series
+// with nothing on the way is pending; one following a series with episodes
+// on the way, downloading; a declined one, failed.
+func LegacyStatus(v RequestView) string {
+	switch v.Status {
+	case "waiting", "awaiting":
+		return "pending"
+	case "following":
+		if v.Progress != nil && v.Progress.OnTheWay > 0 {
+			return "downloading"
+		}
+		return "pending"
+	case "declined":
+		return "failed"
+	}
+	return v.Status
+}
+
 // RequestStatus is the newest request for a TMDB id, as it reads now, or
 // ErrNotFound.
 func (s *Service) RequestStatus(ctx context.Context, tmdbID int64) (RequestView, error) {

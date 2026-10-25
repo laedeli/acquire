@@ -89,8 +89,9 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || len(list) != 1 || list[0]["detail"] != "reading its episodes from TMDB" {
 		t.Errorf("GET /api/wanted -> %s", w.Body.String())
 	}
-	if w, st := call(t, h, http.MethodGet, "/api/status?tmdbId=990001", ""); w.Code != 200 || st["status"] != "following" {
-		t.Errorf("GET /api/status -> %s", w.Body.String())
+	if w, st := call(t, h, http.MethodGet, "/api/status?tmdbId=990001", ""); w.Code != 200 || st["status"] != "pending" || st["state"] != "following" ||
+		st["detail"] == "" {
+		t.Errorf("GET /api/status -> %s, want the old word and the new", w.Body.String())
 	}
 
 	_, missing := call(t, h, http.MethodGet, "/api/missing", "")
