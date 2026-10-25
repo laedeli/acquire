@@ -120,11 +120,11 @@ CREATE INDEX IF NOT EXISTS targets_added_idx    ON acquisition_targets (title_id
 -- rss_cursors: what rss-sync has looked at of each source's newest releases,
 -- per feed (tv, movie, or search: both in one search): the releases of the
 -- feed looked at, by an id of each (a 64-bit hash of its guid, else of its
--- name: seen_ids), with when the source says it published each, in the
--- source's own clock (unix seconds: seen_at) — the last 1,000 of the last
--- seven days. A release is looked at once, whenever the source lists it
--- among its newest, however it dates it. read_at is when the feed was last
--- read and detail what that read did. The rows of a source go with it.
+-- name: seen_ids), with when acquire first saw each, by its own clock (unix
+-- seconds: seen_at) — the last 1,000 it saw, the last first. A release is
+-- looked at once, whenever the source lists it among its newest, however it
+-- dates it. read_at is when the feed was last read and detail what that read
+-- did. The rows of a source go with it.
 CREATE TABLE IF NOT EXISTS rss_cursors (
   indexer_id bigint      NOT NULL,
   feed       text        NOT NULL,

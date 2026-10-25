@@ -26,8 +26,8 @@ import (
 // with the episodes the name holds, a movie's title with its year; checked
 // against the identities the feed carries (tvdbid, imdbid, tmdbid) when it
 // does. A cursor per source and feed — the releases looked at, by their guid,
-// the last thousand of the last week by the source's clock — makes each
-// release looked at once, however the source dates it.
+// the last thousand acquire saw — makes each release looked at once, however
+// the source dates it.
 //
 // A match is grabbed as the sweep grabs: ranked by the title's quality
 // profile, the releases blocked for the target left out, only what an
@@ -284,10 +284,11 @@ func releaseKey(r release.Release) string {
 // cursor): the newest releases, paged back while a whole page is new, up to
 // rssPages; one page for a feed never read. It returns the releases not looked
 // at before and how many it read, and records them as looked at — by their
-// guid, however the source dates them: a source whose clock runs ahead, or
-// that indexes a release late and dates it long before, has each looked at
-// once. A source that fails keeps its cursor; its health is the search's
-// (ask).
+// guid, as of when acquire saw them, however the source dates them: a source
+// whose clock runs ahead, that dates a release years ahead, that indexes one
+// late and dates it long before, or whose newest page reaches back weeks, has
+// each looked at once. A source that fails keeps its cursor; its health is the
+// search's (ask).
 func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd feed) ([]release.Release, int, error) {
 	cur, err := s.st.GetRSSCursor(ctx, src.ID, fd.name)
 	if err != nil {
@@ -319,16 +320,7 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 			break // the pages read are kept
 		}
 		read += len(items)
-		// A release the source does not date is kept as of the page's newest.
-		var newest time.Time
-		for _, r := range items {
-			if r.PubDate.After(newest) {
-				newest = r.PubDate
-			}
-		}
-		if newest.IsZero() {
-			newest = s.now()
-		}
+		now := s.now()
 		reached := false
 		for _, r := range items {
 			key := releaseKey(r)
@@ -336,11 +328,7 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 				reached = true
 				continue
 			}
-			at := r.PubDate
-			if at.IsZero() {
-				at = newest
-			}
-			cur.Add(key, at)
+			cur.Add(key, now)
 			if len(r.Categories) == 0 {
 				// What the feed is scoped to is what it files the release
 				// under; a read of both says nothing.

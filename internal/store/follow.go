@@ -984,24 +984,25 @@ func (s *Store) WantedForFeeds(ctx context.Context, w FeedsWant) (episodes, movi
 	return episodes, movies, err
 }
 
-// What rss-sync keeps of a feed it looked at: the last RSSSeenMax releases of
-// the last RSSSeenFor, by the source's clock.
-const (
-	RSSSeenMax = 1000
-	RSSSeenFor = 7 * 24 * time.Hour
-)
+// RSSSeenMax is how many releases rss-sync keeps of a feed it looked at: the
+// last it saw, by acquire's clock. A read reads at most three pages of a
+// hundred, so a release drops out only long after it left the pages read.
+const RSSSeenMax = 1000
 
 // RSSCursor is what rss-sync has looked at of one feed of a source: the
-// releases, by an id of each (RSSID), with when the source says it published
-// each — in the source's own clock, which may run ahead of acquire's or date a
-// release indexed late long before. A release is looked at once, whenever the
-// source lists it, however it dates it.
+// releases, by an id of each (RSSID), with when acquire first saw each — by
+// its own clock, never the source's, which may run ahead, date a release
+// indexed late long before, or date one years ahead. A release is looked at
+// once, whenever the source lists it, however it dates it.
 type RSSCursor struct {
 	IndexerID int64
 	Feed      string // tv | movie | search
 	Seen      map[int64]int64
 	ReadAt    *time.Time
 	Detail    string
+	// order are the releases kept before this read, the last seen first;
+	// added those this read saw, in the order it saw them.
+	order, added []int64
 }
 
 // RSSID is the id a feed's release is kept by: a 64-bit hash of its guid,
@@ -1018,42 +1019,38 @@ func (c RSSCursor) Has(key string) bool {
 	return ok
 }
 
-// Add records that a release was looked at, published at as the source dates
-// it.
+// Add records that a release was looked at, first seen at — acquire's
+// clock. One seen before keeps when it was first seen.
 func (c *RSSCursor) Add(key string, at time.Time) {
 	if c.Seen == nil {
 		c.Seen = map[int64]int64{}
 	}
-	c.Seen[RSSID(key)] = at.Unix()
+	id := RSSID(key)
+	if _, ok := c.Seen[id]; ok {
+		return
+	}
+	c.Seen[id] = at.Unix()
+	c.added = append(c.added, id)
 }
 
 // Read reports whether the feed was read before.
 func (c RSSCursor) Read() bool { return c.ReadAt != nil || len(c.Seen) > 0 }
 
-// kept are the releases the cursor keeps: the last RSSSeenMax of the last
-// RSSSeenFor before the newest, by the source's clock; newest first.
+// kept are the releases the cursor keeps: the last RSSSeenMax it saw, this
+// read's first, as it saw them, then those of the reads before.
 func (c RSSCursor) kept() (ids, at []int64) {
-	type entry struct{ id, at int64 }
-	all := make([]entry, 0, len(c.Seen))
-	var newest int64
-	for id, t := range c.Seen {
-		all = append(all, entry{id, t})
-		newest = max(newest, t)
-	}
-	sort.Slice(all, func(i, j int) bool {
-		if all[i].at != all[j].at {
-			return all[i].at > all[j].at
+	ids, at = []int64{}, []int64{}
+	seen := map[int64]bool{}
+	for _, part := range [][]int64{c.added, c.order} {
+		for _, id := range part {
+			if seen[id] || len(ids) == RSSSeenMax {
+				continue
+			}
+			seen[id] = true
+			ids, at = append(ids, id), append(at, c.Seen[id])
 		}
-		return all[i].id < all[j].id
-	})
-	since := newest - int64(RSSSeenFor.Seconds())
-	for _, e := range all {
-		if e.at < since || len(ids) == RSSSeenMax {
-			break
-		}
-		ids, at = append(ids, e.id), append(at, e.at)
 	}
-	return nonNilInt64(ids), nonNilInt64(at)
+	return ids, at
 }
 
 func nonNilInt64(v []int64) []int64 {
@@ -1079,6 +1076,7 @@ func (s *Store) GetRSSCursor(ctx context.Context, indexerID int64, feed string) 
 	for i := range ids {
 		if i < len(at) {
 			c.Seen[ids[i]] = at[i]
+			c.order = append(c.order, ids[i])
 		}
 	}
 	return c, nil

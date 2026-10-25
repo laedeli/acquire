@@ -766,3 +766,34 @@ func TestMatchingAReleaseToATitle(t *testing.T) {
 		}
 	}
 }
+
+// A source that dates one release a year ahead, or whose newest page reaches
+// back weeks, has each release looked at once: the cursor keeps what acquire
+// saw by its own clock, not by the source's dates.
+func TestACursorIsKeptByAcquiresClock(t *testing.T) {
+	for name, items := range map[string][]feedItem{
+		"a release dated a year ahead": append([]feedItem{tv("Other.Show.S09E09.1080p.WEB-GRP", time.Now().AddDate(1, 0, 0))},
+			tv("Other.Show.S01E01.1080p.WEB-GRP", ago(time.Minute)), tv("Other.Show.S01E02.1080p.WEB-GRP", ago(2*time.Minute))),
+		"a page that reaches back weeks": {tv("Other.Show.S01E01.1080p.WEB-GRP", ago(time.Hour)),
+			tv("Other.Show.S01E02.1080p.WEB-GRP", ago(10*24*time.Hour)), tv("Other.Show.S01E03.1080p.WEB-GRP", ago(20*24*time.Hour))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFollowRig(t)
+			ctx := context.Background()
+			_, eps := track(t, r.svc, 990711, "Show Name", 1, true)
+			_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-3), 0)
+			addFeed(t, r.svc, "feed", newFeedSource(t, true, items...))
+			if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+				t.Fatal(err)
+			}
+			var news []int
+			for i := 0; i < 3; i++ {
+				run, _ := r.svc.SyncRSS(ctx)
+				news = append(news, run.New)
+			}
+			if fmt.Sprint(news) != fmt.Sprint([]int{len(items), 0, 0}) {
+				t.Errorf("new per run: %v, want each looked at once", news)
+			}
+		})
+	}
+}
