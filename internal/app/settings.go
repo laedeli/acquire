@@ -112,11 +112,12 @@ func (p SearchSettings) dueOrder() store.DueOrder {
 
 // Grabs reports whether the policy lets an automatic grab — the sweep's, a
 // newest release's — take a target: any with AutoGrab, a new one with
-// AutoGrabNew; nothing of a title held for an admin's approval, and nothing
-// of a series the import says is anime or daily (handsOff). Whether the
-// target can be grabbed at all is the caller's.
+// AutoGrabNew; nothing of a title held for an admin's approval, nothing of a
+// series the import says is anime or daily (handsOff), and no requested
+// movie whose window is a guess (guessedWindow). Whether the target can be
+// grabbed at all is the caller's.
 func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) bool {
-	if title.HeldForApproval() || handsOff(title) {
+	if title.HeldForApproval() || handsOff(title) || guessedWindow(t) {
 		return false
 	}
 	return p.AutoGrab || (p.AutoGrabNew && isNew(title, t, p.newWithin(), now))
@@ -154,6 +155,14 @@ func (p SearchSettings) grabbedWhen() string {
 	}
 	return stamp + " (TVmaze's air times), else " + date
 }
+
+// guessedWindow reports whether a requested movie is searched from a guess:
+// TMDB dates it in cinemas only, and its window is 90 days after it came
+// there. No automatic grab takes it — a release before one to watch at home
+// is most often a recording made in a cinema —; it is searched, and an admin
+// grabs it. Once TMDB dates a release to watch at home, it is grabbed on its
+// own, and a release published before that day is skipped (preAired).
+func guessedWindow(t store.Target) bool { return t.Kind == "movie" && t.ReleaseKind == "theatrical" }
 
 // GrabsAnything reports whether the policy lets automatic grabs take
 // anything at all.

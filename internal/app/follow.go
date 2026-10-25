@@ -294,7 +294,7 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 			v.Progress = &p
 			status, detail := requestState(p, now, pol)
 			v.Status, v.Detail = approvalState(w.Approval, status, detail)
-			auto := grabs && w.Approval == store.ApprovalApproved
+			auto := grabs && w.Approval == store.ApprovalApproved && (p.Movie == nil || !guessedWindow(*p.Movie))
 			v.AutoGrab = &auto
 		}
 		out = append(out, v)
@@ -471,13 +471,14 @@ func releaseWords(t *store.Target, now time.Time) string {
 }
 
 // guessWords says, of a movie whose window is set from its theatrical
-// release, how that window came about and that it may move.
+// release, how that window came about, that nothing grabs it on its own
+// meanwhile, and that it may change.
 func guessWords(t *store.Target) string {
 	if t.ReleaseKind != "theatrical" {
 		return ""
 	}
-	return fmt.Sprintf(", %d days after it came to cinemas — TMDB is read again daily, and a release to watch at home it dates sooner moves that",
-		int(theatricalWait.Hours()/24))
+	return fmt.Sprintf(", %d days after it came to cinemas: until TMDB dates one, only an admin grabs it — a release before one is "+
+		"most often a recording made in a cinema; TMDB is read again daily", int(theatricalWait.Hours()/24))
 }
 
 // notRead says why what TMDB says of a followed title could not be read, and

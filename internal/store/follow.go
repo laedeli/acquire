@@ -808,13 +808,16 @@ type FeedsWant struct {
 // WantedForFeeds counts the targets a release in a source's newest releases
 // could be grabbed for now, episodes and movies: wanted, aired and past the
 // air delay, monitored with their title, of holdings acquire knows, not
-// reserved — every one, or only the new things (newSQL).
+// reserved — every one, or only the new things (newSQL) —, and no requested
+// movie whose window is set from its theatrical release: no automatic grab
+// takes one.
 func (s *Store) WantedForFeeds(ctx context.Context, w FeedsWant) (episodes, movies int, err error) {
 	args := append(w.DueOrder.window(), w.All, w.NewWithinDays)
 	err = s.pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE a.kind = 'episode'), count(*) FILTER (WHERE a.kind = 'movie')
 		  FROM acquisition_targets a JOIN titles t ON t.id = a.title_id
-		 WHERE `+sweepableSQL(openParams{delay: "$1", stampDelay: "$2", stamps: "$3"})+` AND ($4 OR `+newSQL("$5")+`)`,
+		 WHERE `+sweepableSQL(openParams{delay: "$1", stampDelay: "$2", stamps: "$3"})+` AND ($4 OR `+newSQL("$5")+`)
+		   AND NOT (a.kind = 'movie' AND a.release_kind = 'theatrical')`,
 		args...).Scan(&episodes, &movies)
 	return episodes, movies, err
 }

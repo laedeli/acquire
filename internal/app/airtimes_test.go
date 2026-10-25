@@ -570,3 +570,77 @@ func TestWhenAnAutomaticGrabTakesAnEpisode(t *testing.T) {
 		}
 	}
 }
+
+// A requested movie TMDB dates in cinemas only is searched from 90 days after
+// it came there — a guess — and never grabbed on its own meanwhile: what
+// turns up during the cinema run is most often a recording made there. An
+// admin grabs it. Once TMDB dates a release to watch at home, it is grabbed
+// on its own, and a release published before that day is skipped.
+func TestAMovieInCinemasOnlyIsNotGrabbedOnItsOwn(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	theatrical := day(-100)
+	dates := []map[string]any{{"type": 3, "release_date": theatrical.Format(time.RFC3339)}}
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(theatrical),
+			"imdb_id": "tt99009100", "release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US", "release_dates": dates}}}}
+	})
+	w, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, asAdmin("admin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	during := "Example.Clay.Film.2026.1080p.WEB-DL.x264-FAKE"
+	feedSrc := newFeedSource(t, true, film(during, *day(-50)))
+	addFeed(t, r.svc, "feed", feedSrc)
+	src := newFakeSource(t, "usenet", "K", during)
+	src.pubs = map[string]time.Time{during: *day(-50)}
+	addSource(t, r.svc, "example", src, nil)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true,
+		AirDelayHours: DefaultAirDelayHours}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Feeds != 0 || run.Grabbed != 0 {
+		t.Errorf("the feeds, for a movie in cinemas only: %+v", run)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	tg := target(t, r.svc, "movie:990100:movie")
+	if len(r.gw.added()) != 0 || tg.LastSearchAt == nil || tg.State != store.TargetWanted {
+		t.Errorf("the sweep searches it and grabs nothing: %+v (adds %d)", tg, len(r.gw.added()))
+	}
+	if v := r.view(t, w.ID); v.AutoGrab == nil || *v.AutoGrab || !strings.Contains(v.Detail, "until TMDB dates one, only an admin grabs it") {
+		t.Errorf("the request: %s %q %v", v.Status, v.Detail, v.AutoGrab)
+	}
+	// An admin grabs it.
+	if err := r.svc.AutoGrab(ctx, w.ID); err != nil {
+		t.Errorf("find & grab: %v", err)
+	}
+	if len(r.gw.added()) != 1 {
+		t.Errorf("handed over %d", len(r.gw.added()))
+	}
+
+	// A second movie: TMDB dates a digital release five days ago. The
+	// recording from the cinema run is skipped; the release from after is
+	// grabbed on its own.
+	r2 := newFollowRig(t)
+	r2.tmdb.set(func(f *fakeTMDB) {
+		f.movies[990101] = map[string]any{"id": 990101, "title": "Example Other Film", "status": "Released", "release_date": dateOf(theatrical),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US", "release_dates": append(dates,
+				map[string]any{"type": 4, "release_date": day(-5).Format(time.RFC3339)})}}}}
+	})
+	if _, _, err := r2.svc.Request(ctx, store.Wanted{TMDBID: 990101, MediaType: "movie", Title: "Example Other Film", Year: 2026}, asAdmin("admin")); err != nil {
+		t.Fatal(err)
+	}
+	r2.settle(t, false)
+	early, home := "Example.Other.Film.2026.1080p.WEB-DL.x264-FAKE", "Example.Other.Film.2026.1080p.WEB-DL.x264-GRP"
+	addFeed(t, r2.svc, "feed", newFeedSource(t, true, film(early, *day(-50)), film(home, *day(-4))))
+	if _, err := r2.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true,
+		AirDelayHours: DefaultAirDelayHours}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r2.svc.SyncRSS(ctx); run.Grabbed != 1 || r2.grabbed(t)[""] != home {
+		t.Errorf("out at home: %+v %v", run, r2.grabbed(t))
+	}
+}

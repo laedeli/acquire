@@ -933,8 +933,8 @@ func TestRequestState(t *testing.T) {
 		{"a movie in cinemas", store.Progress{Kind: "movie", HoldingsKnown: true, Movie: &store.Target{State: store.TargetWanted,
 			WindowAt: ptr(day(-10).Add(theatricalWait)), AirDate: day(-10), ReleaseKind: "theatrical"}}, "waiting",
 			"in cinemas since " + dateOf(day(-10)) + ", and TMDB dates no release to watch at home; searched from " +
-				day(-10).Add(theatricalWait).Format("2006-01-02 15:04 UTC") + " on, 90 days after it came to cinemas — TMDB is read again daily, " +
-				"and a release to watch at home it dates sooner moves that"},
+				day(-10).Add(theatricalWait).Format("2006-01-02 15:04 UTC") + " on, 90 days after it came to cinemas: until TMDB dates one, " +
+				"only an admin grabs it — a release before one is most often a recording made in a cinema; TMDB is read again daily"},
 		{"a movie on its way", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetDownloaded, Detail: "downloaded; copying"}},
 			"downloading", "downloaded; copying"},
 		{"a movie held", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetHeld}}, "packaging", "in the library; being packaged"},
