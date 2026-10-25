@@ -953,3 +953,53 @@ func TestHandsOff(t *testing.T) {
 		t.Errorf("the feeds are read for %d episodes, want the one of the series acquire can tell", eps)
 	}
 }
+
+// An episode a read of TMDB did not list is gone — hidden from the missing
+// tab — in a season no other rule reads again: that season is read again,
+// so the episode goes once a read a day later agrees, or comes back when TMDB
+// lists it again.
+func TestASeasonWithAGoneEpisodeIsReadAgain(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	if err := s.UpsertTitle(ctx, Title{TMDBID: 990055, Kind: "series", Title: "Imported Show", Monitored: true, MonitorNew: true, Status: "ended"}); err != nil {
+		t.Fatal(err)
+	}
+	id := "series:990055"
+	ep := func(sn, e int) EpisodeRead {
+		return EpisodeRead{Season: sn, Episode: e, AirDate: day(-900 + sn*100 + e)}
+	}
+	all := SeriesRead{Status: "Ended", Seasons: map[int]int{1: 3, 2: 2}, Read: []int{1, 2},
+		Episodes: []EpisodeRead{ep(1, 1), ep(1, 2), ep(1, 3), ep(2, 1), ep(2, 2)}}
+	if _, err := s.ApplySeriesInventory(ctx, id, all); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySeriesHoldings(ctx, id, "", "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	listed := map[int]int{1: 3, 2: 2}
+	if got, _ := s.SeasonsToRead(ctx, id, listed, false); fmt.Sprint(got) != "[2]" {
+		t.Fatalf("seasons read again before: %v, want the last alone", got)
+	}
+	// TMDB's answer of season 1 is short one episode.
+	short := all
+	short.Episodes = []EpisodeRead{ep(1, 1), ep(1, 2), ep(2, 1), ep(2, 2)}
+	if ch, err := s.ApplySeriesInventory(ctx, id, short); err != nil || ch.Gone != 1 {
+		t.Fatalf("the short read: %+v %v", ch, err)
+	}
+	if miss, _ := s.Missing(ctx, 50); len(miss) != 4 {
+		t.Errorf("missing: %d, want the gone one hidden", len(miss))
+	}
+	if got, _ := s.SeasonsToRead(ctx, id, listed, false); fmt.Sprint(got) != "[1 2]" {
+		t.Errorf("seasons read again: %v, want season 1 too", got)
+	}
+	// TMDB lists it again: back, and season 1 is no longer read for it.
+	if _, err := s.ApplySeriesInventory(ctx, id, all); err != nil {
+		t.Fatal(err)
+	}
+	if three, _ := s.GetTarget(ctx, id+":s01e003"); three.TMDBGoneAt != nil {
+		t.Errorf("listed again, still gone: %+v", three)
+	}
+	if got, _ := s.SeasonsToRead(ctx, id, listed, false); fmt.Sprint(got) != "[2]" {
+		t.Errorf("seasons read again after: %v", got)
+	}
+}

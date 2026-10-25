@@ -768,8 +768,10 @@ func (s *Store) MovieInventoryDue(ctx context.Context, every time.Duration, limi
 // SeasonsToRead says which seasons of a series a read of TMDB looks at again,
 // of the seasons TMDB lists (listed, with their episode counts): every one
 // when never read; else one acquire does not know, one whose episode count
-// changed, the last one, and one with an episode that aired in the last 60
-// days, airs in the next 14 or has no air date yet.
+// changed, the last one, one with an episode that aired in the last 60 days,
+// airs in the next 14 or has no air date yet — and one with an episode the
+// last read of it did not list, so that what TMDB dropped goes once a read a
+// day later agrees, and what it lists again comes back.
 func (s *Store) SeasonsToRead(ctx context.Context, titleID string, listed map[int]int, full bool) ([]int, error) {
 	var out []int
 	if full {
@@ -800,7 +802,8 @@ func (s *Store) SeasonsToRead(ctx context.Context, titleID string, listed map[in
 	rows, err = s.pool.Query(ctx, `
 		SELECT DISTINCT season_number FROM acquisition_targets
 		 WHERE title_id = $1 AND kind = 'episode'
-		   AND (air_date IS NULL OR air_date BETWEEN (now() AT TIME ZONE 'UTC')::date - 60 AND (now() AT TIME ZONE 'UTC')::date + 14)`, titleID)
+		   AND (air_date IS NULL OR air_date BETWEEN (now() AT TIME ZONE 'UTC')::date - 60 AND (now() AT TIME ZONE 'UTC')::date + 14
+		        OR tmdb_gone_at IS NOT NULL)`, titleID)
 	if err != nil {
 		return nil, err
 	}
