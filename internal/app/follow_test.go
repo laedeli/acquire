@@ -402,12 +402,13 @@ func TestRemovingTheLastRequestEndsTheFollow(t *testing.T) {
 	}
 }
 
-// A request from someone who is not an admin awaits an admin's approval: its
-// series is followed — its episodes read from TMDB, kept up to date — but
-// nothing of it is grabbed on its own, by the sweep or the feeds, until an
-// admin approves it. A declined request stays, saying so, and its follow
-// ends. An admin's own request is approved at once, as everyone's is with
-// requests.autoApprove.
+// A request from someone who is not an admin awaits an admin's approval, and
+// changes nothing meanwhile: its series, which acquire did not track, is
+// made, followed and monitored by nobody; TMDB is read for what it says of
+// it, and its episodes are made once it is approved — nothing of it searched
+// or grabbed before. A declined request stays, saying so. An admin's own
+// request is approved at once, as everyone's is with requests.autoApprove —
+// approved by the setting, not by whoever asked.
 func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
@@ -423,12 +424,13 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 		t.Fatalf("a user's request: %+v %v", w, err)
 	}
 	r.settle(t, false)
-	if targets, _ := r.svc.st.TitleTargets(ctx, "series:990001"); len(targets) != 13 {
-		t.Errorf("its episodes, read from TMDB meanwhile: %d", len(targets))
+	title, _ := r.svc.st.TitleByID(ctx, "series:990001")
+	if targets, _ := r.svc.st.TitleTargets(ctx, title.ID); len(targets) != 0 || title.Monitored || title.Followed() || title.InventoryAt == nil {
+		t.Errorf("awaiting approval: %d episodes made, %+v", len(targets), title)
 	}
 	v := r.view(t, w.ID)
-	if v.Status != "awaiting" || !strings.HasPrefix(v.Detail, "waiting for an admin's approval; until then nothing of it is searched or grabbed on its own · 13 episodes") ||
-		v.AutoGrab == nil || *v.AutoGrab {
+	if v.Status != "awaiting" || v.AutoGrab == nil || *v.AutoGrab ||
+		v.Detail != "waiting for an admin's approval: until then nothing of it is searched or grabbed · TMDB lists 1 season of it; its episodes are tracked once it is approved" {
 		t.Errorf("awaiting approval: %s %q %v", v.Status, v.Detail, v.AutoGrab)
 	}
 	feedSrc := newFeedSource(t, true, tv("Example.Saga.Seven.Harbours.S01E07.1080p.WEB.h264-GRP", ago(time.Hour)))
@@ -439,8 +441,8 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	if run, _ := r.svc.SyncRSS(ctx); run.Feeds != 0 || len(r.gw.added()) != 0 {
 		t.Errorf("the feeds, awaiting approval: %+v", run)
 	}
-	if err := r.svc.SweepBacklog(ctx, 10); err != nil || len(feedSrc.reads()) != 0 || len(r.gw.added()) != 0 {
-		t.Errorf("the sweep, awaiting approval: %v (reads %d, adds %d)", err, len(feedSrc.reads()), len(r.gw.added()))
+	if due, _ := r.svc.st.DueTargetsBy(ctx, 50, r.svc.grabPolicy(ctx).dueOrder()); len(due) != 0 {
+		t.Errorf("due awaiting approval: %v", ids(due))
 	}
 
 	// Asked again by the user: the same request, still awaiting.
@@ -448,9 +450,17 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 		again.Approval != store.ApprovalAwaiting {
 		t.Errorf("asked again by the user: %+v", again)
 	}
-	// Approved: grabbed on its own as the policy allows.
+	// Approved: followed, its episodes made, and grabbed on its own as the
+	// policy allows.
 	if ok, err := r.svc.ApproveRequest(ctx, w.ID, "admin"); err != nil || ok.Approval != store.ApprovalApproved || ok.DecidedBy != "admin" || ok.DecidedAt == nil {
 		t.Fatalf("approved: %+v %v", ok, err)
+	}
+	if v := r.view(t, w.ID); v.Status != "following" || v.Detail != "reading its episodes from TMDB" {
+		t.Errorf("approved, before its episodes are read: %s %q", v.Status, v.Detail)
+	}
+	r.settle(t, false)
+	if targets, _ := r.svc.st.TitleTargets(ctx, title.ID); len(targets) != 13 {
+		t.Errorf("its episodes once approved: %d", len(targets))
 	}
 	if v := r.view(t, w.ID); v.Status != "following" || !*v.AutoGrab {
 		t.Errorf("approved: %s %q", v.Status, v.Detail)
@@ -462,6 +472,13 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	// Declined: it stays, saying so, and its movie is not followed.
 	m, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, user)
 	r.settle(t, false)
+	if v := r.view(t, m.ID); v.Status != "awaiting" ||
+		v.Detail != "waiting for an admin's approval: until then nothing of it is searched or grabbed · out digitally since "+dateOf(day(-2)) {
+		t.Errorf("a movie awaiting approval: %s %q", v.Status, v.Detail)
+	}
+	if tg, _ := r.svc.st.TargetAt(ctx, "movie:990100", nil, nil); tg.Monitored {
+		t.Errorf("the movie's target awaiting approval: %+v", tg)
+	}
 	if _, err := r.svc.DeclineRequest(ctx, m.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +488,13 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	if title, _ := r.svc.st.TitleByID(ctx, "movie:990100"); title.Followed() || title.Monitored {
 		t.Errorf("the declined request's movie: %+v", title)
 	}
-	// An admin asking for it approves it, and it is followed again.
+	// A user asking again gets the declined request.
+	if again, created, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "x"}, Requester{Sub: "user-2"}); created ||
+		again.ID != m.ID || again.Approval != store.ApprovalDeclined {
+		t.Errorf("a user asking again: %+v", again)
+	}
+	// An admin asking for it approves it, and it is followed — its target
+	// monitored.
 	if again, created, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film"}, asAdmin("admin")); err != nil ||
 		created || again.ID != m.ID || again.Approval != store.ApprovalApproved {
 		t.Errorf("an admin asking for it: %+v %v", again, err)
@@ -479,11 +502,15 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	if title, _ := r.svc.st.TitleByID(ctx, "movie:990100"); !title.Followed() || !title.Monitored || !title.Approved {
 		t.Errorf("approved by an admin's asking: %+v", title)
 	}
+	if tg, _ := r.svc.st.TargetAt(ctx, "movie:990100", nil, nil); !tg.Monitored {
+		t.Errorf("the approved movie's target: %+v", tg)
+	}
 	if _, err := r.svc.ApproveRequest(ctx, "w_none", "admin"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("approving no request: %v", err)
 	}
 
-	// requests.autoApprove: a user's request is approved at once.
+	// requests.autoApprove: a user's request is approved at once — by the
+	// setting.
 	if _, err := r.svc.PutRequestSettings(ctx, RequestSettings{AutoApprove: true}, 0, "admin"); err != nil {
 		t.Fatal(err)
 	}
@@ -493,13 +520,134 @@ func TestARequestAwaitsAnAdminsApproval(t *testing.T) {
 	r.tmdb.set(func(f *fakeTMDB) {
 		f.series[990002] = &tmdbSeries{name: "Another Saga", status: "Ended", seasons: map[int][]tmdbEpisode{}}
 	})
-	if auto, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990002, MediaType: "series", Title: "Another Saga"}, user); auto.Approval != store.ApprovalApproved {
+	if auto, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990002, MediaType: "series", Title: "Another Saga"}, user); auto.Approval != store.ApprovalApproved ||
+		auto.DecidedBy != "autoApprove" || auto.RequestedBy != "user" {
 		t.Errorf("with autoApprove: %+v", auto)
 	}
 	// A request that follows nothing has nothing to approve.
 	plain, _, _ := r.svc.Request(ctx, store.Wanted{Title: "Some Film", MediaType: "movie"}, user)
 	if _, err := r.svc.ApproveRequest(ctx, plain.ID, "admin"); !IsNoFollow(err) || plain.Approval != "" {
 		t.Errorf("approving a request that follows nothing: %v %+v", err, plain)
+	}
+}
+
+// A request awaiting approval for a title acquire tracks changes nothing of
+// it: an admin who stopped monitoring it, or its new seasons, finds it so —
+// a season TMDB announces meanwhile is not monitored, nor grabbed — and the
+// request read nothing of its episodes. Declined, nothing was to undo.
+func TestARequestAwaitingApprovalChangesNothingOfATrackedTitle(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	monitored, _ := track(t, r.svc, 990711, "Show Name", 2, true)
+	sqlExec(t, `UPDATE titles SET monitor_new = false WHERE id = $1`, monitored.ID)
+	sqlExec(t, `INSERT INTO seasons (title_id, season_number, episode_count, monitored) VALUES ($1, 1, 2, true)
+	            ON CONFLICT (title_id, season_number) DO UPDATE SET monitored = true`, monitored.ID)
+	unmonitored, _ := track(t, r.svc, 990712, "Other Show", 1, true)
+	sqlExec(t, `UPDATE titles SET monitored = false, monitor_new = false WHERE id = $1`, unmonitored.ID)
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[990711] = &tmdbSeries{name: "Show Name", status: "Returning Series", tvdb: 1,
+			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-300)}, {title: "Two", air: day(-299)}}}}
+		f.series[990712] = &tmdbSeries{name: "Other Show", status: "Returning Series", tvdb: 2,
+			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-300)}}, 2: {{title: "New", air: day(-3)}}}}
+	})
+	r.svc.RequestInventory(monitored.ID)
+	r.settle(t, false)
+	user := Requester{Sub: "user"}
+	a, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990711, MediaType: "series", Title: "Show Name"}, user)
+	b, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990712, MediaType: "series", Title: "Other Show"}, user)
+	r.settle(t, false)
+	if ti, _ := r.svc.st.TitleByID(ctx, monitored.ID); ti.Followed() || !ti.Monitored || ti.MonitorNew {
+		t.Errorf("the monitored series, awaiting: %+v", ti)
+	}
+	if ti, _ := r.svc.st.TitleByID(ctx, unmonitored.ID); ti.Followed() || ti.Monitored || ti.MonitorNew {
+		t.Errorf("the unmonitored series, awaiting: %+v", ti)
+	}
+	if targets, _ := r.svc.st.TitleTargets(ctx, unmonitored.ID); len(targets) != 1 {
+		t.Errorf("the unmonitored series' episodes, awaiting: %d, want its one, nothing read", len(targets))
+	}
+	if v := r.view(t, a.ID); !strings.HasPrefix(v.Detail, "waiting for an admin's approval; until then acquire goes on with it as before the request · 2 episodes") {
+		t.Errorf("a tracked title awaiting: %q", v.Detail)
+	}
+
+	// TMDB announces a second season of the monitored one, aired three
+	// days ago: not monitored, nor grabbed.
+	r.tmdb.set(func(f *fakeTMDB) { f.series[990711].seasons[2] = []tmdbEpisode{{title: "New", air: day(-3)}} })
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = $1`, monitored.ID)
+	r.settle(t, true)
+	s2 := target(t, r.svc, "series:990711:s02e001")
+	ti, _ := r.svc.st.TitleByID(ctx, monitored.ID)
+	pol := SearchSettings{AutoGrabNew: true, AirDelayHours: 30}
+	if s2.Monitored || pol.Grabs(ti, s2, time.Now()) {
+		t.Errorf("a new season the admin does not monitor, awaiting: %+v", s2)
+	}
+	for _, w := range []store.Wanted{a, b} {
+		if _, err := r.svc.DeclineRequest(ctx, w.ID, "admin"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ti, _ := r.svc.st.TitleByID(ctx, monitored.ID); !ti.Monitored || ti.MonitorNew {
+		t.Errorf("declined: %+v", ti)
+	}
+	if ti, _ := r.svc.st.TitleByID(ctx, unmonitored.ID); ti.Monitored || ti.MonitorNew {
+		t.Errorf("declined: %+v", ti)
+	}
+}
+
+// An admin grabbing a movie request awaiting approval — a find & grab, a
+// release picked for it — approves it. A series request is grabbed episode
+// by episode, never as a whole: find & grab refuses it and approves nothing.
+// Nothing of a title held for approval is grabbed from the missing tab.
+func TestGrabbingARequestApprovesIt(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[990001] = sevenHarbours()
+		f.movies[990100] = map[string]any{"id": 990100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+				"release_dates": []map[string]any{{"type": 4, "release_date": day(-5).Format(time.RFC3339)}}}}}}
+	})
+	user := Requester{Sub: "user"}
+	series, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990001, MediaType: "series", Title: "Example Saga"}, user)
+	movie, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, user)
+	r.settle(t, false)
+	release := "Example.Clay.Film.2026.1080p.WEB-DL.x264-GRP"
+	src := newFakeSource(t, "usenet", "K", release)
+	addSource(t, r.svc, "example", src, nil)
+
+	// The missing tab takes nothing of either.
+	if q, _ := r.svc.RequestTargetGrabs(ctx, []string{"movie:990100:movie"}); len(q) != 0 {
+		t.Errorf("grab all, awaiting: %v", q)
+	}
+	if _, err := r.svc.GrabTarget(ctx, "movie:990100:movie", "missing"); !errors.Is(err, errAwaitsApproval) {
+		t.Errorf("grab now, awaiting: %v", err)
+	}
+
+	// Find & grab of the series: refused, and nothing approved.
+	if err := r.svc.ApproveForGrab(ctx, series.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.AutoGrab(ctx, series.ID); !errors.Is(err, errFollowsSeries) {
+		t.Errorf("find & grab of a series request: %v", err)
+	}
+	if got, _ := r.svc.st.GetWanted(ctx, series.ID); got.Approval != store.ApprovalAwaiting {
+		t.Errorf("the series request: %+v", got)
+	}
+	// A release picked for the movie: approved, and grabbed.
+	if err := r.svc.ApproveForGrab(ctx, movie.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.svc.Releases(ctx, movie.ID)
+	if err != nil || len(res.Candidates) != 1 {
+		t.Fatalf("the releases: %+v %v", res, err)
+	}
+	if err := r.svc.GrabCandidate(ctx, movie.ID, res.Candidates[0]); err != nil {
+		t.Errorf("the pick: %v", err)
+	}
+	if got, _ := r.svc.st.GetWanted(ctx, movie.ID); got.Approval != store.ApprovalApproved || got.DecidedBy != "admin" {
+		t.Errorf("the movie request: %+v", got)
+	}
+	if len(r.gw.added()) != 1 {
+		t.Errorf("handed over %d", len(r.gw.added()))
 	}
 }
 
@@ -840,6 +988,7 @@ func TestWhatIsNew(t *testing.T) {
 	}
 	old := ep(day(-400), nil)
 	fresh := ep(day(-1), nil)
+	old.Monitored, fresh.Monitored, tracked.Monitored = true, true, true
 	for _, tc := range []struct {
 		name         string
 		pol          SearchSettings
@@ -855,14 +1004,19 @@ func TestWhatIsNew(t *testing.T) {
 			t.Errorf("%s: old %v fresh %v anything %v", tc.name, tc.pol.Grabs(tracked, old, now), tc.pol.Grabs(tracked, fresh, now), tc.pol.GrabsAnything())
 		}
 		// A title held for an admin's approval, a series the import says is
-		// anime or daily: nothing on its own.
-		if tc.pol.Grabs(store.Title{Kind: "series", FollowedAt: &followed, Origin: store.OriginRequest}, fresh, now) {
+		// anime or daily, what is not monitored: nothing on its own.
+		if tc.pol.Grabs(store.Title{Kind: "series", Monitored: true, Origin: store.OriginRequest}, fresh, now) {
 			t.Errorf("%s: a title held for approval is grabbed on its own", tc.name)
 		}
 		for _, kind := range []string{"anime", "daily"} {
-			if tc.pol.Grabs(store.Title{Kind: "series", SeriesType: kind}, fresh, now) {
+			if tc.pol.Grabs(store.Title{Kind: "series", Monitored: true, SeriesType: kind}, fresh, now) {
 				t.Errorf("%s: a series of type %s is grabbed on its own", tc.name, kind)
 			}
+		}
+		unmonitored := fresh
+		unmonitored.Monitored = false
+		if tc.pol.Grabs(tracked, unmonitored, now) || tc.pol.Grabs(store.Title{Kind: "series"}, fresh, now) {
+			t.Errorf("%s: what is not monitored is grabbed on its own", tc.name)
 		}
 	}
 }

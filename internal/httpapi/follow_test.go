@@ -182,6 +182,24 @@ func TestRequestsAwaitAnAdminsApproval(t *testing.T) {
 	if w, _ := call(t, h, http.MethodPost, "/api/wanted/"+plain["id"].(string)+"/approve", ""); w.Code != http.StatusConflict {
 		t.Errorf("approve a request that follows nothing -> %d %s", w.Code, w.Body.String())
 	}
+	// A release picked for a movie request awaiting approval approves it,
+	// whether or not its grab then goes; one picked for a series request
+	// approves nothing.
+	_, movie := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":990003,"mediaType":"movie","title":"Example Picked Film"}`)
+	_, series := asUser(http.MethodPost, "/api/wanted", `{"tmdbId":990004,"mediaType":"series","title":"Example Picked Show"}`)
+	for _, req := range []map[string]any{movie, series} {
+		call(t, h, http.MethodPost, "/api/wanted/"+req["id"].(string)+"/pick", `{"title":"x","source":"magnet:?xt=urn:btih:0"}`)
+	}
+	rec, _ := call(t, h, http.MethodGet, "/api/wanted", "")
+	var list []map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	approval := map[any]any{}
+	for _, x := range list {
+		approval[x["id"]] = x["approval"]
+	}
+	if approval[movie["id"]] != "approved" || approval[series["id"]] != "awaiting" {
+		t.Errorf("after a pick: the movie request %v, the series request %v", approval[movie["id"]], approval[series["id"]])
+	}
 
 	if w, doc := call(t, h, http.MethodGet, "/api/settings/requests", ""); w.Code != 200 || doc["autoApprove"] != false {
 		t.Errorf("GET /api/settings/requests -> %d %s", w.Code, w.Body.String())

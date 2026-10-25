@@ -159,7 +159,7 @@ func (s *Service) retryFollows(ctx context.Context) bool {
 	if !s.tm.Enabled() {
 		return false
 	}
-	ids, err := s.st.FollowsNotRead(ctx)
+	ids, err := s.st.RequestedNotRead(ctx)
 	if err != nil || len(ids) == 0 {
 		return false
 	}
@@ -260,7 +260,7 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		if unknown {
 			reconcile = append(reconcile, t.ID)
 		}
-		if schedule && t.Kind == "series" {
+		if schedule && t.Kind == "series" && !headOnly(t) {
 			schedule = s.readSchedule(ctx, t.ID, &run)
 		}
 		return true
@@ -386,6 +386,15 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 	for _, season := range head.Seasons {
 		listed[season.Number] = season.EpisodeCount
 	}
+	if headOnly(t) {
+		// A request awaiting approval reads what TMDB says of the series,
+		// and makes nothing of its seasons or episodes.
+		return ch, false, s.st.ApplySeriesHead(ctx, t.ID, store.SeriesRead{
+			TVDBID: head.TVDBID, IMDBID: head.IMDBID, Name: head.Name, Year: head.Year(),
+			Status: head.Status, Running: tmdb.Running(head.Status), Aliases: head.Aliases, Countries: head.Countries,
+			Genres: head.Genres, Type: head.Type, Seasons: listed,
+		})
+	}
 	toRead, err := s.st.SeasonsToRead(ctx, t.ID, listed, full || t.InventoryAt == nil)
 	if err != nil {
 		return ch, false, err
@@ -472,6 +481,11 @@ func scheduleDue(t store.Title, now time.Time) bool {
 	}
 	return now.Sub(*t.ScheduleAt) >= scheduleEvery
 }
+
+// headOnly reports whether a read of a series makes nothing of its seasons
+// and episodes: nobody monitors it and no approved request follows it — a
+// request awaiting an admin's approval asks for it.
+func headOnly(t store.Title) bool { return t.Kind == "series" && !t.Monitored && !t.Followed() }
 
 // tmdbError says what a failed call to TMDB means for the run. TMDB out of
 // reach, failing (5xx), limiting (429) or refusing the key (401) is TMDB's

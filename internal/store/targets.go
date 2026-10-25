@@ -150,10 +150,11 @@ const knownSQL = `t.holdings_at IS NOT NULL AND (a.added_at IS NULL OR a.added_a
 
 // missingSQL is what "missing" means everywhere — the Missing view, the series
 // overview and the counts: aired, monitored (the target and its title), not
-// held, listed by TMDB (not gone from its last read), and of holdings acquire
-// knows. A title whose holdings are unknown is not missing anything that
-// acquire can tell.
-const missingSQL = `a.state <> 'held' AND a.monitored AND t.monitored AND a.tmdb_gone_at IS NULL AND ` + knownSQL + ` AND ` + airedSQL
+// held, listed by TMDB (not gone from its last read), of holdings acquire
+// knows, and not of a title held for an admin's approval. A title whose
+// holdings are unknown is not missing anything that acquire can tell.
+const missingSQL = `a.state <> 'held' AND a.monitored AND t.monitored AND a.tmdb_gone_at IS NULL AND ` + knownSQL + ` AND ` + airedSQL +
+	` AND NOT ` + heldForApprovalSQL
 
 // UpsertTarget creates or updates a target by its coordinates. The unique index
 // is (title_id, season_number, episode_number) NULLS NOT DISTINCT, so a movie —
@@ -169,6 +170,8 @@ func (s *Store) UpsertTarget(ctx context.Context, t Target) error {
 		ON CONFLICT (title_id, season_number, episode_number) DO UPDATE
 		   SET air_date  = EXCLUDED.air_date,
 		       monitored = EXCLUDED.monitored,
+		       -- The import says what is monitored: no follow's any more.
+		       follow_monitored = false,
 		       updated_at = now()`,
 		t.ID, t.TitleID, t.Kind, t.SeasonNumber, t.EpisodeNumber, t.AirDate, t.Monitored, t.State)
 	return err

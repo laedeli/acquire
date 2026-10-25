@@ -111,18 +111,18 @@ const longSeasonSQL = `EXISTS (SELECT 1 FROM seasons s WHERE s.title_id = t.id A
 const handsOffSQL = `(t.kind = 'series' AND (t.series_type IN ('anime', 'daily') OR t.tmdb_type IN ('Talk Show', 'News')
 	OR (16 = ANY(t.genres) AND 'JP' = ANY(t.origin_country)) OR ` + longSeasonSQL + `))`
 
-// HeldForApproval reports whether nothing of a followed title may be grabbed
-// on its own: no request that follows it is approved yet, and it is monitored
-// only because of them — a request made it, or it was not monitored before.
-func (t Title) HeldForApproval() bool {
-	return t.Followed() && !t.Approved && (t.Origin == OriginRequest || t.PreMonitored == nil || !*t.PreMonitored)
-}
+// HeldForApproval reports whether nothing of a title may be grabbed — on its
+// own, or from the missing tab — until an admin approves a request for it: a
+// request created it, and none of its requests is approved. A title acquire
+// tracked before is the admin's: a request awaiting approval changes nothing
+// of it.
+func (t Title) HeldForApproval() bool { return t.Origin == OriginRequest && !t.Approved }
 
 // approvedSQL is Title.Approved of the title t.
 const approvedSQL = `EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval = 'approved')`
 
 // heldForApprovalSQL is Title.HeldForApproval of the title t.
-const heldForApprovalSQL = `(` + followedSQL + ` AND NOT ` + approvedSQL + ` AND (t.origin = 'request' OR NOT COALESCE(t.pre_monitored, false)))`
+const heldForApprovalSQL = `(t.origin = 'request' AND NOT ` + approvedSQL + `)`
 
 // OriginRequest is the origin of a title a request created.
 const OriginRequest = "request"

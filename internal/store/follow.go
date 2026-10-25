@@ -20,26 +20,66 @@ import (
 // remains the other way in; a title it tracks that is then requested is
 // followed too, and keeps everything it had.
 
-// FollowTitle records that a request follows a title. A title acquire does
-// not track yet is created from what the request says of it — monitored,
-// origin request; TMDB fills in the rest when the title is first read. One
-// acquire tracks already is not made twice: it is monitored, with the seasons
-// to come, while the follow lasts — what its monitoring was before is kept,
-// and given back when the last request goes (UnfollowTitle) —, and it is
-// followed from the first request on, even one removed since. created
-// reports whether the title is new.
-func (s *Store) FollowTitle(ctx context.Context, t Title) (Title, bool, error) {
+// validTitle checks what a request says of a title, and names it.
+func validTitle(t Title) (Title, error) {
 	if t.TMDBID <= 0 {
-		return Title{}, false, fmt.Errorf("title %q has no tmdb id", t.Title)
+		return t, fmt.Errorf("title %q has no tmdb id", t.Title)
 	}
 	if t.Kind != "series" && t.Kind != "movie" {
-		return Title{}, false, fmt.Errorf("title %q is neither a series nor a movie", t.Title)
+		return t, fmt.Errorf("title %q is neither a series nor a movie", t.Title)
 	}
 	if t.ID == "" {
 		t.ID = TitleID(t.Kind, t.TMDBID)
 	}
+	return t, nil
+}
+
+// RequestTitle is the title a request awaiting an admin's approval asks for:
+// the one acquire tracks, untouched, or — when it tracks none — one created
+// from what the request says of it, origin request, monitored by nobody and
+// followed by nobody until a request for it is approved (FollowTitle).
+// created reports whether the title is new.
+func (s *Store) RequestTitle(ctx context.Context, t Title) (Title, bool, error) {
+	t, err := validTitle(t)
+	if err != nil {
+		return Title{}, false, err
+	}
 	var created bool
-	out, err := scanTitle(s.pool.QueryRow(ctx, `
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO titles (id, tmdb_id, kind, title, sort_title, year, monitored, monitor_new, origin)
+		VALUES ($1, $2, $3, $4, $5, NULLIF($6::int, 0), false, false, $7)
+		ON CONFLICT (tmdb_id, kind) DO NOTHING
+		RETURNING true`,
+		t.ID, t.TMDBID, t.Kind, t.Title, SortTitle(t.Title), t.Year, OriginRequest).Scan(&created)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Title{}, false, err
+	}
+	out, err := scanTitle(s.pool.QueryRow(ctx, `SELECT `+titleCols+` FROM titles t WHERE t.tmdb_id = $1 AND t.kind = $2`, t.TMDBID, t.Kind))
+	return out, created, err
+}
+
+// FollowTitle records that an approved request follows a title. A title
+// acquire does not track yet is created from what the request says of it —
+// monitored, origin request; TMDB fills in the rest when the title is first
+// read. One acquire tracks already is not made twice: it is monitored, with
+// the seasons to come, while the follow lasts — what its monitoring was
+// before is kept, and given back when the follow ends (UnfollowTitle) —, and
+// it is followed from the first follow on, even one ended since. What a
+// follow before monitored of its seasons and episodes is monitored again; a
+// movie's one target is monitored, the follow's. created reports whether the
+// title is new.
+func (s *Store) FollowTitle(ctx context.Context, t Title) (Title, bool, error) {
+	t, err := validTitle(t)
+	if err != nil {
+		return Title{}, false, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Title{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var created bool
+	out, err := scanTitle(tx.QueryRow(ctx, `
 		INSERT INTO titles AS t (id, tmdb_id, kind, title, sort_title, year, monitored, monitor_new, followed_at, origin)
 		VALUES ($1, $2, $3, $4, $5, NULLIF($6::int, 0), true, true, now(), $7)
 		ON CONFLICT (tmdb_id, kind) DO UPDATE
@@ -49,26 +89,56 @@ func (s *Store) FollowTitle(ctx context.Context, t Title) (Title, bool, error) {
 		       followed_at = COALESCE(t.followed_at, now()), unfollowed_at = NULL, updated_at = now()
 		RETURNING `+titleCols+`, (t.xmax = 0)`,
 		t.ID, t.TMDBID, t.Kind, t.Title, SortTitle(t.Title), t.Year, OriginRequest), &created)
-	return out, created, err
+	if err != nil {
+		return Title{}, false, err
+	}
+	for _, q := range []string{
+		`UPDATE seasons SET monitored = true WHERE title_id = $1 AND follow_monitored AND NOT monitored`,
+		`UPDATE acquisition_targets SET monitored = true, updated_at = now() WHERE title_id = $1 AND follow_monitored AND NOT monitored`,
+		`UPDATE acquisition_targets SET monitored = true, follow_monitored = true, updated_at = now()
+		  WHERE title_id = $1 AND kind = 'movie' AND NOT monitored`,
+	} {
+		if _, err := tx.Exec(ctx, q, out.ID); err != nil {
+			return Title{}, false, err
+		}
+	}
+	return out, created, tx.Commit(ctx)
 }
 
-// UnfollowTitle ends a follow once no request follows the title any more —
-// none but declined ones —: it is followed no longer, and its monitoring is
-// what it was before the follow began — a title a request created is not
-// monitored any more, nothing of it hunted and TMDB not read for it; one an
-// admin had stopped monitoring is stopped again. Monitoring an admin turned
-// off while the follow lasted stays off.
+// UnfollowTitle ends a follow once no approved request follows the title any
+// more: it is followed no longer, and its monitoring is what it was before
+// the follow began — a title a request created is not monitored any more,
+// nothing of it hunted and TMDB not read for it; one an admin had stopped
+// monitoring is stopped again. Monitoring an admin turned off while the
+// follow lasted stays off. What the follow monitored of its seasons and
+// episodes is unmonitored.
 func (s *Store) UnfollowTitle(ctx context.Context, titleID string) error {
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
 		UPDATE titles t
 		   SET unfollowed_at = now(),
 		       monitored = t.monitored AND COALESCE(t.pre_monitored, t.origin <> $2),
 		       monitor_new = t.monitor_new AND COALESCE(t.pre_monitor_new, t.origin <> $2),
 		       pre_monitored = NULL, pre_monitor_new = NULL, updated_at = now()
 		 WHERE t.id = $1 AND `+followedSQL+`
-		   AND NOT EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval <> $3)`,
-		titleID, OriginRequest, ApprovalDeclined)
-	return err
+		   AND NOT EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval = $3)`,
+		titleID, OriginRequest, ApprovalApproved)
+	if err != nil || tag.RowsAffected() == 0 {
+		return err
+	}
+	for _, q := range []string{
+		`UPDATE seasons SET monitored = false WHERE title_id = $1 AND follow_monitored`,
+		`UPDATE acquisition_targets SET monitored = false, updated_at = now() WHERE title_id = $1 AND follow_monitored`,
+	} {
+		if _, err := tx.Exec(ctx, q, titleID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // SortTitle is how a title a request created sorts: its name in lower case,
@@ -164,11 +234,14 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var monitorNew bool
+	var monitorNew, followed bool
+	var preMonitored, preMonitorNew *bool
 	var grace int
 	var name, origin string
-	err = tx.QueryRow(ctx, `SELECT monitor_new, air_grace_hours, title, origin FROM titles WHERE id = $1 FOR UPDATE`, titleID).
-		Scan(&monitorNew, &grace, &name, &origin)
+	err = tx.QueryRow(ctx, `SELECT monitor_new, air_grace_hours, title, origin, followed_at IS NOT NULL AND unfollowed_at IS NULL,
+		       pre_monitored, pre_monitor_new
+		  FROM titles WHERE id = $1 FOR UPDATE`, titleID).
+		Scan(&monitorNew, &grace, &name, &origin, &followed, &preMonitored, &preMonitorNew)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ch, ErrNotFound
 	}
@@ -182,11 +255,7 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	if err := applyTitleRead(ctx, tx, titleID, r.TVDBID, r.IMDBID, r.Status, r.Name, r.Year, status, r.Countries); err != nil {
 		return ch, err
 	}
-	genres := make([]int32, 0, len(r.Genres))
-	for _, g := range r.Genres {
-		genres = append(genres, int32(g))
-	}
-	if _, err := tx.Exec(ctx, `UPDATE titles SET genres = $2, tmdb_type = $3 WHERE id = $1`, titleID, genres, strings.TrimSpace(r.Type)); err != nil {
+	if err := applyShowRead(ctx, tx, titleID, r); err != nil {
 		return ch, err
 	}
 	if err := replaceAliasesTx(ctx, tx, titleID, aliasesOf(name, origin, r.Name, r.Aliases), tmdbAliasSource); err != nil {
@@ -199,6 +268,13 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		return ch, err
 	}
 	monitorAll := r.MonitorAll || known == 0
+	// What the follow monitors is what would not be monitored without it:
+	// the title's own monitoring before the follow began (natural), as a
+	// derivation monitors a first read and the title its new seasons.
+	natTitle := followed && preMonitored != nil && *preMonitored
+	natAll := natTitle && known == 0
+	natNew := preMonitorNew != nil && *preMonitorNew
+	seasonFollow := followed && (monitorAll || monitorNew) && !(natTitle && (natAll || natNew))
 
 	seasons := make([]int32, 0, len(r.Seasons))
 	counts := make([]int32, 0, len(r.Seasons))
@@ -208,10 +284,10 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		}
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO seasons (title_id, season_number, episode_count, monitored)
-		SELECT $1, x.s, x.c, $4 FROM unnest($2::int[], $3::int[]) AS x(s, c)
+		INSERT INTO seasons (title_id, season_number, episode_count, monitored, follow_monitored)
+		SELECT $1, x.s, x.c, $4, $5 FROM unnest($2::int[], $3::int[]) AS x(s, c)
 		ON CONFLICT (title_id, season_number) DO UPDATE SET episode_count = EXCLUDED.episode_count`,
-		titleID, seasons, counts, monitorAll || monitorNew); err != nil {
+		titleID, seasons, counts, monitorAll || monitorNew, seasonFollow); err != nil {
 		return ch, fmt.Errorf("seasons of %s: %w", titleID, err)
 	}
 
@@ -277,9 +353,14 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		WITH e AS (
 		  SELECT * FROM unnest($2::text[], $3::int[], $4::int[], $5::text[], $6::timestamptz[], $9::bigint[]) AS e(id, season, episode, name, air, tid))
 		INSERT INTO acquisition_targets AS a (id, title_id, kind, season_number, episode_number, air_date,
-		                                      air_window_opens_at, episode_title, monitored, state, added_at, tmdb_episode_id)
+		                                      air_window_opens_at, episode_title, monitored, state, added_at, tmdb_episode_id,
+		                                      follow_monitored)
 		SELECT e.id, $1, 'episode', e.season, e.episode, (e.air AT TIME ZONE 'UTC')::date,
-		       e.air + make_interval(hours => $7), e.name, $8 OR COALESCE(s.monitored, true), 'wanted', now(), NULLIF(e.tid, 0)
+		       e.air + make_interval(hours => $7), e.name, $8 OR COALESCE(s.monitored, true), 'wanted', now(), NULLIF(e.tid, 0),
+		       -- monitored by the follow: monitored, and not without it — its
+		       -- season the follow's, or every episode of a first read.
+		       $10 AND ($8 OR COALESCE(s.monitored, true))
+		           AND NOT ($11 AND ($12 OR (COALESCE(s.monitored, true) AND NOT COALESCE(s.follow_monitored, false))))
 		  FROM e LEFT JOIN seasons s ON s.title_id = $1 AND s.season_number = e.season
 		ON CONFLICT (title_id, season_number, episode_number) DO UPDATE
 		   SET air_date = EXCLUDED.air_date, air_window_opens_at = EXCLUDED.air_window_opens_at,
@@ -293,7 +374,7 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		 WHERE a.air_date IS DISTINCT FROM EXCLUDED.air_date OR a.episode_title <> EXCLUDED.episode_title
 		    OR a.air_window_opens_at IS DISTINCT FROM EXCLUDED.air_window_opens_at
 		RETURNING (a.xmax = 0), COALESCE(a.air_window_opens_at <= now(), false)`,
-		titleID, nonNil(ids), es, en, nonNil(names), airs, grace, monitorAll, tids)
+		titleID, nonNil(ids), es, en, nonNil(names), airs, grace, monitorAll, tids, followed, natTitle, natAll)
 	if err != nil {
 		return ch, fmt.Errorf("targets of %s: %w", titleID, err)
 	}
@@ -384,6 +465,59 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	return ch, tx.Commit(ctx)
 }
 
+// ApplySeriesHead records what a read of TMDB's answer says of a series —
+// its ids, names, status, countries, genres and how many seasons it lists —
+// and nothing of its seasons or episodes: all a request awaiting an admin's
+// approval reads of a title nobody monitors. Its episodes are made once a
+// request is approved (ApplySeriesInventory).
+func (s *Store) ApplySeriesHead(ctx context.Context, titleID string, r SeriesRead) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var name, origin string
+	err = tx.QueryRow(ctx, `SELECT title, origin FROM titles WHERE id = $1 FOR UPDATE`, titleID).Scan(&name, &origin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	status := "ended"
+	if r.Running {
+		status = "continuing"
+	}
+	if err := applyTitleRead(ctx, tx, titleID, r.TVDBID, r.IMDBID, r.Status, r.Name, r.Year, status, r.Countries); err != nil {
+		return err
+	}
+	if err := applyShowRead(ctx, tx, titleID, r); err != nil {
+		return err
+	}
+	if err := replaceAliasesTx(ctx, tx, titleID, aliasesOf(name, origin, r.Name, r.Aliases), tmdbAliasSource); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// applyShowRead records what TMDB says of a series beyond any title's: its
+// genres, its kind of show and how many seasons it lists.
+func applyShowRead(ctx context.Context, tx pgx.Tx, titleID string, r SeriesRead) error {
+	genres := make([]int32, 0, len(r.Genres))
+	for _, g := range r.Genres {
+		genres = append(genres, int32(g))
+	}
+	listed := 0
+	for n := range r.Seasons {
+		if n >= 1 {
+			listed++
+		}
+	}
+	_, err := tx.Exec(ctx, `UPDATE titles SET genres = $2, tmdb_type = $3, tmdb_seasons = $4 WHERE id = $1`,
+		titleID, genres, strings.TrimSpace(r.Type), listed)
+	return err
+}
+
 // MovieRead is what one read of TMDB says of a movie.
 type MovieRead struct {
 	IMDBID    string
@@ -436,9 +570,10 @@ func (s *Store) ApplyMovieInventory(ctx context.Context, titleID string, r Movie
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO acquisition_targets AS a (id, title_id, kind, monitored, state, added_at, air_date,
-		                                      air_window_opens_at, release_pending, release_kind, release_country)
+		                                      air_window_opens_at, release_pending, release_kind, release_country, follow_monitored)
 		SELECT $2, t.id, 'movie', t.monitored, 'wanted', now(), (COALESCE($5::timestamptz, $3::timestamptz) AT TIME ZONE 'UTC')::date,
-		       $3::timestamptz, $3::timestamptz IS NULL, $4, $6
+		       $3::timestamptz, $3::timestamptz IS NULL, $4, $6,
+		       `+followedSQL+` AND t.monitored AND NOT COALESCE(t.pre_monitored, false)
 		  FROM titles t WHERE t.id = $1
 		ON CONFLICT (title_id, season_number, episode_number) DO UPDATE
 		   SET air_date = EXCLUDED.air_date, air_window_opens_at = EXCLUDED.air_window_opens_at,
@@ -575,12 +710,14 @@ func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Dura
 	return out, rows.Err()
 }
 
-// FollowsNotRead are the titles a request follows that TMDB could not be read
-// for yet — out of reach, failing —: read again soon, not on the next
-// refresh hours away.
-func (s *Store) FollowsNotRead(ctx context.Context) ([]string, error) {
+// RequestedNotRead are the titles of open requests — followed, or awaiting
+// an admin's approval — that TMDB could not be read for yet, out of reach or
+// failing: read again soon, not on the next refresh hours away.
+func (s *Store) RequestedNotRead(ctx context.Context) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `SELECT t.id FROM titles t
-		 WHERE `+followedSQL+` AND t.monitored AND t.inventory_at IS NULL AND t.inventory_error <> '' ORDER BY t.id`)
+		 WHERE t.inventory_at IS NULL AND t.inventory_error <> ''
+		   AND EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval <> 'declined')
+		 ORDER BY t.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -701,8 +838,14 @@ type Progress struct {
 	TMDBStatus string `json:"tmdbStatus,omitempty"`
 	Running    bool   `json:"running"`
 	// HandsOff is a series no automatic grab takes anything of
-	// (Title.HandsOff).
-	HandsOff      bool       `json:"handsOff,omitempty"`
+	// (Title.HandsOff). FromRequest is a title a request created; Seasons
+	// how many seasons TMDB lists of a series.
+	HandsOff    bool `json:"handsOff,omitempty"`
+	FromRequest bool `json:"fromRequest,omitempty"`
+	Seasons     int  `json:"seasons,omitempty"`
+	// EpisodesRead is set once the episodes of a series were read: not
+	// while a request awaits approval, nor until its first read after.
+	EpisodesRead  bool       `json:"episodesRead,omitempty"`
 	InventoryAt   *time.Time `json:"inventoryAt"`
 	InventoryErr  string     `json:"inventoryError,omitempty"`
 	HoldingsKnown bool       `json:"holdingsKnown"`
@@ -738,7 +881,9 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, `+handsOffSQL+`, t.inventory_at, t.inventory_error, t.holdings_at IS NOT NULL,
+		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, `+handsOffSQL+`, t.origin = 'request', t.tmdb_seasons,
+		       EXISTS (SELECT 1 FROM seasons s WHERE s.title_id = t.id),
+		       t.inventory_at, t.inventory_error, t.holdings_at IS NOT NULL,
 		       count(a.id) FILTER (WHERE a.monitored AND (a.tmdb_gone_at IS NULL OR a.state = 'held')),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held'),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held' AND a.held_playable),
@@ -765,7 +910,8 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		var season, episode *int
 		var title *string
 		var at *time.Time
-		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.HandsOff, &p.InventoryAt, &p.InventoryErr, &p.HoldingsKnown,
+		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.HandsOff, &p.FromRequest, &p.Seasons, &p.EpisodesRead,
+			&p.InventoryAt, &p.InventoryErr, &p.HoldingsKnown,
 			&p.Episodes, &p.Held, &p.Playable, &p.OnTheWay, &p.Missing, &p.Failed, &p.Unaired,
 			&season, &episode, &title, &at); err != nil {
 			rows.Close()

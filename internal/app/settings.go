@@ -112,12 +112,13 @@ func (p SearchSettings) dueOrder() store.DueOrder {
 
 // Grabs reports whether the policy lets an automatic grab — the sweep's, a
 // newest release's — take a target: any with AutoGrab, a new one with
-// AutoGrabNew; nothing of a title held for an admin's approval, nothing of a
+// AutoGrabNew; nothing not monitored, with its title; nothing of a title held
+// for an admin's approval, nothing of a
 // series the import says is anime or daily (handsOff), and no requested
 // movie whose window is a guess (guessedWindow). Whether the target can be
 // grabbed at all is the caller's.
 func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) bool {
-	if title.HeldForApproval() || handsOff(title) || guessedWindow(t) {
+	if !title.Monitored || !t.Monitored || title.HeldForApproval() || handsOff(title) || guessedWindow(t) {
 		return false
 	}
 	return p.AutoGrab || (p.AutoGrabNew && isNew(title, t, p.newWithin(), now))

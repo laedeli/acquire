@@ -260,6 +260,9 @@ func (s *Service) GrabTarget(ctx context.Context, targetID, via string) (store.T
 	if !store.Grabbable(t.State) {
 		return store.TargetGrab{}, &store.NotGrabbableError{TargetID: t.ID, State: t.State, Detail: t.Detail}
 	}
+	if title.HeldForApproval() {
+		return store.TargetGrab{}, errAwaitsApproval
+	}
 	cands, err := s.SearchTarget(ctx, targetID)
 	if cerr := ctx.Err(); cerr != nil {
 		// Cut short — a shutdown, a caller gone: no word on the target.
@@ -277,6 +280,10 @@ func (s *Service) GrabTarget(ctx context.Context, targetID, via string) (store.T
 	}
 	return s.grabBest(ctx, title, t, usable, via)
 }
+
+// errAwaitsApproval: a grab of a title a request awaiting an admin's
+// approval asked for. The admin approves the request first.
+var errAwaitsApproval = errors.New("its request awaits an admin's approval: approve it in the requests tab first")
 
 // searchFailed is a target's search that could not be done: no source to
 // ask, every source failing. It says nothing about the target.

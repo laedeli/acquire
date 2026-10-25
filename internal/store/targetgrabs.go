@@ -439,11 +439,12 @@ func (s *Store) GrabFiles(ctx context.Context, grabID string) ([]GrabFile, error
 // it queued; a target that is held or in flight is left as it is.
 func (s *Store) RequestTargetGrabs(ctx context.Context, ids []string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		UPDATE acquisition_targets
+		UPDATE acquisition_targets a
 		   SET grab_requested_at = now(), grab_claimed_until = NULL,
 		       detail = 'queued for a search and grab', updated_at = now()
-		 WHERE id = ANY($1) AND state IN ('wanted','failed')
-		 RETURNING id`, nonNil(ids))
+		  FROM titles t
+		 WHERE t.id = a.title_id AND a.id = ANY($1) AND a.state IN ('wanted','failed') AND NOT `+heldForApprovalSQL+`
+		 RETURNING a.id`, nonNil(ids))
 	if err != nil {
 		return nil, err
 	}

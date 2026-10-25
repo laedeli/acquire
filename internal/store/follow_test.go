@@ -59,62 +59,134 @@ func approvedFollow(t *testing.T, s *Store, ti Title) Title {
 	return f
 }
 
-// A title followed for requests no admin approved yet is held for their
-// approval when the requests are what monitors it: nothing of it is
-// searched or grabbed on its own. One an admin monitored before is not.
-func TestAFollowHeldForApproval(t *testing.T) {
+// A request awaiting an admin's approval changes nothing: a title acquire
+// tracks stays as it is; one it does not is made, monitored and followed by
+// nobody, held — nothing of it due, missing or grabbed from the missing tab.
+// Approved, it is followed; what the follow monitored of a series' seasons
+// and episodes — what would not be monitored without it — is unmonitored when
+// the follow ends, and monitored again when it is followed again.
+func TestARequestAwaitingApprovalChangesNothing(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	requested, _, _ := s.FollowTitle(ctx, Title{TMDBID: 1, Kind: "series", Title: "Requested"})
-	if err := s.UpsertTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "Monitored", Monitored: true}); err != nil {
+	asked, created, err := s.RequestTitle(ctx, Title{TMDBID: 990601, Kind: "series", Title: "Requested Show", Year: 2026})
+	if err != nil || !created || asked.Monitored || asked.MonitorNew || asked.Followed() || !asked.HeldForApproval() || asked.Origin != OriginRequest {
+		t.Fatalf("a title a request awaiting approval asks for: %+v %v %v", asked, created, err)
+	}
+	// An imported series an admin monitors, but not its new seasons.
+	if err := s.UpsertTitle(ctx, Title{TMDBID: 990602, Kind: "series", Title: "Imported Show", Monitored: true, MonitorNew: false}); err != nil {
 		t.Fatal(err)
 	}
-	monitored, _, _ := s.FollowTitle(ctx, Title{TMDBID: 2, Kind: "series", Title: "Monitored"})
-	for _, ti := range []Title{requested, monitored} {
+	if _, err := s.ApplySeriesInventory(ctx, "series:990602", SeriesRead{Status: "Returning Series", Running: true,
+		Seasons: map[int]int{1: 2}, Read: []int{1}, Episodes: episodesOf(1, day(-30), day(-23))}); err != nil {
+		t.Fatal(err)
+	}
+	imported, created, err := s.RequestTitle(ctx, Title{TMDBID: 990602, Kind: "series", Title: "x"})
+	if err != nil || created || !imported.Monitored || imported.MonitorNew || imported.Followed() || imported.HeldForApproval() {
+		t.Fatalf("an imported title asked for: %+v %v %v", imported, created, err)
+	}
+	for _, ti := range []Title{asked, imported} {
 		if err := s.CreateWanted(ctx, Wanted{ID: "w-" + ti.ID, TMDBID: ti.TMDBID, MediaType: "series", Title: ti.Title, TitleID: ti.ID,
 			Approval: ApprovalAwaiting}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.ApplySeriesInventory(ctx, ti.ID, SeriesRead{Seasons: map[int]int{1: 1}, Read: []int{1},
-			Episodes: episodesOf(1, day(-3)), MonitorAll: true}); err != nil {
+	}
+	// Even a target the requested title had would be neither due, nor
+	// missing, nor queued for a grab.
+	season, ep := 1, 1
+	held := TargetID(asked.ID, &season, &ep)
+	if err := s.UpsertTarget(ctx, Target{ID: held, TitleID: asked.ID, Kind: "episode", SeasonNumber: &season, EpisodeNumber: &ep,
+		Monitored: true, State: TargetWanted}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.SetAirWindow(ctx, held, day(-3), 0)
+	for _, id := range []string{asked.ID, imported.ID} {
+		if _, err := s.ApplySeriesHoldings(ctx, id, "", "default", nil); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", nil); err != nil {
-			t.Fatal(err)
+	}
+	if q, _ := s.RequestTargetGrabs(ctx, []string{held}); len(q) != 0 {
+		t.Errorf("queued for a grab: %v", q)
+	}
+	if miss, _ := s.Missing(ctx, 50); len(miss) != 2 || miss[0].TitleID != imported.ID {
+		t.Errorf("missing: %+v, want the imported series' two", miss)
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM acquisition_targets WHERE id = $1`, held); err != nil {
+		t.Fatal(err)
+	}
+
+	// Approved: followed, and monitored with its new seasons.
+	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalApproved, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	followed, _, err := s.FollowTitle(ctx, Title{TMDBID: 990602, Kind: "series", Title: "x"})
+	if err != nil || !followed.Followed() || !followed.MonitorNew || !followed.Approved {
+		t.Fatalf("approved: %+v %v", followed, err)
+	}
+	// TMDB announces a second season, and a third episode of the first.
+	read := SeriesRead{Status: "Returning Series", Running: true, Seasons: map[int]int{1: 3, 2: 1}, Read: []int{1, 2},
+		Episodes: append(episodesOf(1, day(-30), day(-23), day(-2)), episodesOf(2, day(-1))...)}
+	if _, err := s.ApplySeriesInventory(ctx, imported.ID, read); err != nil {
+		t.Fatal(err)
+	}
+	monitoring := func() string {
+		got := targetsByCoord(t, s, imported.ID)
+		out := ""
+		for _, id := range []string{":s01e003", ":s02e001"} {
+			out += fmt.Sprintf("%s=%v ", id[1:], got[imported.ID+id].Monitored)
 		}
+		var s2 bool
+		_ = s.pool.QueryRow(ctx, `SELECT monitored FROM seasons WHERE title_id = $1 AND season_number = 2`, imported.ID).Scan(&s2)
+		return out + fmt.Sprintf("season2=%v", s2)
 	}
-	due := func() []string {
-		ts, _ := s.DueTargetsBy(ctx, 10, DueOrder{NewWithinDays: 14})
-		var ids []string
-		for _, x := range ts {
-			ids = append(ids, x.TitleID)
-		}
-		return ids
+	if got := monitoring(); got != "s01e003=true s02e001=true season2=true" {
+		t.Errorf("during the follow: %s", got)
 	}
-	a, _ := s.TitleByID(ctx, requested.ID)
-	b, _ := s.TitleByID(ctx, monitored.ID)
-	if !a.HeldForApproval() || b.HeldForApproval() || a.Approved || b.Approved {
-		t.Errorf("held for approval: %v %v", a.HeldForApproval(), b.HeldForApproval())
-	}
-	if got := due(); len(got) != 1 || got[0] != monitored.ID {
-		t.Errorf("due = %v, want the one an admin monitored", got)
-	}
-	if err := s.DecideWanted(ctx, "w-"+requested.ID, ApprovalApproved, "admin"); err != nil {
+	// The follow ends: the second season, which only the follow monitored,
+	// is not monitored any more; the first season's new episode, the
+	// admin's season's, is.
+	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalDeclined, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if got := due(); len(got) != 2 {
-		t.Errorf("due once approved = %v", got)
-	}
-	// A declined request does not keep a follow: the last one that is not
-	// declined gone, the follow ends.
-	if err := s.DecideWanted(ctx, "w-"+monitored.ID, ApprovalDeclined, "admin"); err != nil {
+	if err := s.UnfollowTitle(ctx, imported.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.UnfollowTitle(ctx, monitored.ID); err != nil {
+	if got := monitoring(); got != "s01e003=true s02e001=false season2=false" {
+		t.Errorf("after the follow: %s", got)
+	}
+	if ti, _ := s.TitleByID(ctx, imported.ID); ti.Followed() || !ti.Monitored || ti.MonitorNew {
+		t.Errorf("the title after the follow: %+v", ti)
+	}
+	// Followed again: monitored again.
+	if err := s.DecideWanted(ctx, "w-"+imported.ID, ApprovalApproved, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.TitleByID(ctx, monitored.ID); got.Followed() || !got.Monitored {
-		t.Errorf("declined: %+v", got)
+	if _, _, err := s.FollowTitle(ctx, Title{TMDBID: 990602, Kind: "series", Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := monitoring(); got != "s01e003=true s02e001=true season2=true" {
+		t.Errorf("followed again: %s", got)
+	}
+
+	// A movie a request awaiting approval asks for: its target is read, not
+	// monitored; approved, the follow monitors it; ended, it is not.
+	movie, _, _ := s.RequestTitle(ctx, Title{TMDBID: 990603, Kind: "movie", Title: "Requested Film"})
+	tg, err := s.ApplyMovieInventory(ctx, movie.ID, MovieRead{Window: day(-2), Released: day(-2), Kind: "digital"})
+	if err != nil || tg.Monitored {
+		t.Fatalf("the movie awaiting approval: %+v %v", tg, err)
+	}
+	if err := s.CreateWanted(ctx, Wanted{ID: "w-m", TMDBID: 990603, MediaType: "movie", Title: "x", TitleID: movie.ID, Approval: ApprovalApproved}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.FollowTitle(ctx, Title{TMDBID: 990603, Kind: "movie", Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if tg, _ := s.TargetAt(ctx, movie.ID, nil, nil); !tg.Monitored {
+		t.Errorf("the approved movie's target: %+v", tg)
+	}
+	_ = s.DeleteWanted(ctx, "w-m")
+	_ = s.UnfollowTitle(ctx, movie.ID)
+	if tg, _ := s.TargetAt(ctx, movie.ID, nil, nil); tg.Monitored {
+		t.Errorf("the movie's target after the follow: %+v", tg)
 	}
 }
 
@@ -170,6 +242,7 @@ func TestFollowingATitle(t *testing.T) {
 	for _, w := range []Wanted{{ID: "w1", TMDBID: 990001, MediaType: "series", Title: "x", TitleID: "series:990001"},
 		{ID: "w2", TMDBID: 77, MediaType: "series", Title: "y", TitleID: "series:77"},
 		{ID: "w3", TMDBID: 78, MediaType: "series", Title: "z", TitleID: "series:78"}} {
+		w.Approval = ApprovalApproved
 		if err := s.CreateWanted(ctx, w); err != nil {
 			t.Fatal(err)
 		}
@@ -375,7 +448,7 @@ func TestASeriesReadOfTMDB(t *testing.T) {
 func TestATargetAddedSinceTheHoldingsWaitsForTheNextReconcile(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	ti, _, _ := s.FollowTitle(ctx, Title{TMDBID: 990001, Kind: "series", Title: "Example"})
+	ti := approvedFollow(t, s, Title{TMDBID: 990001, Kind: "series", Title: "Example"})
 	if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +665,7 @@ func TestSeasonsToRead(t *testing.T) {
 func TestTitleProgress(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
-	ti, _, _ := s.FollowTitle(ctx, Title{TMDBID: 990001, Kind: "series", Title: "Example"})
+	ti := approvedFollow(t, s, Title{TMDBID: 990001, Kind: "series", Title: "Example"})
 	if _, err := s.ApplySeriesInventory(ctx, ti.ID, SeriesRead{Status: "Returning Series", Running: true,
 		Seasons: map[int]int{1: 5}, Read: []int{1},
 		Episodes: episodesOf(1, day(-9), day(-9), day(-2), day(5), day(12)), MonitorAll: true}); err != nil {

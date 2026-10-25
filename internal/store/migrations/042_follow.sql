@@ -54,6 +54,18 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_error text NOT NULL DEFAULT
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS genres    int[] NOT NULL DEFAULT '{}';
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_type text  NOT NULL DEFAULT '';
 
+-- titles: tmdb_seasons is how many seasons TMDB lists of a series — all a
+-- request awaiting an admin's approval reads of it: its episodes are made
+-- once it is approved.
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_seasons int NOT NULL DEFAULT 0;
+
+-- seasons and acquisition_targets: follow_monitored marks the ones a follow
+-- monitored that would not be monitored without it — a season of a series
+-- whose new seasons nobody monitored before, an episode of one. The follow's
+-- end unmonitors them, and a follow again monitors them again.
+ALTER TABLE seasons             ADD COLUMN IF NOT EXISTS follow_monitored boolean NOT NULL DEFAULT false;
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS follow_monitored boolean NOT NULL DEFAULT false;
+
 -- acquisition_targets: added_at is when a follow or a read of TMDB on the
 -- clock made the target; NULL for every target made before, by the import or
 -- a derivation — the old backlog. A target added after its title's holdings

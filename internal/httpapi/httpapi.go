@@ -371,7 +371,9 @@ func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// pickRelease grabs one specific candidate from the picker.
+// pickRelease grabs one specific candidate from the picker. Picking a
+// release for a movie request awaiting approval approves it, as find & grab
+// does.
 func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
@@ -380,6 +382,10 @@ func (s *Server) pickRelease(w http.ResponseWriter, r *http.Request) {
 	var c app.Candidate
 	if err := json.NewDecoder(r.Body).Decode(&c); err != nil || (c.Source == "" && c.Release == "") {
 		http.Error(w, "release or source is required", http.StatusBadRequest)
+		return
+	}
+	if err := s.svc.ApproveForGrab(r.Context(), chi.URLParam(r, "id"), actorFrom(r.Context())); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := s.svc.GrabCandidate(r.Context(), chi.URLParam(r, "id"), c); err != nil {
