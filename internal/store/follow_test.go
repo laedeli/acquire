@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -606,42 +607,47 @@ func TestTheAirDelay(t *testing.T) {
 	}
 }
 
+// A feed's cursor keeps the releases looked at by their guid, however the
+// source dates them, the last thousand of the last seven days by the
+// source's own clock.
 func TestRSSCursors(t *testing.T) {
 	at := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
-	c := RSSCursor{NewestAt: &at, NewestGUIDs: []string{"a", "b"}}
-	for _, tc := range []struct {
-		name string
-		at   time.Time
-		guid string
-		seen bool
-	}{
-		{"older", at.Add(-time.Second), "z", true},
-		{"newer", at.Add(time.Second), "y", false},
-		{"one of the newest, dated again", at.Add(time.Hour), "a", true},
-		{"the same time, looked at", at, "b", true},
-		{"the same time, not looked at", at, "c", false},
-	} {
-		if got := c.Seen(tc.at, tc.guid); got != tc.seen {
-			t.Errorf("%s: seen = %v", tc.name, got)
-		}
-	}
-	if (RSSCursor{}).Seen(at, "a") {
+	var c RSSCursor
+	if c.Read() || c.Has("a") {
 		t.Error("a feed never read has seen something")
+	}
+	c.Add("a", at)
+	c.Add("b", at.Add(time.Hour)) // a source whose clock runs ahead
+	c.Add("old", at.Add(-8*24*time.Hour))
+	if !c.Has("a") || !c.Has("b") || c.Has("c") || !c.Read() {
+		t.Errorf("the releases looked at: %+v", c)
+	}
+	ids, _ := c.kept()
+	if len(ids) != 2 {
+		t.Errorf("kept %d, want the two of the last week by the source's clock", len(ids))
+	}
+	for i := 0; i < RSSSeenMax+10; i++ {
+		c.Add(fmt.Sprintf("n%d", i), at.Add(time.Duration(i)*time.Second))
+	}
+	if ids, at := c.kept(); len(ids) != RSSSeenMax || len(at) != RSSSeenMax || at[0] < at[len(at)-1] {
+		t.Errorf("kept %d, want the newest %d first", len(ids), RSSSeenMax)
 	}
 
 	s := migrated(t)
 	ctx := context.Background()
 	got, err := s.GetRSSCursor(ctx, 7, "tv")
-	if err != nil || got.NewestAt != nil || got.IndexerID != 7 || got.Feed != "tv" {
+	if err != nil || got.Read() || got.IndexerID != 7 || got.Feed != "tv" {
 		t.Fatalf("a feed never read: %+v %v", got, err)
 	}
-	c.IndexerID, c.Feed, c.Detail = 7, "tv", "100 read"
+	c = RSSCursor{IndexerID: 7, Feed: "tv", Detail: "100 read"}
+	c.Add("a", at)
+	c.Add("b", at.Add(time.Hour))
 	if err := s.SaveRSSCursor(ctx, c); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetRSSCursor(ctx, 7, "tv")
-	if got.NewestAt == nil || !got.NewestAt.Equal(at) || !reflect.DeepEqual(got.NewestGUIDs, []string{"a", "b"}) ||
-		got.ReadAt == nil || got.Detail != "100 read" {
+	if !got.Has("a") || !got.Has("b") || got.Has("c") || got.ReadAt == nil || got.Detail != "100 read" ||
+		got.Seen[RSSID("b")] != at.Add(time.Hour).Unix() {
 		t.Errorf("round trip: %+v", got)
 	}
 }

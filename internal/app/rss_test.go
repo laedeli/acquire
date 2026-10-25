@@ -609,7 +609,7 @@ func TestAFailingSourceDoesNotFailTheRun(t *testing.T) {
 	if ix.BackoffUntil == nil {
 		t.Errorf("the failing source does not back off: %+v", ix)
 	}
-	if cur, _ := r.svc.st.GetRSSCursor(ctx, downRes.ID, "tv"); cur.NewestAt != nil {
+	if cur, _ := r.svc.st.GetRSSCursor(ctx, downRes.ID, "tv"); cur.Read() {
 		t.Errorf("a failed read moved the cursor: %+v", cur)
 	}
 	before := len(down.reads())
@@ -658,6 +658,40 @@ func TestAFeedIsReadBackToItsCursor(t *testing.T) {
 	}
 	if run, _ := r.svc.SyncRSS(ctx); run.Read != 6 {
 		t.Errorf("a feed far ahead: %+v", run)
+	}
+}
+
+// Each release is looked at once, however the source dates it: one whose
+// clock runs ahead of acquire's is not read again on every run, and a
+// release it indexes late, dated before what was looked at, is read once it
+// is listed.
+func TestEachReleaseIsLookedAtOnce(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
+	ahead := time.Now().Add(time.Hour).Truncate(time.Second)
+	var items []feedItem
+	for i := 0; i < 5; i++ {
+		items = append(items, tv(fmt.Sprintf("Other.Show.S01E%02d.1080p.WEB-GRP", i+1), ahead.Add(-time.Duration(i)*time.Minute)))
+	}
+	feedSrc := newFeedSource(t, true, items...)
+	addFeed(t, r.svc, "feed", feedSrc)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	var news []int
+	for i := 0; i < 3; i++ {
+		run, _ := r.svc.SyncRSS(ctx)
+		news = append(news, run.New)
+	}
+	if fmt.Sprint(news) != "[5 0 0]" {
+		t.Errorf("new per run: %v, want the five once", news)
+	}
+	// Indexed now, published before the newest looked at.
+	feedSrc.add(tv("Show.Name.S01E01.1080p.WEB.h264-GRP", ago(30*time.Minute)))
+	if run, _ := r.svc.SyncRSS(ctx); run.New != 1 || run.Grabbed != 1 {
+		t.Errorf("a release indexed late: %+v", run)
 	}
 }
 

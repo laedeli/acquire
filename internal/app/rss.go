@@ -25,8 +25,9 @@ import (
 // at a time — and matches each to what is wanted: a series' title or alias
 // with the episodes the name holds, a movie's title with its year; checked
 // against the identities the feed carries (tvdbid, imdbid, tmdbid) when it
-// does. A cursor per source and feed — the newest publication time looked
-// at, and the releases of that time — makes each release looked at once.
+// does. A cursor per source and feed — the releases looked at, by their guid,
+// the last thousand of the last week by the source's clock — makes each
+// release looked at once, however the source dates it.
 //
 // A match is grabbed as the sweep grabs: ranked by the title's quality
 // profile, the releases blocked for the target left out, only what an
@@ -279,12 +280,14 @@ func releaseKey(r release.Release) string {
 	return r.Title
 }
 
-// readFeed reads one feed of a source since its cursor: the newest releases,
-// paged back while a whole page is new, up to rssPages; once for a feed never
-// read. It returns the releases not looked at before and how many it read, and
-// moves the cursor to the newest. A release without a publication time cannot
-// be placed against the cursor and is left to the sweep. A source that fails
-// keeps its cursor; its health is the search's (ask).
+// readFeed reads one feed of a source back to what it looked at before (its
+// cursor): the newest releases, paged back while a whole page is new, up to
+// rssPages; one page for a feed never read. It returns the releases not looked
+// at before and how many it read, and records them as looked at — by their
+// guid, however the source dates them: a source whose clock runs ahead, or
+// that indexes a release late and dates it long before, has each looked at
+// once. A source that fails keeps its cursor; its health is the search's
+// (ask).
 func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd feed) ([]release.Release, int, error) {
 	cur, err := s.st.GetRSSCursor(ctx, src.ID, fd.name)
 	if err != nil {
@@ -294,7 +297,7 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 	if src.Caps != nil && src.Caps.Limits.Max > 0 && src.Caps.Limits.Max < page {
 		page = src.Caps.Limits.Max
 	}
-	next := cur
+	first := !cur.Read()
 	var fresh []release.Release
 	read := 0
 	for p := 0; p < rssPages; p++ {
@@ -316,41 +319,41 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 			break // the pages read are kept
 		}
 		read += len(items)
+		// A release the source does not date is kept as of the page's newest.
+		var newest time.Time
+		for _, r := range items {
+			if r.PubDate.After(newest) {
+				newest = r.PubDate
+			}
+		}
+		if newest.IsZero() {
+			newest = s.now()
+		}
 		reached := false
 		for _, r := range items {
-			if r.PubDate.IsZero() {
+			key := releaseKey(r)
+			if cur.Has(key) {
+				reached = true
 				continue
 			}
+			at := r.PubDate
+			if at.IsZero() {
+				at = newest
+			}
+			cur.Add(key, at)
 			if len(r.Categories) == 0 {
 				// What the feed is scoped to is what it files the release
 				// under; a read of both says nothing.
 				r.Categories = scopeOf(fd.media)
 			}
-			key := releaseKey(r)
-			if cur.Seen(r.PubDate, key) {
-				reached = true
-				continue
-			}
 			fresh = append(fresh, r)
-			// A source whose clock runs ahead must not move the cursor past
-			// what it publishes next.
-			at := r.PubDate
-			if now := s.now(); at.After(now) {
-				at = now
-			}
-			switch {
-			case next.NewestAt == nil || at.After(*next.NewestAt):
-				next.NewestAt, next.NewestGUIDs = &at, []string{key}
-			case at.Equal(*next.NewestAt):
-				next.NewestGUIDs = appendOnce(next.NewestGUIDs, key)
-			}
 		}
-		if cur.NewestAt == nil || reached || len(items) < page {
+		if first || reached || len(items) < page {
 			break
 		}
 	}
-	next.Detail = fmt.Sprintf("%d read, %d new", read, len(fresh))
-	if err := s.st.SaveRSSCursor(ctx, next); err != nil {
+	cur.Detail = fmt.Sprintf("%d read, %d new", read, len(fresh))
+	if err := s.st.SaveRSSCursor(ctx, cur); err != nil {
 		return fresh, read, err
 	}
 	return fresh, read, nil
@@ -366,15 +369,6 @@ func scopeOf(media string) []int {
 		return []int{indexer.CatMovie}
 	}
 	return nil
-}
-
-func appendOnce(list []string, v string) []string {
-	for _, x := range list {
-		if x == v {
-			return list
-		}
-	}
-	return append(list, v)
 }
 
 // ── matching ───────────────────────────────────────────────────────────────

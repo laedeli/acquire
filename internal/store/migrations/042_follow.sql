@@ -51,17 +51,20 @@ CREATE INDEX IF NOT EXISTS wanted_title_idx     ON wanted_items (title_id) WHERE
 CREATE INDEX IF NOT EXISTS titles_inventory_idx ON titles (inventory_at NULLS FIRST) WHERE monitored;
 CREATE INDEX IF NOT EXISTS targets_added_idx    ON acquisition_targets (title_id, added_at) WHERE added_at IS NOT NULL;
 
--- rss_cursors: how far rss-sync has read each source's newest releases, per
--- feed (tv, movie, or all: both in one search). newest_at is the newest
--- publication time looked at and newest_guids the releases of that time that
--- were, so each release is looked at once; read_at is when the feed was last
+-- rss_cursors: what rss-sync has looked at of each source's newest releases,
+-- per feed (tv, movie, or search: both in one search): the releases of the
+-- feed looked at, by an id of each (a 64-bit hash of its guid, else of its
+-- name: seen_ids), with when the source says it published each, in the
+-- source's own clock (unix seconds: seen_at) — the last 1,000 of the last
+-- seven days. A release is looked at once, whenever the source lists it
+-- among its newest, however it dates it. read_at is when the feed was last
 -- read and detail what that read did. The rows of a source go with it.
 CREATE TABLE IF NOT EXISTS rss_cursors (
-  indexer_id   bigint      NOT NULL,
-  feed         text        NOT NULL,
-  newest_at    timestamptz,
-  newest_guids text[]      NOT NULL DEFAULT '{}',
-  read_at      timestamptz,
-  detail       text        NOT NULL DEFAULT '',
+  indexer_id bigint      NOT NULL,
+  feed       text        NOT NULL,
+  seen_ids   bigint[]    NOT NULL DEFAULT '{}',
+  seen_at    bigint[]    NOT NULL DEFAULT '{}',
+  read_at    timestamptz,
+  detail     text        NOT NULL DEFAULT '',
   PRIMARY KEY (indexer_id, feed)
 );
