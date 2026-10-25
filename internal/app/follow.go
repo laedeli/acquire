@@ -298,11 +298,18 @@ func (s *Service) RemoveRequest(ctx context.Context, id string) error {
 // RequestView is a request as the console shows it. Of one that follows a
 // title, the status and the detail are what acquire does with the title now,
 // Progress says how far it is, and AutoGrab whether what it waits for is
-// grabbed on its own (the search and grab policy).
+// grabbed on its own (the search and grab policy). Of a series, AutoGrabAired
+// says whether the episodes that aired before it was asked for — its back
+// catalogue — are grabbed on their own too, not only the new ones: with
+// search.autoGrab, everything missing is; with search.autoGrabNew, every
+// episode of a series the request made is one it asked for, while of a
+// series acquire tracked before only what aired in the last days and what
+// TMDB added since is new.
 type RequestView struct {
 	store.Wanted
-	Progress *store.Progress `json:"progress,omitempty"`
-	AutoGrab *bool           `json:"autoGrab,omitempty"`
+	Progress      *store.Progress `json:"progress,omitempty"`
+	AutoGrab      *bool           `json:"autoGrab,omitempty"`
+	AutoGrabAired *bool           `json:"autoGrabAired,omitempty"`
 }
 
 // Requests lists the requests, newest first, each as it reads now.
@@ -347,6 +354,10 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 			v.Status, v.Detail = approvalState(w.Approval, p, status, detail)
 			auto := grabs && w.Approval == store.ApprovalApproved && !p.HandsOff && (p.Movie == nil || !guessedWindow(*p.Movie))
 			v.AutoGrab = &auto
+			if p.Kind == "series" {
+				aired := auto && (pol.AutoGrab || p.FromRequest)
+				v.AutoGrabAired = &aired
+			}
 		}
 		out = append(out, v)
 	}

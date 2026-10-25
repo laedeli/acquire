@@ -1445,3 +1445,57 @@ func TestOneDecisionOnARequestIsTaken(t *testing.T) {
 		}
 	}
 }
+
+// Of a series a request made, every episode is one it asked for: with only
+// the new things grabbed on its own, its back catalogue is grabbed on its own
+// too, and its request says so. Of a series acquire tracked before, only what
+// is new is: the episodes it had before wait for the missing tab, unless
+// everything missing is grabbed on its own.
+func TestWhatOfARequestedSeriesIsGrabbedOnItsOwn(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[990821] = &tmdbSeries{name: "Example Requested Show", status: "Returning Series", firstAir: day(-40),
+			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-40)}, {title: "Two", air: day(-2)}}}}
+		f.series[990822] = &tmdbSeries{name: "Example Tracked Show", status: "Returning Series", firstAir: day(-40),
+			seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-40)}, {title: "Two", air: day(-2)}}}}
+	})
+	tracked, _ := track(t, r.svc, 990822, "Example Tracked Show", 1, true)
+	sqlExec(t, `UPDATE acquisition_targets SET air_date = current_date - 40, air_window_opens_at = now() - interval '40 days' WHERE title_id = $1`, tracked.ID)
+	made, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990821, MediaType: "series", Title: "Example Requested Show"}, asAdmin("admin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990822, MediaType: "series", Title: "Example Tracked Show"}, asAdmin("admin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	pol := r.svc.grabPolicy(ctx)
+	grabs := func(titleID, target string) bool {
+		ti, _ := r.svc.st.TitleByID(ctx, titleID)
+		return pol.Grabs(ti, *mustTarget(t, r.svc, target), time.Now())
+	}
+	if v := r.view(t, made.ID); v.AutoGrabAired == nil || !*v.AutoGrabAired || !grabs("series:990821", "series:990821:s01e001") {
+		t.Errorf("the series the request made: %v, its first episode grabbed %v", v.AutoGrabAired, grabs("series:990821", "series:990821:s01e001"))
+	}
+	if v := r.view(t, asked.ID); v.AutoGrabAired == nil || *v.AutoGrabAired || grabs(tracked.ID, "series:990822:s01e001") ||
+		!grabs(tracked.ID, "series:990822:s01e002") {
+		t.Errorf("the series tracked before: %v", v.AutoGrabAired)
+	}
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 3, AutoGrab: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.view(t, asked.ID); v.AutoGrabAired == nil || !*v.AutoGrabAired {
+		t.Errorf("everything missing grabbed on its own: %v", v.AutoGrabAired)
+	}
+}
+
+func mustTarget(t *testing.T, svc *Service, id string) *store.Target {
+	t.Helper()
+	tg := target(t, svc, id)
+	return &tg
+}
