@@ -99,7 +99,7 @@ spec:
                 secretKeyRef:
                   name: {{ $secret }}
                   key: oidc-service-client-secret
-            # Discovery; unset turns it off.
+            # Discovery, and what a request follows; unset turns both off.
             - name: TMDB_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -56,12 +56,12 @@
     },
     "tmdb": {
       "type": "object",
-      "title": "Discovery",
+      "title": "Discovery and requests",
       "properties": {
         "apiKey": {
           "type": "string",
           "title": "TMDB API key",
-          "description": "Server-side key for discovery search. Without it discovery is off.",
+          "description": "Server-side key for discovery search, and for what a request follows: a series' episodes and a movie's release dates, read again on the clock. Without it both are off.",
           "writeOnly": true
         }
       }

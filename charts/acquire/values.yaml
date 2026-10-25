@@ -62,7 +62,8 @@ oidc:
   userRole: zaentrum-user
 
 tmdb: {}
-  # apiKey: secret, optional: server-side key for discovery.
+  # apiKey: secret, optional: server-side key for discovery, and for what a
+  # request follows (a series' episodes, a movie's release dates).
 
 config: {}
   # key: secret: 32 random bytes, base64, encrypting every credential acquire
