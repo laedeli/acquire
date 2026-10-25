@@ -104,7 +104,14 @@ type Query struct {
 	Episode *int
 	// Media picks the source's categories: movie, tv, or "" for both.
 	Media string
+	// Cats, when set, are the categories the query is scoped to instead of
+	// the source's for Media: a read of the newest releases names them
+	// always, as one that names none would bring every category there is.
+	Cats  []int
 	Limit int
+	// Offset skips the newest releases a feed would answer first: the next
+	// page of them.
+	Offset int
 }
 
 // Values renders the query as newznab parameters.
@@ -145,7 +152,27 @@ func (q Query) Values(apiKey string, cats []int) url.Values {
 		limit = 100
 	}
 	v.Set("limit", strconv.Itoa(limit))
+	if q.Offset > 0 {
+		v.Set("offset", strconv.Itoa(q.Offset))
+	}
 	return v
+}
+
+// FeedCategories are the categories a read of a source's newest releases is
+// scoped to: the source's own for movie or tv, else the protocol's parent
+// category (2000 movies, 5000 TV); both for "".
+func (s Source) FeedCategories(media string) []int {
+	switch media {
+	case "movie", "tv":
+		if own := s.Categories.For(media); len(own) > 0 {
+			return own
+		}
+		if media == "movie" {
+			return []int{CatMovie}
+		}
+		return []int{CatTV}
+	}
+	return append(s.FeedCategories("tv"), s.FeedCategories("movie")...)
 }
 
 // Typed reports whether the query carries something a source can match
@@ -172,7 +199,11 @@ func (c *Client) Search(ctx context.Context, src Source, q Query) ([]release.Rel
 	if src.Caps != nil && src.Caps.Limits.Max > 0 && (limit <= 0 || limit > src.Caps.Limits.Max) {
 		q.Limit = src.Caps.Limits.Max
 	}
-	body, err := c.get(ctx, src, q.Values(src.APIKey, src.Categories.For(q.Media)), maxFeedBytes)
+	cats := src.Categories.For(q.Media)
+	if len(q.Cats) > 0 {
+		cats = q.Cats
+	}
+	body, err := c.get(ctx, src, q.Values(src.APIKey, cats), maxFeedBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +346,12 @@ func parseFeed(body []byte, src Source) ([]release.Release, error) {
 				if r.GUID == "" {
 					r.GUID = v
 				}
+			case "tvdbid":
+				r.TVDBID, _ = strconv.ParseInt(v, 10, 64)
+			case "tmdbid":
+				r.TMDBID, _ = strconv.ParseInt(v, 10, 64)
+			case "imdb", "imdbid":
+				r.IMDBID = imdbAttr(v)
 			}
 		}
 		if r.Size <= 0 {
@@ -346,6 +383,18 @@ func parseFeed(body []byte, src Source) ([]release.Release, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// imdbAttr is an IMDb id as a feed's attribute writes it — 0903747,
+// tt0903747, 903747 — in IMDb's own form, tt and at least seven digits; ""
+// when it is none.
+func imdbAttr(v string) string {
+	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "tt")
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("tt%07d", n)
 }
 
 func protocolAgrees(protocol, enclosureType string, r release.Release) bool {

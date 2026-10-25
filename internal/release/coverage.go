@@ -116,6 +116,26 @@ const maxRun = 60
 
 // ParseCoverage reads what a release or file name holds of a series.
 func ParseCoverage(name string) Coverage {
+	c, _ := parseCoverage(name)
+	return c
+}
+
+// SeriesPart is what a release name says of a series: the words before what
+// it holds — "Show Name 2019" of "Show.Name.2019.S01E05.1080p" —, with scene
+// separators read as spaces, and what it holds. The name is "" when it holds
+// nothing of a series, or names nothing before it.
+func SeriesPart(name string) (string, Coverage) {
+	c, at := parseCoverage(name)
+	if !c.Found {
+		return "", c
+	}
+	head := strings.TrimSpace(wsRE.ReplaceAllString(sepRE.ReplaceAllString(name[:at], " "), " "))
+	return strings.TrimRight(head, " -([{"), c
+}
+
+// parseCoverage is ParseCoverage, with where in the name what it holds is
+// written.
+func parseCoverage(name string) (Coverage, int) {
 	if m := coverEpisodeRE.FindStringSubmatchIndex(name); m != nil {
 		season, first := atoi(name[m[2]:m[3]]), atoi(name[m[4]:m[5]])
 		eps := []int{first}
@@ -143,48 +163,48 @@ func ParseCoverage(name string) Coverage {
 			}
 			break
 		}
-		return episodes(season, eps)
+		return episodes(season, eps), m[0]
 	}
-	if m := coverWordsRE.FindStringSubmatch(name); m != nil {
-		return episodes(atoi(m[1]), []int{atoi(m[2])})
+	if m := coverWordsRE.FindStringSubmatchIndex(name); m != nil {
+		return episodes(atoi(name[m[2]:m[3]]), []int{atoi(name[m[4]:m[5]])}), m[0]
 	}
-	if m := coverCrossRE.FindStringSubmatch(name); m != nil {
-		season := atoi(m[1])
+	if m := coverCrossRE.FindStringSubmatchIndex(name); m != nil {
+		season := atoi(name[m[2]:m[3]])
 		var eps []int
-		for _, x := range coverCrossEp.FindAllStringSubmatch(m[2], -1) {
+		for _, x := range coverCrossEp.FindAllStringSubmatch(name[m[4]:m[5]], -1) {
 			eps = append(eps, atoi(x[1]))
 		}
-		if m[3] != "" {
-			if e, last := atoi(m[3]), eps[len(eps)-1]; e > last && e-eps[0] <= maxRun {
+		if m[6] >= 0 {
+			if e, last := atoi(name[m[6]:m[7]]), eps[len(eps)-1]; e > last && e-eps[0] <= maxRun {
 				for x := last + 1; x <= e; x++ {
 					eps = append(eps, x)
 				}
 			}
 		}
-		return episodes(season, eps)
+		return episodes(season, eps), m[0]
 	}
-	if m := coverSeasonListRE.FindStringSubmatch(name); m != nil {
-		seasons := []int{atoi(m[1])}
-		for _, x := range coverSeasonItemRE.FindAllStringSubmatch(m[2], -1) {
+	if m := coverSeasonListRE.FindStringSubmatchIndex(name); m != nil {
+		seasons := []int{atoi(name[m[2]:m[3]])}
+		for _, x := range coverSeasonItemRE.FindAllStringSubmatch(name[m[4]:m[5]], -1) {
 			seasons = append(seasons, atoi(x[1]))
 		}
-		return seasonsOf(seasons)
+		return seasonsOf(seasons), m[0]
 	}
 	for _, re := range []*regexp.Regexp{coverSeasonRE, coverSeasonWordRE} {
-		if m := re.FindStringSubmatch(name); m != nil {
-			first := atoi(m[1])
+		if m := re.FindStringSubmatchIndex(name); m != nil {
+			first := atoi(name[m[2]:m[3]])
 			seasons := []int{first}
-			if m[2] != "" {
-				if e := atoi(m[2]); e > first && e-first <= maxRun {
+			if m[4] >= 0 {
+				if e := atoi(name[m[4]:m[5]]); e > first && e-first <= maxRun {
 					for x := first + 1; x <= e; x++ {
 						seasons = append(seasons, x)
 					}
 				}
 			}
-			return seasonsOf(seasons)
+			return seasonsOf(seasons), m[0]
 		}
 	}
-	return Coverage{}
+	return Coverage{}, len(name)
 }
 
 // episodes is the coverage of the episodes of one season named.

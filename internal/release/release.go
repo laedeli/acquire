@@ -26,6 +26,13 @@ type Release struct {
 	Link      string
 	Magnet    string
 	PubDate   time.Time
+
+	// The identities a feed says the release is of, when it carries them
+	// (newznab and torznab attributes): a series' TVDB id, an IMDb id
+	// (tt and digits), a TMDB id. Zero when it says none.
+	TVDBID int64
+	IMDBID string
+	TMDBID int64
 }
 
 // IsUsenet reports whether the release is an NZB.

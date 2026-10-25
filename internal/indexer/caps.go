@@ -156,3 +156,10 @@ func (c *Caps) AcceptsMovieIMDBID() bool { return c != nil && c.MovieSearch.acce
 func (c *Caps) AcceptsSeasonEp() bool {
 	return c != nil && c.TVSearch.accepts("season") && c.TVSearch.accepts("ep")
 }
+
+// OffersTVSearch and OffersMovieSearch: the source says it answers t=tvsearch
+// and t=movie, which a read of its newest releases asks without a query. A
+// source whose caps are not known yet is read with t=search, which every
+// source answers.
+func (c *Caps) OffersTVSearch() bool    { return c != nil && c.TVSearch.Available }
+func (c *Caps) OffersMovieSearch() bool { return c != nil && c.MovieSearch.Available }
