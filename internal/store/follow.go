@@ -429,10 +429,12 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 }
 
 // heldMove is a holding of an episode TMDB lists under other numbers now:
-// the target it was held at, the number it moves to, and what it held.
+// the target it was held at, the number it moves to, TMDB's id of the
+// episode, and what it held.
 type heldMove struct {
 	fromID, as                          string
 	from, to                            [2]int
+	tid                                 int64
 	item, via, release, profile, source string
 	playable                            bool
 	quality                             []byte
@@ -445,7 +447,7 @@ type heldMove struct {
 // by TMDB's id of the episode, which a renumbering keeps.
 func heldMoves(ctx context.Context, tx pgx.Tx, titleID string, es, en []int32, tids []int64) ([]heldMove, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT o.id, o.season_number, o.episode_number, l.season, l.episode, o.held_item_id, o.held_via, o.held_playable,
+		SELECT o.id, o.season_number, o.episode_number, l.season, l.episode, l.tid, o.held_item_id, o.held_via, o.held_playable,
 		       o.held_release, o.held_quality, o.held_score, o.held_score_profile, o.held_source, o.held_scored_at, o.held_at, o.held_as
 		  FROM acquisition_targets o
 		  JOIN unnest($2::int[], $3::int[], $4::bigint[]) AS l(season, episode, tid) ON l.tid <> 0 AND l.tid = o.tmdb_episode_id
@@ -458,7 +460,7 @@ func heldMoves(ctx context.Context, tx pgx.Tx, titleID string, es, en []int32, t
 	var out []heldMove
 	for rows.Next() {
 		var m heldMove
-		if err := rows.Scan(&m.fromID, &m.from[0], &m.from[1], &m.to[0], &m.to[1], &m.item, &m.via, &m.playable,
+		if err := rows.Scan(&m.fromID, &m.from[0], &m.from[1], &m.to[0], &m.to[1], &m.tid, &m.item, &m.via, &m.playable,
 			&m.release, &m.quality, &m.score, &m.profile, &m.source, &m.scoredAt, &m.at, &m.as); err != nil {
 			return nil, err
 		}
@@ -473,10 +475,75 @@ func heldMoves(ctx context.Context, tx pgx.Tx, titleID string, es, en []int32, t
 
 // applyMoves holds each moved holding at its new number, and releases the
 // numbers they left that no holding moved to: those are other episodes now.
+// A holding moves only where nothing is lost by it: not onto a number a grab
+// under way holds (reserved), nor onto one that holds a file which stays
+// there — and so neither onto the number of a holding that cannot move. One
+// that cannot stays held where it is, its TMDB id still the episode's, so a
+// later read moves it once it can: the library's file is held at one number
+// always, never at none — which a grab would fetch again.
 func applyMoves(ctx context.Context, tx pgx.Tx, titleID string, moves []heldMove) (int, error) {
+	if len(moves) == 0 {
+		return 0, nil
+	}
+	// Where the holdings would go, as it stands.
+	type place struct {
+		held, reserved bool
+	}
+	at := map[[2]int]place{}
+	ss, ns := make([]int32, 0, len(moves)), make([]int32, 0, len(moves))
+	for _, m := range moves {
+		ss, ns = append(ss, int32(m.to[0])), append(ns, int32(m.to[1]))
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT a.season_number, a.episode_number, a.state = 'held', a.reserved_by <> '' OR a.state NOT IN ('wanted', 'failed', 'held')
+		  FROM acquisition_targets a JOIN unnest($2::int[], $3::int[]) AS d(s, n) ON a.season_number = d.s AND a.episode_number = d.n
+		 WHERE a.title_id = $1`, titleID, ss, ns)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var k [2]int
+		var p place
+		if err := rows.Scan(&k[0], &k[1], &p.held, &p.reserved); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		at[k] = p
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	// Which can move: a number a holding leaves is free once that holding
+	// moves; what cannot move keeps its number, so what would go there
+	// cannot move either — until nothing changes.
+	leaves := map[[2]int]int{}
+	for i, m := range moves {
+		leaves[m.from] = i
+	}
+	can := make([]bool, len(moves))
+	for i, m := range moves {
+		p, ok := at[m.to]
+		can[i] = ok && !p.reserved
+	}
+	for changed := true; changed; {
+		changed = false
+		for i, m := range moves {
+			if !can[i] || !at[m.to].held {
+				continue
+			}
+			if j, ok := leaves[m.to]; !ok || !can[j] {
+				can[i], changed = false, true
+			}
+		}
+	}
+
 	to := map[[2]int]bool{}
 	moved := 0
-	for _, m := range moves {
+	for i, m := range moves {
+		if !can[i] {
+			continue
+		}
 		to[m.to] = true
 		tag, err := tx.Exec(ctx, `
 			UPDATE acquisition_targets
@@ -493,7 +560,23 @@ func applyMoves(ctx context.Context, tx pgx.Tx, titleID string, moves []heldMove
 		}
 		moved += int(tag.RowsAffected())
 	}
-	for _, m := range moves {
+	for i, m := range moves {
+		coords := fmt.Sprintf("S%02dE%02d", m.to[0], m.to[1])
+		if !can[i] {
+			// Held where it is, as the episode TMDB numbers anew: a later
+			// read moves it.
+			why := "a grab is under way"
+			if !at[m.to].reserved {
+				why = "the library holds another file"
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE acquisition_targets SET tmdb_episode_id = $2, detail = $3, updated_at = now() WHERE id = $1 AND state = 'held'`,
+				m.fromID, m.tid, clipText(fmt.Sprintf("in the library; TMDB numbers this episode %s now, where %s: it is held here "+
+					"until a read of TMDB can move it there", coords, why))); err != nil {
+				return moved, err
+			}
+			continue
+		}
 		if to[m.from] {
 			continue
 		}
@@ -506,8 +589,7 @@ func applyMoves(ctx context.Context, tx pgx.Tx, titleID string, moves []heldMove
 			       held_scored_at = NULL, held_at = NULL, state = 'wanted', ever_held = false,
 			       detail = $3, updated_at = now()
 			 WHERE id = $1 AND state = 'held' AND held_item_id = $2`, m.fromID, m.item,
-			clipText(fmt.Sprintf("TMDB numbers the episode the library held here %s now: this is another episode",
-				fmt.Sprintf("S%02dE%02d", m.to[0], m.to[1])))); err != nil {
+			clipText(fmt.Sprintf("TMDB numbers the episode the library held here %s now: this is another episode", coords))); err != nil {
 			return moved, err
 		}
 	}

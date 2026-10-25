@@ -353,6 +353,84 @@ func TestAnEpisodeNumberedAnewKeepsItsHolding(t *testing.T) {
 	}
 }
 
+// An episode TMDB numbers anew onto a number a grab under way holds stays
+// held where it is — the library's file held at one number, never at none,
+// which a grab would fetch again —, saying why; once the grab is done, a
+// read moves it. Two held episodes TMDB swaps, one of them in a grab, both
+// stay as they are: neither takes the other's place.
+func TestAHoldingMovesOnlyWhereNothingIsLost(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	ti := approvedFollow(t, s, Title{TMDBID: 57, Kind: "series", Title: "Example"})
+	ep := func(e int, tid int64) EpisodeRead {
+		return EpisodeRead{TMDBID: tid, Season: 1, Episode: e, AirDate: day(-30 + e)}
+	}
+	read := SeriesRead{Status: "Returning Series", Running: true, Seasons: map[int]int{1: 6}, Read: []int{1},
+		Episodes: []EpisodeRead{ep(5, 500), ep(6, 600)}}
+	if _, err := s.ApplySeriesInventory(ctx, ti.ID, read); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySeriesHoldings(ctx, ti.ID, "", "default", []HeldEpisode{{Season: 1, Episode: 5, ItemID: "item-x"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE acquisition_targets SET reserved_by = 'tg_busy' WHERE id = $1`, ti.ID+":s01e006"); err != nil {
+		t.Fatal(err)
+	}
+	// TMDB puts an episode at E05: E05 is E06 now, E06 E07.
+	read.Seasons = map[int]int{1: 7}
+	read.Episodes = []EpisodeRead{ep(5, 700), ep(6, 500), ep(7, 600)}
+	ch, err := s.ApplySeriesInventory(ctx, ti.ID, read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	five, _ := s.GetTarget(ctx, ti.ID+":s01e005")
+	six, _ := s.GetTarget(ctx, ti.ID+":s01e006")
+	if ch.Renumbered != 0 || five.State != TargetHeld || five.HeldItemID != "item-x" ||
+		!strings.Contains(five.Detail, "TMDB numbers this episode S01E06 now, where a grab is under way: it is held here") {
+		t.Errorf("onto a grab under way: %+v; E05 %+v", ch, five)
+	}
+	if six.ReservedBy != "tg_busy" || six.State != TargetWanted || six.HeldItemID != "" {
+		t.Errorf("the grab's E06: %+v", six)
+	}
+	if p, _ := s.TitleProgress(ctx, []string{ti.ID}); p[ti.ID].Held != 1 {
+		t.Errorf("held: %d, want the file once", p[ti.ID].Held)
+	}
+	// The grab is done, nothing came of it: the next read moves the file.
+	if _, err := s.pool.Exec(ctx, `UPDATE acquisition_targets SET reserved_by = '' WHERE id = $1`, ti.ID+":s01e006"); err != nil {
+		t.Fatal(err)
+	}
+	if ch, err := s.ApplySeriesInventory(ctx, ti.ID, read); err != nil || ch.Renumbered != 1 {
+		t.Fatalf("read again: %+v %v", ch, err)
+	}
+	five, _ = s.GetTarget(ctx, ti.ID+":s01e005")
+	six, _ = s.GetTarget(ctx, ti.ID+":s01e006")
+	if six.State != TargetHeld || six.HeldItemID != "item-x" || five.State != TargetWanted || five.HeldItemID != "" {
+		t.Errorf("moved once it could: E05 %+v, E06 %+v", five, six)
+	}
+
+	// A swap, one side in a grab: neither moves.
+	tj := approvedFollow(t, s, Title{TMDBID: 58, Kind: "series", Title: "Other"})
+	swap := SeriesRead{Status: "Ended", Seasons: map[int]int{1: 2}, Read: []int{1},
+		Episodes: []EpisodeRead{{TMDBID: 801, Season: 1, Episode: 1, AirDate: day(-20)}, {TMDBID: 802, Season: 1, Episode: 2, AirDate: day(-13)}}}
+	if _, err := s.ApplySeriesInventory(ctx, tj.ID, swap); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ApplySeriesHoldings(ctx, tj.ID, "", "default", []HeldEpisode{{Season: 1, Episode: 1, ItemID: "item-a"}, {Season: 1, Episode: 2, ItemID: "item-b"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE acquisition_targets SET reserved_by = 'tg_upgrade' WHERE id = $1`, tj.ID+":s01e002"); err != nil {
+		t.Fatal(err)
+	}
+	swap.Episodes = []EpisodeRead{{TMDBID: 802, Season: 1, Episode: 1, AirDate: day(-20)}, {TMDBID: 801, Season: 1, Episode: 2, AirDate: day(-13)}}
+	if ch, err := s.ApplySeriesInventory(ctx, tj.ID, swap); err != nil || ch.Renumbered != 0 {
+		t.Fatalf("the swap: %+v %v", ch, err)
+	}
+	got := targetsByCoord(t, s, tj.ID)
+	if got[tj.ID+":s01e001"].HeldItemID != "item-a" || got[tj.ID+":s01e002"].HeldItemID != "item-b" {
+		t.Errorf("a swap in a grab: E01 %+v, E02 %+v", got[tj.ID+":s01e001"], got[tj.ID+":s01e002"])
+	}
+}
+
 func TestASeriesReadOfTMDB(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
