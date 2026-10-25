@@ -30,7 +30,9 @@ import (
 //
 // The library is thousands of calls to read whole, so a run is paced: it
 // starts no title once it has spent inventoryBudget calls, and the rest are
-// due on the next runs, the follows first, then what runs.
+// due on the next runs — the follows first, then what runs, a third of the
+// budget kept for the series that ended or were never read. A follow TMDB
+// could not be read for is read again every followRetry until it is.
 
 const (
 	// inventoryBudget bounds the TMDB calls one run starts titles with (the
@@ -48,6 +50,13 @@ const (
 	theatricalWait = 90 * 24 * time.Hour
 	// inventoryRunTime bounds one run.
 	inventoryRunTime = 30 * time.Minute
+	// followRetry is how soon a follow whose read of TMDB failed — TMDB out
+	// of reach or failing — is read again, until it is read.
+	followRetry = 15 * time.Minute
+	// inventoryReserve is the part of a run's budget, in thirds, kept for
+	// the series that do not run — ended, or never read —, so a library of
+	// running series does not keep them waiting for ever.
+	inventoryReserve = 1
 )
 
 // noTMDB is why nothing can be read without a TMDB key.
@@ -104,16 +113,23 @@ func (s *Service) takeScheduled() bool {
 	return run
 }
 
-// RunInventory reads TMDB as it is asked to until ctx ends.
+// RunInventory reads TMDB as it is asked to until ctx ends, and every
+// followRetry the follows TMDB could not be read for yet.
 func (s *Service) RunInventory(ctx context.Context) {
 	if s.st == nil {
 		return
 	}
+	retry := time.NewTicker(followRetry)
+	defer retry.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.inventoryWake:
+		case <-retry.C:
+			if !s.retryFollows(ctx) {
+				continue
+			}
 		}
 		rctx, cancel := context.WithTimeout(ctx, inventoryRunTime)
 		if _, err := s.RefreshInventory(rctx, s.takeScheduled()); err != nil && ctx.Err() == nil {
@@ -121,6 +137,25 @@ func (s *Service) RunInventory(ctx context.Context) {
 		}
 		cancel()
 	}
+}
+
+// retryFollows asks for the follows TMDB could not be read for yet to be
+// read, and reports whether there are any. Without a TMDB key there is
+// nothing to try again.
+func (s *Service) retryFollows(ctx context.Context) bool {
+	if !s.tm.Enabled() {
+		return false
+	}
+	ids, err := s.st.FollowsNotRead(ctx)
+	if err != nil || len(ids) == 0 {
+		return false
+	}
+	s.inventoryMu.Lock()
+	for _, id := range ids {
+		s.inventoryIDs[id] = true
+	}
+	s.inventoryMu.Unlock()
+	return true
 }
 
 // tmdbDown is TMDB not answering as it should — out of reach, failing,
@@ -253,17 +288,41 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		run.Left = true
 		return run, nil
 	}
-	series, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1)
+	// The series that run, but for a third of the budget, which the others
+	// — ended, or never read — get; what either leaves goes to the series
+	// that run.
+	running, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1, store.SeriesRunning)
 	if err != nil {
 		return run, err
 	}
-	for _, d := range series {
+	others, err := s.st.SeriesInventoryDue(ctx, runningEvery, endedEvery, budget+1, store.SeriesOther)
+	if err != nil {
+		return run, err
+	}
+	reserve := s.inventoryBudget * inventoryReserve / 3
+	next := 0
+	readSeries := func(d store.DueTitle) bool { return follows() && read(d.Title, d.Title.InventoryAt == nil) }
+	for ; next < len(running) && budget > reserve; next++ {
+		if !readSeries(running[next]) {
+			return run, nil
+		}
+	}
+	for _, d := range others {
 		if budget <= 0 {
 			run.Left = true
-			break
+			return run, nil
 		}
-		if !follows() || !read(d.Title, d.Title.InventoryAt == nil) {
-			break
+		if !readSeries(d) {
+			return run, nil
+		}
+	}
+	for ; next < len(running); next++ {
+		if budget <= 0 {
+			run.Left = true
+			return run, nil
+		}
+		if !readSeries(running[next]) {
+			return run, nil
 		}
 	}
 	return run, nil

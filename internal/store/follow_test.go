@@ -503,7 +503,7 @@ func TestWhichSeriesAreReadAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.SetAirWindow(ctx, TargetID("series:7", &season, &ep), day(3), 0)
-	due, err := s.SeriesInventoryDue(ctx, 5*time.Hour+30*time.Minute, 7*24*time.Hour, 50)
+	due, err := s.SeriesInventoryDue(ctx, 5*time.Hour+30*time.Minute, 7*24*time.Hour, 50, SeriesAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func TestWhichSeriesAreReadAgain(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("due = %q\nwant  %q", got, want)
 	}
-	if lim, _ := s.SeriesInventoryDue(ctx, time.Hour, time.Hour, 2); len(lim) != 2 {
+	if lim, _ := s.SeriesInventoryDue(ctx, time.Hour, time.Hour, 2, SeriesAll); len(lim) != 2 {
 		t.Errorf("limit: %d", len(lim))
 	}
 }

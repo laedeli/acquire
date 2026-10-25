@@ -348,11 +348,13 @@ func requestState(p store.Progress, now time.Time, delay time.Duration) (status,
 	}
 	switch {
 	case p.Episodes == 0 && p.InventoryErr != "":
-		return "following", clip("its episodes could not be read from TMDB yet: "+p.InventoryErr+"; tried again on a later refresh", 300)
+		return "following", clip(notRead("its episodes", p), 300)
 	case p.InventoryAt == nil:
 		return "following", "reading its episodes from TMDB"
-	case p.Episodes == 0:
+	case p.Episodes == 0 && p.Running:
 		return "following", "TMDB lists no episodes of it yet; it is read again on every refresh while it runs"
+	case p.Episodes == 0:
+		return "following", "TMDB lists no episodes of it, and says it does not run: it is read again weekly"
 	case !p.Running && p.Held == p.Episodes:
 		return "fulfilled", fmt.Sprintf("complete: all %s are in the library", count(p.Episodes, "episode", "episodes"))
 	}
@@ -393,7 +395,7 @@ func movieState(p store.Progress, now time.Time, delay time.Duration) (status, d
 	t := p.Movie
 	switch {
 	case t == nil && p.InventoryErr != "":
-		return "pending", clip("its release dates could not be read from TMDB yet: "+p.InventoryErr+"; tried again on a later refresh", 300)
+		return "pending", clip(notRead("its release dates", p), 300)
 	case t == nil:
 		return "pending", "reading its release dates from TMDB"
 	case t.State == store.TargetHeld && t.HeldPlayable:
@@ -479,6 +481,21 @@ func guessWords(t *store.Target) string {
 	}
 	return fmt.Sprintf(", %d days after it came to cinemas — TMDB is read again daily, and a release to watch at home it dates sooner moves that",
 		int(theatricalWait.Hours()/24))
+}
+
+// notRead says why what TMDB says of a followed title could not be read, and
+// when it is read again: every 15 minutes while TMDB does not answer, once a
+// TMDB key is configured without one, on the refreshes for a title TMDB
+// does not know.
+func notRead(what string, p store.Progress) string {
+	switch {
+	case p.InventoryErr == noTMDB:
+		return what + " cannot be read: " + noTMDB
+	case p.InventoryAt == nil:
+		return fmt.Sprintf("%s could not be read from TMDB yet: %s; tried again every %d minutes until they are",
+			what, p.InventoryErr, int(followRetry.Minutes()))
+	}
+	return what + " could not be read from TMDB: " + p.InventoryErr + "; read again on a later refresh"
 }
 
 // count is "1 episode", "13 episodes".

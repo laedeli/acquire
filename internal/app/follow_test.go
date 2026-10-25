@@ -582,6 +582,44 @@ func TestTheRefreshIsPaced(t *testing.T) {
 	}
 }
 
+// A run keeps a third of its budget for the series that do not run — ended,
+// or never read —: a library of running series does not keep them waiting
+// for ever.
+func TestTheRefreshKeepsBudgetForTheSeriesThatEnded(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	for id := int64(1); id <= 6; id++ {
+		status, tmdbStatus := "continuing", "Returning Series"
+		if id > 4 {
+			status, tmdbStatus = "ended", "Ended"
+		}
+		if err := r.svc.st.UpsertTitle(ctx, store.Title{TMDBID: 990000 + id, Kind: "series", Title: fmt.Sprintf("Show %d", id), Monitored: true, Status: status}); err != nil {
+			t.Fatal(err)
+		}
+		r.tmdb.set(func(f *fakeTMDB) {
+			f.series[990000+id] = &tmdbSeries{name: fmt.Sprintf("Show %d", id), status: tmdbStatus,
+				seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-900)}}}}
+		})
+	}
+	// Four running ones, read before, are more than a run's budget; the ended
+	// ones were never read.
+	for id := 1; id <= 4; id++ {
+		sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours', tmdb_status = 'Returning Series' WHERE id = $1`,
+			fmt.Sprintf("series:99000%d", id))
+	}
+	r.svc.inventoryBudget = 6
+	run := r.settle(t, true)
+	ended := 0
+	for _, id := range []string{"series:990005", "series:990006"} {
+		if ti, _ := r.svc.st.TitleByID(ctx, id); ti.InventoryAt != nil {
+			ended++
+		}
+	}
+	if run.Titles != 3 || ended != 1 || !run.Left {
+		t.Errorf("a run of six calls: %+v, %d of the ended series read; want two running and one ended", run, ended)
+	}
+}
+
 // TMDB not answering ends the run and fails nothing: the follow says why,
 // and is read on the next run. Without a TMDB key nothing can be read, and
 // the request says so.
@@ -600,9 +638,17 @@ func TestTMDBNotAnswering(t *testing.T) {
 	if v := r.view(t, w.ID); v.Status != "following" || !strings.Contains(v.Detail, "could not be read from TMDB yet: TMDB did not answer") {
 		t.Errorf("the request: %s %q", v.Status, v.Detail)
 	}
+	// Tried again a quarter of an hour on, not on the next refresh hours
+	// away.
 	r.tmdb.set(func(f *fakeTMDB) { f.down = false })
-	if run := r.settle(t, true); run.Titles != 1 || run.Added != 13 {
-		t.Errorf("the next run: %+v", run)
+	if !r.svc.retryFollows(ctx) {
+		t.Fatal("the follow TMDB could not be read for is not tried again")
+	}
+	if run := r.settle(t, false); run.Titles != 1 || run.Added != 13 {
+		t.Errorf("tried again: %+v", run)
+	}
+	if r.svc.retryFollows(ctx) {
+		t.Error("a follow read is tried again")
 	}
 
 	// A title TMDB does not know is the title's fault: recorded, and the
@@ -850,7 +896,12 @@ func TestRequestState(t *testing.T) {
 	}{
 		{"not read yet", store.Progress{Kind: "series"}, "following", "reading its episodes from TMDB"},
 		{"not readable", store.Progress{Kind: "series", InventoryErr: "TMDB did not answer: 503"}, "following",
-			"its episodes could not be read from TMDB yet: TMDB did not answer: 503; tried again on a later refresh"},
+			"its episodes could not be read from TMDB yet: TMDB did not answer: 503; tried again every 15 minutes until they are"},
+		{"unknown to TMDB", store.Progress{Kind: "series", InventoryAt: &read, InventoryErr: "TMDB does not know it (/tv/1)"}, "following",
+			"its episodes could not be read from TMDB: TMDB does not know it (/tv/1); read again on a later refresh"},
+		{"no TMDB key", store.Progress{Kind: "movie", InventoryErr: noTMDB}, "pending", "its release dates cannot be read: " + noTMDB},
+		{"no episodes, ended", store.Progress{Kind: "series", InventoryAt: &read}, "following",
+			"TMDB lists no episodes of it, and says it does not run: it is read again weekly"},
 		{"running", store.Progress{Kind: "series", InventoryAt: &read, Running: true, HoldingsKnown: true, Episodes: 13, Held: 3,
 			OnTheWay: 2, Missing: 4, Failed: 1, Unaired: 4, Next: next}, "following",
 			"13 episodes: 3 in the library, 2 on the way, 4 missing (the last grab of 1 failed), 4 not aired yet; next S01E10 on " + dateOf(day(5))},
