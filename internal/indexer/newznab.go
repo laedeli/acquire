@@ -352,6 +352,10 @@ func parseFeed(body []byte, src Source) ([]release.Release, error) {
 				r.TMDBID, _ = strconv.ParseInt(v, 10, 64)
 			case "imdb", "imdbid":
 				r.IMDBID = imdbAttr(v)
+			case "category":
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					r.Categories = append(r.Categories, n)
+				}
 			}
 		}
 		if r.Size <= 0 {
@@ -385,8 +389,8 @@ func parseFeed(body []byte, src Source) ([]release.Release, error) {
 	return out, nil
 }
 
-// imdbAttr is an IMDb id as a feed's attribute writes it — 0903747,
-// tt0903747, 903747 — in IMDb's own form, tt and at least seven digits; ""
+// imdbAttr is an IMDb id as a feed's attribute writes it — 0012345,
+// tt0012345, 12345 — in IMDb's own form, tt and at least seven digits; ""
 // when it is none.
 func imdbAttr(v string) string {
 	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "tt")

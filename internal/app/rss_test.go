@@ -397,6 +397,73 @@ func TestTheFeedsGrabARequestedMovieOnceOut(t *testing.T) {
 	}
 }
 
+// A requested movie is matched only by a release the feed files as a movie
+// that names its title, its year and then tags only: no trailer, no
+// making-of, no longer title that starts with its name, nothing a TV category
+// carries. A series is matched only by what the feed files as TV, its
+// episodes followed by tags — the episode's title may come first —, never a
+// sample.
+func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[9001] = sevenHarbours()
+		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(day(-60)),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+				"release_dates": []map[string]any{{"type": 4, "release_date": day(-2).Format(time.RFC3339)}}}}}}
+	})
+	for _, w := range []store.Wanted{{TMDBID: 9001, MediaType: "series", Title: "Example Saga: Seven Harbours"},
+		{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}} {
+		if _, err := r.svc.Request(ctx, w, "user"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.settle(t, false)
+	feedSrc := newFeedSource(t, true,
+		film("Example.Clay.Film.2026.Official.Trailer.1080p.WEB-DL.x264-GRP", ago(3*time.Hour)),
+		tv("Example.Clay.Film.2026.The.Making.Of.1080p.HDTV.x264-GRP", ago(3*time.Hour)),
+		tv("Example.Clay.Film.2026.1080p.WEB-DL.x264-GRP", ago(3*time.Hour)),
+		film("Example.Clay.Film.2026.Part.Two.1080p.WEB-DL.x264-GRP", ago(3*time.Hour)),
+		film("Example.Saga.Seven.Harbours.S01E08.1080p.WEB.h264-GRP", ago(2*time.Hour)),
+		tv("Example.Saga.Seven.Harbours.S01E07.Harbour.7.1080p.WEB.h264-GRP", ago(2*time.Hour)),
+		tv("Example.Saga.Seven.Harbours.S01E09.Recap.Special.1080p.WEB.h264-GRP", ago(2*time.Hour)),
+		tv("Example.Saga.Seven.Harbours.S01E04.Sample.1080p.WEB.h264-GRP", ago(2*time.Hour)),
+	)
+	addFeed(t, r.svc, "feed", feedSrc)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := r.svc.SyncRSS(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.grabbed(t); len(got) != 1 || got["S01E07"] != "Example.Saga.Seven.Harbours.S01E07.Harbour.7.1080p.WEB.h264-GRP" {
+		t.Errorf("grabbed %v (%+v), want E07 alone", got, run)
+	}
+	// The movie's own release, filed as a movie.
+	feedSrc.add(film("Example.Clay.Film.2026.1080p.WEB-DL.x264-GRP", ago(time.Minute)))
+	if _, err := r.svc.SyncRSS(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.grabbed(t); got[""] != "Example.Clay.Film.2026.1080p.WEB-DL.x264-GRP" {
+		t.Errorf("the movie: %v", got)
+	}
+
+	// A typed search rejects an extra as well.
+	src := newFakeSource(t, "usenet", "K", "Example.Clay.Film.2026.Official.Trailer.2160p.WEB-DL.x265-GRP")
+	addSource(t, r.svc, "example", src, nil)
+	cands, err := r.svc.SearchTarget(ctx, "movie:9100:movie")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cands {
+		if strings.Contains(c.Title, "Trailer") != c.Rejected ||
+			(c.Rejected && !strings.Contains(c.Reason, `its name says "trailer": an extra, not the movie`)) {
+			t.Errorf("a typed search of the movie: %s rejected %v (%s)", c.Title, c.Rejected, c.Reason)
+		}
+	}
+}
+
 // A source that fails backs off as for any search and fails nothing: the
 // others are read and grabbed from, and the next run leaves it alone while
 // it backs off. Its cursor stays where it was.

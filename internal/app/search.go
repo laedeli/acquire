@@ -552,23 +552,54 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 			cov := release.ParseCoverage(c.Title)
 			c.Covers, c.Pack = cov.String(), cov.Pack()
 		}
-		markRejected(&c, t, blocked, days)
+		markRejected(&c, title, t, blocked, days)
 		out = append(out, c)
 	}
 	sortCandidates(out)
 	return out, nil
 }
 
-// markRejected rejects, with the reason, a release blocked for the target, or
-// one published before the target aired (preAired).
-func markRejected(c *Candidate, t store.Target, blocked map[string]string, days func() map[[2]int]time.Time) {
+// markRejected rejects, with the reason, a release blocked for the target, an
+// extra of the title (extraOf), or one published before the target aired
+// (preAired).
+func markRejected(c *Candidate, title store.Title, t store.Target, blocked map[string]string, days func() map[[2]int]time.Time) {
 	if why, ok := blocked[c.Title]; ok {
 		c.Rejected, c.Reason = true, clip("blocked for this target: "+why+" · "+c.Reason, 300)
+		return
+	}
+	if why := extraOf(c.Title, title, t); why != "" {
+		c.Rejected, c.Reason = true, clip(why+" · "+c.Reason, 300)
 		return
 	}
 	if why := preAired(*c, t, days); why != "" {
 		c.Rejected, c.Reason, c.preAired = true, clip(why+" · "+c.Reason, 300), true
 	}
+}
+
+// extraOf says why a release is an extra of its title rather than the title,
+// or "": its name says trailer, teaser, featurette, extras, bonus, making of,
+// behind the scenes, sample, interview or promo (release.Extra) after the
+// movie's year or after the episodes it holds — never in the title's own
+// words before them.
+func extraOf(name string, title store.Title, t store.Target) string {
+	rest, what := "", "the episode"
+	if t.Kind == "movie" {
+		what = "the movie"
+		for i, at := range release.SplitYears(name) {
+			if i == 0 || at.Year == title.Year {
+				rest = at.Rest
+			}
+			if at.Year == title.Year {
+				break
+			}
+		}
+	} else if _, cov, after := release.SplitSeries(name); cov.Found {
+		rest = after
+	}
+	if w := release.Extra(rest); w != "" {
+		return fmt.Sprintf("its name says %q: an extra, not %s", w, what)
+	}
+	return ""
 }
 
 // preAired says why a release cannot be what its name says, or "" when it

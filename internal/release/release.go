@@ -33,6 +33,30 @@ type Release struct {
 	TVDBID int64
 	IMDBID string
 	TMDBID int64
+	// Categories are the newznab categories a feed files the release under
+	// (5040 TV/HD, 2040 Movies/HD …); none when it names none.
+	Categories []int
+}
+
+// Media is what a feed files a release as: tv for a TV category (5000-5999),
+// movie for a movie category (2000-2999), "" when it names neither, or both.
+func (r Release) Media() string {
+	tv, movie := false, false
+	for _, c := range r.Categories {
+		switch c / 1000 {
+		case 5:
+			tv = true
+		case 2:
+			movie = true
+		}
+	}
+	switch {
+	case tv && !movie:
+		return "tv"
+	case movie && !tv:
+		return "movie"
+	}
+	return ""
 }
 
 // IsUsenet reports whether the release is an NZB.

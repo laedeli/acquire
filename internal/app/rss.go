@@ -237,6 +237,11 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 			if r.PubDate.IsZero() {
 				continue
 			}
+			if len(r.Categories) == 0 {
+				// What the feed is scoped to is what it files the release
+				// under; a read of both says nothing.
+				r.Categories = scopeOf(fd.media)
+			}
 			key := releaseKey(r)
 			if cur.Seen(r.PubDate, key) {
 				reached = true
@@ -265,6 +270,18 @@ func (s *Service) readFeed(ctx context.Context, f fleet, src indexer.Source, fd 
 		return fresh, read, err
 	}
 	return fresh, read, nil
+}
+
+// scopeOf are the categories a feed of a media reads: TV's or movies', none
+// for both.
+func scopeOf(media string) []int {
+	switch media {
+	case "tv":
+		return []int{indexer.CatTV}
+	case "movie":
+		return []int{indexer.CatMovie}
+	}
+	return nil
 }
 
 func appendOnce(list []string, v string) []string {
@@ -339,22 +356,22 @@ func (m matcher) seriesOf(r release.Release, name string) (store.Title, bool) {
 }
 
 // movieOf finds the movie a release's name names: its title or an alias,
-// then its year. A year off by one is taken only when the feed's IMDb id says
-// it is the movie.
+// then its year, then tags only (release.TagsOnly) — no trailer, making-of or
+// other extra (release.Extra), and no longer title that starts with its
+// name. A year off by one is taken only when the feed's IMDb id says it is
+// the movie.
 func (m matcher) movieOf(r release.Release) (store.Title, bool) {
-	words := strings.Fields(release.MatchKey(r.Title))
-	for i := 1; i < len(words); i++ {
-		y := release.YearOf(words[i])
-		if y == 0 {
-			continue
-		}
+	for _, at := range release.SplitYears(r.Title) {
 		var cands []store.Title
-		for _, t := range m.movies[strings.Join(words[:i], " ")] {
-			if t.Year == y || (t.Year != 0 && abs(t.Year-y) == 1 && imdbNumber(r.IMDBID) > 0 && imdbNumber(r.IMDBID) == imdbNumber(t.IMDBID)) {
+		for _, t := range m.movies[release.MatchKey(at.Head)] {
+			if t.Year == at.Year || (t.Year != 0 && abs(t.Year-at.Year) == 1 && imdbNumber(r.IMDBID) > 0 && imdbNumber(r.IMDBID) == imdbNumber(t.IMDBID)) {
 				cands = append(cands, t)
 			}
 		}
 		if t, ok := only(cands, r); ok {
+			if release.Extra(at.Rest) != "" || !release.TagsOnly(at.Rest, "") {
+				return store.Title{}, false
+			}
 			return t, true
 		}
 	}
@@ -444,19 +461,32 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 		g.releases = append(g.releases, r)
 	}
 	for _, r := range fresh {
-		if name, cov := release.SeriesPart(r.Title); cov.Found {
+		// A series only from what a feed files as TV, a movie only from what
+		// it files as a movie.
+		media := r.Media()
+		if name, cov, rest := release.SplitSeries(r.Title); cov.Found {
+			if media != "tv" {
+				continue
+			}
 			title, ok := m.seriesOf(r, name)
-			if !ok || cov.Pack() {
+			if !ok || cov.Pack() || release.Extra(rest) != "" {
 				continue
 			}
 			for _, t := range targetsOf(title.ID) {
 				if t.SeasonNumber != nil && t.EpisodeNumber != nil && cov.Covers(*t.SeasonNumber, *t.EpisodeNumber) &&
 					grabbableNow(title, t, now, pol.airDelay()) && pol.Grabs(title, t, now) {
-					run.Matched++
-					add(title, t, r)
+					// After the episodes, tags only — the episode's title may
+					// come first.
+					if release.TagsOnly(rest, t.EpisodeTitle) {
+						run.Matched++
+						add(title, t, r)
+					}
 					break
 				}
 			}
+			continue
+		}
+		if media != "movie" {
 			continue
 		}
 		title, ok := m.movieOf(r)
@@ -532,7 +562,7 @@ func (s *Service) grabMatched(ctx context.Context, groups []*matched, run *RSSRu
 				cov := release.ParseCoverage(c.Title)
 				c.Covers, c.Pack = cov.String(), cov.Pack()
 			}
-			markRejected(&c, g.target, blocked, days)
+			markRejected(&c, g.title, g.target, blocked, days)
 			cands = append(cands, c)
 		}
 		s.blockPreAired(ctx, g.target, cands)
