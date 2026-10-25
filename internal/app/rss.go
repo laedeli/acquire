@@ -42,8 +42,9 @@ import (
 //
 // A read spends a query of the source's daily allowance, so no feed is read
 // while nothing could be grabbed — every download slot taken, no room for a
-// download, the gateway out of reach —, and the feeds leave rssReserve of a
-// source's daily limit to the sweep and to people's searches.
+// download, the gateway out of reach, the source's release downloads for the
+// day used —, and the feeds leave rssReserve of a source's daily limit to the
+// sweep and to people's searches.
 
 const (
 	// rssPage is how many releases one read of a feed asks for, and
@@ -73,8 +74,11 @@ type RSSRun struct {
 	Feeds  int `json:"feeds"`
 	Failed int `json:"failed"`
 	// Limited are the feeds not read as their source spent the part of its
-	// daily limit the feeds may spend.
+	// daily query limit the feeds may spend; Spent those not read as their
+	// source has used its release downloads for today — nothing it lists
+	// could be fetched.
 	Limited int `json:"limited"`
+	Spent   int `json:"spent"`
 	Read    int `json:"read"`
 	New     int `json:"new"`
 	Matched int `json:"matched"`
@@ -167,9 +171,20 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 		return run, err
 	}
 	first, second := f.byProtocol(pol.PreferProtocol)
+	sources := append(first.sources, second.sources...)
+	if len(sources) > 0 && !slices.ContainsFunc(sources, func(src indexer.Source) bool { return !f.spent[src.ID] }) {
+		why := "every search source has used its release downloads for today"
+		run.Skipped = why
+		s.noteRSSSkipped(why)
+		return run, nil
+	}
 	var fresh []release.Release
 	seen := map[string]bool{}
-	for _, src := range append(first.sources, second.sources...) {
+	for _, src := range sources {
+		if f.spent[src.ID] {
+			run.Spent += len(feedsOf(src, episodes > 0, movies > 0))
+			continue
+		}
 		for _, fd := range feedsOf(src, episodes > 0, movies > 0) {
 			if ctx.Err() != nil {
 				return run, ctx.Err()
@@ -196,12 +211,12 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 	}
 	run.New = len(fresh)
 	defer func() {
-		if run.Feeds == 0 {
+		if run.Feeds == 0 && run.Spent == 0 {
 			return
 		}
-		line := fmt.Sprintf("acquire rss-sync: %d feed(s) read (%d failed, %d left for today: their source keeps the rest of its daily limit for the sweep and searches), "+
-			"%d release(s), %d new, %d matched to what is wanted, %d grabbed",
-			run.Feeds, run.Failed, run.Limited, run.Read, run.New, run.Matched, run.Grabbed)
+		line := fmt.Sprintf("acquire rss-sync: %d feed(s) read (%d failed, %d left for today: their source keeps the rest of its daily limit for the sweep and searches; "+
+			"%d not read: their source has used its release downloads for today), %d release(s), %d new, %d matched to what is wanted, %d grabbed",
+			run.Feeds, run.Failed, run.Limited, run.Spent, run.Read, run.New, run.Matched, run.Grabbed)
 		if run.Stopped != "" {
 			line += "; stopped grabbing: " + run.Stopped
 		}

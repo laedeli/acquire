@@ -797,3 +797,34 @@ func TestACursorIsKeptByAcquiresClock(t *testing.T) {
 		})
 	}
 }
+
+// A source that has used its release downloads for today is not read: what
+// it lists could not be fetched. With every source so, no feed is read.
+func TestTheFeedsSkipASourceOutOfDownloads(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 990711, "Show Name", 1, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-3), 0)
+	spent := newFeedSource(t, true, tv("Show.Name.S01E01.1080p.WEB.h264-GRP", ago(time.Hour)))
+	fresh := newFeedSource(t, true, tv("Show.Name.S01E01.720p.WEB.h264-GRP", ago(time.Hour)))
+	a := addFeed(t, r.svc, "spent", spent)
+	b := addFeed(t, r.svc, "fresh", fresh)
+	sqlExec(t, `UPDATE indexers SET grab_limit_day = 2 WHERE id = $1`, a.ID)
+	sqlExec(t, `INSERT INTO indexer_usage (indexer_id, day, grabs) VALUES ($1, (now() AT TIME ZONE 'UTC')::date, 2)
+	            ON CONFLICT (indexer_id, day) DO UPDATE SET grabs = 2`, a.ID)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	run, err := r.svc.SyncRSS(ctx)
+	if err != nil || run.Spent != 1 || len(spent.reads()) != 0 || len(fresh.reads()) != 1 || run.Grabbed != 1 {
+		t.Errorf("one source out of downloads: %+v %v (reads %d, %d)", run, err, len(spent.reads()), len(fresh.reads()))
+	}
+	sqlExec(t, `UPDATE indexers SET grab_limit_day = 1 WHERE id = $1`, b.ID)
+	sqlExec(t, `INSERT INTO indexer_usage (indexer_id, day, grabs) VALUES ($1, (now() AT TIME ZONE 'UTC')::date, 1)
+	            ON CONFLICT (indexer_id, day) DO UPDATE SET grabs = 1`, b.ID)
+	sqlExec(t, `UPDATE acquisition_targets SET state = 'wanted', reserved_by = '', grab_id = '' WHERE id = $1`, eps[0].ID)
+	sqlExec(t, `UPDATE downloads SET state = 'completed'`)
+	if run, _ := r.svc.SyncRSS(ctx); run.Skipped != "every search source has used its release downloads for today" || len(fresh.reads()) != 1 {
+		t.Errorf("every source out of downloads: %+v", run)
+	}
+}

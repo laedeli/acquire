@@ -124,6 +124,7 @@ type fleet struct {
 	configured bool              // any source row exists
 	sources    []indexer.Source  // enabled and askable, keys opened
 	limits     map[int64]*int    // daily query allowance per source
+	spent      map[int64]bool    // the sources that used their release downloads for today
 	unusable   []string          // names of enabled sources in scope that cannot be asked now
 	reasons    map[string]string // why, by name
 }
@@ -141,7 +142,7 @@ func sourceUnusable(ix store.Indexer, now time.Time) string {
 
 // loadFleet reads the sources; only, when non-empty, restricts it to those ids.
 func (s *Service) loadFleet(ctx context.Context, only []int64) (fleet, error) {
-	f := fleet{limits: map[int64]*int{}, reasons: map[string]string{}}
+	f := fleet{limits: map[int64]*int{}, spent: map[int64]bool{}, reasons: map[string]string{}}
 	if s.st == nil {
 		return f, errNoSources
 	}
@@ -171,14 +172,15 @@ func (s *Service) loadFleet(ctx context.Context, only []int64) (fleet, error) {
 		}
 		f.sources = append(f.sources, src)
 		f.limits[ix.ID] = ix.QueryLimitDay
+		f.spent[ix.ID] = ix.GrabLimitDay != nil && ix.GrabsToday >= *ix.GrabLimitDay
 	}
 	return f, nil
 }
 
 // byProtocol splits a fleet into the preferred protocol's sources and the rest.
 func (f fleet) byProtocol(prefer string) (first, second fleet) {
-	first = fleet{configured: f.configured, limits: f.limits, reasons: f.reasons}
-	second = fleet{configured: f.configured, limits: f.limits, reasons: f.reasons}
+	first = fleet{configured: f.configured, limits: f.limits, spent: f.spent, reasons: f.reasons}
+	second = fleet{configured: f.configured, limits: f.limits, spent: f.spent, reasons: f.reasons}
 	for _, src := range f.sources {
 		if src.Protocol == prefer {
 			first.sources = append(first.sources, src)
