@@ -10,6 +10,7 @@ import { Badge, Button, Checkbox, Divider, Field, Input, Select, Switch, Text } 
 import { Save } from 'lucide-react'
 import {
   ApiError,
+  type AirTimesStatus,
   type Api,
   type QualityProfile,
   type RequestSettings,
@@ -35,7 +36,8 @@ export function Settings({ api, admin }: { api: Api; admin: boolean }) {
  * The search and grab policy. It used to be deployment environment only; the
  * environment now just seeds it. Two switches say what is grabbed on its own:
  * the new things (what aired in the last days, what was requested), and
- * everything missing.
+ * everything missing. Switching either on while series that run have no air
+ * times from TVmaze yet asks the admin to confirm it first.
  */
 function SearchAndGrab({ api }: { api: Api }) {
   const [draft, setDraft] = useState<SearchSettings | null>(null)
@@ -59,8 +61,21 @@ function SearchAndGrab({ api }: { api: Api }) {
     setSaving(true)
     setError('')
     setFields({})
+    let confirm = ''
     try {
-      setDraft(await api.saveSearchSettings(draft))
+      for (;;) {
+        try {
+          setDraft(await api.saveSearchSettings(draft, confirm))
+          break
+        } catch (e) {
+          // A refusal an admin may confirm: it says why; on a yes it goes again.
+          if (e instanceof ApiError && e.status === 409 && e.confirm && !confirm && window.confirm(e.message)) {
+            confirm = e.confirm
+            continue
+          }
+          throw e
+        }
+      }
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
     } catch (e) {
@@ -70,6 +85,8 @@ function SearchAndGrab({ api }: { api: Api }) {
       setSaving(false)
     }
   }
+
+  const airTimes = draft.airTimes === 'tvmaze' ? airTimesLine(draft.airTimesStatus) : ''
 
   return (
     <div className="acq__settings">
@@ -118,7 +135,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="new episodes and requests"
           error={fields.autoGrabNew}
-          hint={`on: an episode that aired in the last ${newDays(draft)} days, the episodes of a series someone requested, and a requested movie once it is out to watch at home are grabbed as soon as a release turns up after the wait below — in a source's newest releases, or when the backlog sweep finds one. Never on their own: what a request awaiting an admin's approval asks for, a movie TMDB dates in cinemas only, a series whose releases name no season and episode (an anime, a daily show). off: they wait in the missing tab like the rest.`}
+          hint={`on: an episode that aired in the last ${newDays(draft)} days, every episode of a series a request made — of one acquire tracked before, the episodes TMDB lists after the request —, and a requested movie once it is out to watch at home are grabbed as soon as a release turns up after the wait below — in a source's newest releases, or when the backlog sweep finds one. Never on their own: what a request awaiting an admin's approval asks for, a movie TMDB dates in cinemas only, a series whose releases name no season and episode (an anime, a daily show), a series whose air times TVmaze has not given yet. off: they wait in the missing tab like the rest.`}
         >
           <Switch
             checked={draft.autoGrabNew}
@@ -136,7 +153,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="wait after the air date (hours)"
           error={fields.airDelayHours}
-          hint="TMDB dates the day an episode airs, not the hour: for an episode whose air time is not known, an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out to watch at home. A release published before the day began where the series comes from is taken for a fake and skipped; a person may still pick it. 0: from the air date on."
+          hint="TMDB dates the day an episode airs, not the hour: for an episode whose air time is not known, an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out to watch at home. A release published before the day began where the series comes from — of a series streamed from the United States, before 03:00 in New York — is taken for a fake and skipped; a person may still pick it. 0: from the air date on."
         >
           <Input
             type="number"
@@ -149,7 +166,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="exact air times"
           error={fields.airTimes}
-          hint="TVmaze: acquire reads the moment an episode airs from TVmaze's public schedule, asking by the series' TVDB or IMDb id and nothing else, again with every read of TMDB; an automatic grab then takes nothing published more than 30 minutes before it. Off: an episode is told by its air date alone."
+          hint="TVmaze: acquire reads from TVmaze's public schedule how a series airs — broadcast on a network, or streamed — and when each episode airs and how long it runs, asking by the series' TVDB or IMDb id and nothing else; an automatic grab then takes nothing of a broadcast published before it ended, nothing of a streamed episode published more than 30 minutes before it streams, and nothing of a series before its air times are read. Off: an episode is told by its air date alone."
         >
           <Select
             value={draft.airTimes}
@@ -163,7 +180,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="wait after it airs (minutes)"
           error={fields.airDelayAfterAirstampMinutes}
-          hint="how long an automatic grab waits after the moment an episode airs, when its air time is known. 0: from then on."
+          hint="how long an automatic grab waits after an episode's broadcast ends, or after it streams, when its air time is known. 0: from then on."
         >
           <Input
             type="number"
@@ -172,6 +189,11 @@ function SearchAndGrab({ api }: { api: Api }) {
           />
         </Field>
       </div>
+      {airTimes && (
+        <Text variant="muted" as="div">
+          {airTimes}
+        </Text>
+      )}
       <Field
         label="everything missing"
         error={fields.autoGrab}
@@ -533,6 +555,24 @@ function QualityProfileSettings({ api, admin }: { api: Api; admin: boolean }) {
       />
     </div>
   )
+}
+
+/**
+ * How far TVmaze's air times are of the series that run, as the server counts
+ * them: "TVmaze's air times: 790 of the 814 series that run read; 20 not known
+ * to TVmaze …; 4 not read yet …". Nothing without a schedule source to ask.
+ */
+function airTimesLine(st: AirTimesStatus | undefined): string {
+  if (!st || !st.on) return ''
+  if (st.running === 0) return "TVmaze's air times: no series that runs is tracked yet"
+  const parts = [`${st.read} of the ${st.running} series that run read`]
+  if (st.unknown) parts.push(`${st.unknown} not known to TVmaze, told by their air date`)
+  if (st.pending)
+    parts.push(
+      `${st.pending} not read yet — nothing of them is grabbed on its own until they are, on the next refreshes` +
+        (st.lastError ? ` (${st.lastError})` : ''),
+    )
+  return "TVmaze's air times: " + parts.join('; ')
 }
 
 /** How recently an episode aired to count as new, as the draft says or, while it says none, as the server does. */

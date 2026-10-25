@@ -31,6 +31,8 @@ export interface Wanted {
   progress?: RequestProgress
   /** Whether what the request waits for is grabbed on its own: the search and grab settings, and the request approved. */
   autoGrab?: boolean
+  /** Of a series: whether the episodes that aired before it was asked for are grabbed on their own too, not only new ones. */
+  autoGrabAired?: boolean
 }
 
 /** How far acquire is with the title a request follows. */
@@ -49,6 +51,9 @@ export interface RequestProgress {
   inventoryError?: string
   /** When a title TMDB did not know is read again. */
   inventoryRetryAt?: string
+  /** When a series' air times were last read from TVmaze (none: never), and why the last read failed. */
+  scheduleAt?: string
+  scheduleError?: string
   holdingsKnown: boolean
   /** Of a series' monitored episodes. */
   episodes: number
@@ -350,12 +355,26 @@ export interface SearchSettings {
   newWithinDays: number
   /** How long an automatic grab waits after an air date (00:00 UTC of the day TMDB dates) when the air time is not known; 0: from the air date on. */
   airDelayHours: number
-  /** Where the moment an episode airs comes from: TVmaze's public schedule, or off — the air date alone. */
+  /** Where the moment an episode airs comes from: TVmaze's public schedule — how a series airs, broadcast or streamed, when each episode airs and how long it runs —, or off: the air date alone. */
   airTimes: 'tvmaze' | 'off'
-  /** How long an automatic grab waits after the moment an episode airs, when it is known. */
+  /** How long an automatic grab waits after an episode's broadcast ends, or after it streams, when its air time is known. */
   airDelayAfterAirstampMinutes: number
   revision: number
   updatedAt?: string
+  /** How far TVmaze's air times are of the series that run (read only). */
+  airTimesStatus?: AirTimesStatus
+}
+
+/** How far TVmaze's air times are of the series that run, whose air times matter: read, not known to TVmaze (told by their air date), not read yet (nothing of them is grabbed on its own until they are). */
+export interface AirTimesStatus {
+  /** Whether air times are used: the setting, and a schedule source to ask. */
+  on: boolean
+  running: number
+  read: number
+  unknown: number
+  pending: number
+  /** Why TVmaze last failed to give a pending series' air times. */
+  lastError?: string
 }
 
 /** How requests are taken: autoApprove approves anyone's request at once; off, one from someone who is not an admin awaits an admin's approval. */
@@ -388,6 +407,8 @@ export class ApiError extends Error {
     message: string,
     /** Per-field problems from a 422, keyed by field name. */
     public fields: Record<string, string> = {},
+    /** A 409 that an admin may confirm, sending the write again with ?confirm=<this>. */
+    public confirm?: string,
   ) {
     super(message)
   }
@@ -415,6 +436,11 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
       const first = body.fieldErrors?.[0]
       throw new ApiError(422, first ? `${first.field}: ${first.message}` : 'invalid', fields)
     }
+    if (res.status === 409 && (res.headers.get('Content-Type') || '').includes('application/json')) {
+      // A refusal an admin may confirm: its message, and what to confirm.
+      const body = (await res.json().catch(() => ({}))) as { message?: string; confirm?: string }
+      throw new ApiError(409, body.message || res.statusText, {}, body.confirm)
+    }
     if (!res.ok) throw new ApiError(res.status, (await res.text()) || res.statusText)
     if (res.status === 204) return undefined as T
     return (await res.json()) as T
@@ -437,8 +463,11 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
       }),
     remove: (id: string) => call<void>('wanted/' + encodeURIComponent(id), { method: 'DELETE' }),
     /** An admin's word on a request that follows its title. */
-    approve: (id: string) => call<Wanted>('wanted/' + encodeURIComponent(id) + '/approve', { method: 'POST' }),
-    decline: (id: string) => call<Wanted>('wanted/' + encodeURIComponent(id) + '/decline', { method: 'POST' }),
+    /** Approve or decline a request as it was shown (from: its approval then); one decided otherwise meanwhile answers 409. */
+    approve: (id: string, from?: Wanted['approval']) =>
+      call<Wanted>('wanted/' + encodeURIComponent(id) + '/approve', { method: 'POST', body: JSON.stringify({ from: from ?? 'awaiting' }) }),
+    decline: (id: string, from?: Wanted['approval']) =>
+      call<Wanted>('wanted/' + encodeURIComponent(id) + '/decline', { method: 'POST', body: JSON.stringify({ from: from ?? 'awaiting' }) }),
     autograb: (id: string) =>
       call<unknown>('wanted/' + encodeURIComponent(id) + '/autograb', { method: 'POST' }),
     // No client named: the server routes by what the source turns out to be.
@@ -517,8 +546,9 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
     /** Test a saved source as stored; the outcome becomes its health. */
     testStoredSource: (id: number) => call<SourceTestResult>('indexers/' + id + '/test', { method: 'POST' }),
     searchSettings: () => call<SearchSettings>('settings/search'),
-    saveSearchSettings: (s: SearchSettings) =>
-      call<SearchSettings>('settings/search', {
+    /** Save the policy; confirm sends it again past a refusal an admin confirmed (ApiError.confirm). */
+    saveSearchSettings: (s: SearchSettings, confirm = '') =>
+      call<SearchSettings>('settings/search' + (confirm ? '?confirm=' + encodeURIComponent(confirm) : ''), {
         method: 'PUT',
         headers: ifMatch(s.revision),
         // The server reads the document over the policy stored: every field

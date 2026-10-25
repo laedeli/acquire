@@ -24,16 +24,22 @@ const followsSeries = (w: Wanted) => w.progress?.kind === 'series'
  * What a request that follows its title says of how it is grabbed: on its own
  * as the server says (autoGrab: the search and grab settings, the request
  * approved, a title whose releases acquire can tell, a movie dated to watch at
- * home), else by whom and where — an admin, on this row once the movie is out,
- * or in the missing tab. The row's buttons are an admin's, and there only while
- * the movie is pending or failed.
+ * home — and of a series, autoGrabAired: its episodes aired already too, not
+ * only new ones), else by whom and where — an admin, on this row once the
+ * movie is out, or in the missing tab. The row's buttons are an admin's, and
+ * there only while the movie is pending or failed; an approval or a decline
+ * is made on the request as the row shows it.
  */
 function onItsOwn(w: Wanted, admin: boolean): string {
   const p = w.progress
   if (!p || w.status === 'fulfilled' || w.approval === 'declined') return ''
   if (w.approval === 'awaiting') return admin ? 'approve it, or decline it' : 'an admin approves or declines it'
   if (p.kind === 'series') {
-    if (w.autoGrab) return 'new episodes are grabbed on their own after they air, as releases turn up'
+    if (w.autoGrab && w.autoGrabAired) return 'its episodes are grabbed on their own as releases turn up — the ones aired already, and each new one after it airs'
+    if (w.autoGrab)
+      return admin
+        ? 'new episodes are grabbed on their own after they air, as releases turn up; the earlier ones from the missing tab'
+        : 'new episodes are grabbed on their own after they air, as releases turn up; an admin grabs the earlier ones in the missing tab'
     const who = admin ? 'its episodes are grabbed from the missing tab' : 'an admin grabs its episodes in the missing tab'
     return p.handsOff ? who : who + ' — grabbing on its own is off in settings'
   }
@@ -146,7 +152,7 @@ export function Requests({
                 variant="primary"
                 loading={busy === w.id + ':approve'}
                 leading={<Check size={14} />}
-                onClick={() => void act(w.id + ':approve', () => api.approve(w.id))}
+                onClick={() => void act(w.id + ':approve', () => api.approve(w.id, w.approval))}
               >
                 approve
               </Button>
@@ -157,7 +163,7 @@ export function Requests({
                 variant="ghost"
                 loading={busy === w.id + ':decline'}
                 leading={<X size={14} />}
-                onClick={() => void act(w.id + ':decline', () => api.decline(w.id))}
+                onClick={() => void act(w.id + ':decline', () => api.decline(w.id, w.approval))}
               >
                 decline
               </Button>

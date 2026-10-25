@@ -151,13 +151,14 @@ function holdingsReason(reason: string | undefined, one = false): string {
 /** What is grabbed on its own, as the search and grab settings say: the header's line. */
 type Policy = Pick<MissingAnswer, 'autoGrab' | 'autoGrabNew' | 'newWithinDays' | 'airDelayHours' | 'airTimes' | 'airDelayAfterAirstampMinutes'>
 
-/** When an automatic grab takes an episode, as the settings have it: ", an hour after it airs (else 30 hours after its air date)". */
+/** When an automatic grab takes an episode, as the settings have it: ", an hour after its broadcast ends or it streams (else 30 hours after its air date)". */
 function grabbedWhen(p: Policy): string {
   const date = p.airDelayHours ? `${formatCount(p.airDelayHours)} hours after its air date` : 'from its air date on'
   if (p.airTimes === 'off') return p.airDelayHours ? `, ${date}` : ''
   const m = p.airDelayAfterAirstampMinutes ?? 0
+  const after = 'after its broadcast ends or it streams'
   const stamp =
-    m === 0 ? 'from the moment it airs' : m === 60 ? 'an hour after it airs' : m % 60 === 0 ? `${m / 60} hours after it airs` : `${m} minutes after it airs`
+    m === 0 ? 'once its broadcast ends or it streams' : m === 60 ? `an hour ${after}` : m % 60 === 0 ? `${m / 60} hours ${after}` : `${m} minutes ${after}`
   return `, ${stamp} (else ${date})`
 }
 
