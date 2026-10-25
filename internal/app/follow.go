@@ -292,7 +292,7 @@ func (s *Service) views(ctx context.Context, rows []store.Wanted) ([]RequestView
 		if p, ok := progress[w.TitleID]; ok && w.TitleID != "" {
 			p := p
 			v.Progress = &p
-			status, detail := requestState(p, now, pol.airDelay())
+			status, detail := requestState(p, now, pol)
 			v.Status, v.Detail = approvalState(w.Approval, status, detail)
 			auto := grabs && w.Approval == store.ApprovalApproved
 			v.AutoGrab = &auto
@@ -340,11 +340,11 @@ func (s *Service) RequestStatus(ctx context.Context, tmdbID int64) (RequestView,
 // requestState is the status and the detail of a request that follows a
 // title, from how far acquire is with it: a series stays following while it
 // runs or misses episodes, and is fulfilled once it ended and the library
-// holds every episode; a movie reads as its target is (movieState), delay
-// being the air delay automatic grabs wait after a release.
-func requestState(p store.Progress, now time.Time, delay time.Duration) (status, detail string) {
+// holds every episode; a movie reads as its target is (movieState), searched
+// from when the policy opens it to an automatic grab (openAt).
+func requestState(p store.Progress, now time.Time, pol SearchSettings) (status, detail string) {
 	if p.Kind == "movie" {
-		return movieState(p, now, delay)
+		return movieState(p, now, pol)
 	}
 	switch {
 	case p.Episodes == 0 && p.InventoryErr != "":
@@ -391,7 +391,7 @@ func requestState(p store.Progress, now time.Time, delay time.Duration) (status,
 // after the day TMDB dates — or, when TMDB dates it in cinemas only, 90 days
 // after it came to cinemas, read again daily meanwhile in case TMDB dates a
 // release to watch at home sooner.
-func movieState(p store.Progress, now time.Time, delay time.Duration) (status, detail string) {
+func movieState(p store.Progress, now time.Time, pol SearchSettings) (status, detail string) {
 	t := p.Movie
 	switch {
 	case t == nil && p.InventoryErr != "":
@@ -410,7 +410,7 @@ func movieState(p store.Progress, now time.Time, delay time.Duration) (status, d
 		return "waiting", "TMDB dates no release of it yet: it is read again daily, and searched once it comes out to watch at home — " +
 			fmt.Sprintf("or %d days after it comes to cinemas, if TMDB dates nothing else", int(theatricalWait.Hours()/24))
 	}
-	from := searchedFrom(t, delay)
+	from := searchedFrom(t, pol)
 	if from != nil && from.After(now) {
 		return "waiting", clip(releaseWords(t, now)+"; searched from "+from.UTC().Format("2006-01-02 15:04 UTC")+" on"+guessWords(t), 300)
 	}
@@ -435,16 +435,13 @@ func movieState(p store.Progress, now time.Time, delay time.Duration) (status, d
 }
 
 // searchedFrom is when a requested movie is searched from: its window, and
-// the air delay after the day it comes out (as store's autoOpenSQL); nil for
-// a movie the import tracks.
-func searchedFrom(t *store.Target, delay time.Duration) *time.Time {
+// the air delay after the day it comes out (openAt, as store's autoOpenSQL);
+// nil for a movie the import tracks.
+func searchedFrom(t *store.Target, pol SearchSettings) *time.Time {
 	if t.WindowAt == nil {
 		return nil
 	}
-	at := *t.WindowAt
-	if t.AirDate != nil && t.AirDate.Add(delay).After(at) {
-		at = t.AirDate.Add(delay)
-	}
+	at := openAt(*t, pol)
 	return &at
 }
 

@@ -96,6 +96,11 @@ type Target struct {
 	// once a read a day or more later agrees, unless it holds anything.
 	EverHeld   bool       `json:"everHeld,omitempty"`
 	TMDBGoneAt *time.Time `json:"tmdbGoneAt,omitempty"`
+	// AirStamp is the moment an episode airs, as the schedule source says
+	// it; nil when no hour is known. ReleaseCountry is where a requested
+	// movie's release to watch at home comes out.
+	AirStamp       *time.Time `json:"airStamp,omitempty"`
+	ReleaseCountry string     `json:"releaseCountry,omitempty"`
 }
 
 // targetCols are the columns scanTarget reads, under the alias a.
@@ -103,7 +108,8 @@ const targetCols = `a.id, a.title_id, a.kind, a.season_number, a.episode_number,
 	a.detail, a.grab_id, a.reserved_by, a.grab_failures, a.retry_at, a.handed_over_at,
 	a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
 	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source,
-	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind, a.ever_held, a.tmdb_gone_at`
+	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind, a.ever_held, a.tmdb_gone_at,
+	a.air_stamp, a.release_country`
 
 func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 	var t Target
@@ -111,7 +117,8 @@ func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 		&t.Detail, &t.GrabID, &t.ReservedBy, &t.GrabFailures, &t.RetryAt, &t.HandedOverAt,
 		&t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
 		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource,
-		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind, &t.EverHeld, &t.TMDBGoneAt)
+		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind, &t.EverHeld, &t.TMDBGoneAt,
+		&t.AirStamp, &t.ReleaseCountry)
 	return t, err
 }
 
@@ -430,27 +437,35 @@ func (s *Store) InvalidateHeldScores(ctx context.Context, profileID string) (int
 	return tag.RowsAffected(), nil
 }
 
-// autoOpenSQL is airedSQL for an automatic grab: the target's window has
-// opened, and the air delay (the parameter named, in seconds) has passed
-// since its air date — 00:00 UTC on the day TMDB dates an episode, or the day
-// a requested movie comes out. TMDB dates the day, not the hour: the window
-// opens a day before an evening broadcast in the Americas reaches UTC, and
-// what turns up named for the episode before it was broadcast is most often a
-// fake.
-func autoOpenSQL(delay string) string {
+// openParams name the parameters autoOpenSQL reads: the air delay after an
+// air date and the delay after the moment an episode airs (in seconds), and
+// whether the moments the schedule source gives are used.
+type openParams struct{ delay, stampDelay, stamps string }
+
+// autoOpenSQL is airedSQL for an automatic grab. Of an episode whose air time
+// the schedule source gives (air_stamp, when stamps are used): the delay after
+// it has passed. Of any other target: its window has opened, and the air
+// delay has passed since its air date — 00:00 UTC on the day TMDB dates an
+// episode, or the day a requested movie comes out. TMDB dates the day, not
+// the hour: the window opens a day before an evening broadcast in the
+// Americas reaches UTC, and what turns up named for the episode before it was
+// broadcast is most often a fake.
+func autoOpenSQL(p openParams) string {
 	return `(CASE WHEN a.air_window_opens_at IS NULL THEN a.kind = 'movie' AND NOT a.release_pending
+	         WHEN ` + p.stamps + `::boolean AND a.air_stamp IS NOT NULL
+	              THEN a.air_stamp + make_interval(secs => ` + p.stampDelay + `::float8) <= now()
 	         ELSE GREATEST(a.air_window_opens_at,
-	                       (a.air_date::timestamp AT TIME ZONE 'UTC') + make_interval(secs => ` + delay + `::float8)) <= now() END)`
+	                       (a.air_date::timestamp AT TIME ZONE 'UTC') + make_interval(secs => ` + p.delay + `::float8)) <= now() END)`
 }
 
 // sweepableSQL is what the backlog sweep may look at, and a source's newest
 // release be grabbed for: wanted (not failed, not in flight), monitored with
-// its title, listed by TMDB, of holdings acquire knows, open to an automatic grab
-// (autoOpenSQL, with the air delay in the parameter named), and not of a
-// title held for an admin's approval (heldForApprovalSQL).
-func sweepableSQL(delay string) string {
+// its title, listed by TMDB, of holdings acquire knows, open to an automatic
+// grab (autoOpenSQL), and not of a title held for an admin's approval
+// (heldForApprovalSQL).
+func sweepableSQL(p openParams) string {
 	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND a.tmdb_gone_at IS NULL AND ` + knownSQL +
-		` AND ` + autoOpenSQL(delay) + ` AND NOT ` + heldForApprovalSQL
+		` AND ` + autoOpenSQL(p) + ` AND NOT ` + heldForApprovalSQL
 }
 
 // recentSQL is the condition "this target aired in the last days days" (the
@@ -479,11 +494,25 @@ func newSQL(days string) string {
 // DueOrder is how the sweep picks the targets it searches: with
 // NewWithinDays, the new things first — what aired in the last NewWithinDays
 // days, then what a request asked for (newSQL) —; none before AirDelay has
-// passed since its air date (autoOpenSQL).
+// passed since its air date, or — with Stamps, of an episode whose air time
+// the schedule source gives — StampDelay since it aired (autoOpenSQL).
 type DueOrder struct {
 	NewWithinDays int
 	AirDelay      time.Duration
+	StampDelay    time.Duration
+	Stamps        bool
 }
+
+// window are the parameters of the window, in openParams' order.
+func (o DueOrder) window() []any {
+	return []any{o.AirDelay.Seconds(), o.StampDelay.Seconds(), o.Stamps}
+}
+
+// args are a limit, then the window ($2 to $4: dueParams).
+func (o DueOrder) args(limit int) []any { return append([]any{limit}, o.window()...) }
+
+// dueParams are the window's parameters as args places them.
+var dueParams = openParams{delay: "$2", stampDelay: "$3", stamps: "$4"}
 
 // newFirstSQL orders the new things first: what aired in the last days days
 // (the parameter named), then what a request asked for — yesterday's episode
@@ -511,16 +540,16 @@ func (s *Store) DueTargets(ctx context.Context, limit int) ([]Target, error) {
 // DueTargetsBy is DueTargets in the order the policy asks for (DueOrder).
 func (s *Store) DueTargetsBy(ctx context.Context, limit int, o DueOrder) ([]Target, error) {
 	order := `a.last_search_at NULLS FIRST, a.air_window_opens_at NULLS FIRST, a.id`
-	args := []any{limit, o.AirDelay.Seconds()}
+	args := o.args(limit)
 	if o.NewWithinDays > 0 {
-		order = newFirstSQL("$3") + order
+		order = newFirstSQL("$5") + order
 		args = append(args, o.NewWithinDays)
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+targetCols+`
 		  FROM acquisition_targets a
 		  JOIN titles t ON t.id = a.title_id
-		 WHERE `+sweepableSQL("$2")+`
+		 WHERE `+sweepableSQL(dueParams)+`
 		   AND (a.search_backoff_until IS NULL OR a.search_backoff_until <= now())
 		 ORDER BY `+order+`
 		 LIMIT $1`, args...)

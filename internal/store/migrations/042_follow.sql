@@ -37,6 +37,15 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS inventory_at    timestamptz;
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS inventory_error text NOT NULL DEFAULT '';
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin_country  text[] NOT NULL DEFAULT '{}';
 
+-- titles: the schedule source's word on a series (search.airTimes, TVmaze):
+-- schedule_id is the show's id there (NULL: not looked up, or not known
+-- there), schedule_at when its air times were last read, schedule_error why
+-- the last read failed — a show the source does not know is looked up again
+-- after a week.
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_id    bigint;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_at    timestamptz;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_error text NOT NULL DEFAULT '';
+
 -- acquisition_targets: added_at is when a follow or a read of TMDB on the
 -- clock made the target; NULL for every target made before, by the import or
 -- a derivation — the old backlog. A target added after its title's holdings
@@ -62,6 +71,15 @@ ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS tmdb_gone_at    timesta
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS episode_title   text NOT NULL DEFAULT '';
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_pending boolean NOT NULL DEFAULT false;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_kind    text NOT NULL DEFAULT '';
+
+-- acquisition_targets: air_stamp is the moment an episode airs, as the
+-- schedule source says it (NULL: no hour known) — an automatic grab takes
+-- nothing published more than 30 minutes before it, and waits
+-- search.airDelayAfterAirstampMinutes after it. release_country is where a
+-- requested movie's release to watch at home comes out (ISO 3166-1), whose
+-- midnight the day it comes out begins at.
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS air_stamp       timestamptz;
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_country text NOT NULL DEFAULT '';
 
 -- wanted_items: the title a request follows ('' for one that follows none: a
 -- request without a TMDB id, or one made before 042 and not asked again).

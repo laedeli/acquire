@@ -63,6 +63,19 @@ func (m Movie) Year() int {
 // (digital, physical, tv). ok is false when TMDB dates none: the movie may be
 // in cinemas only, or TMDB may know no more of it.
 func (m Movie) HomeRelease() (at time.Time, kind string, ok bool) {
+	r, kind, ok := m.home()
+	return r.Date, kind, ok
+}
+
+// HomeCountry is where the movie's first release to watch at home comes out
+// (HomeRelease): the day it comes out begins at midnight there. "" when TMDB
+// dates none.
+func (m Movie) HomeCountry() string {
+	r, _, _ := m.home()
+	return r.Country
+}
+
+func (m Movie) home() (first Release, kind string, ok bool) {
 	for _, r := range m.Releases {
 		k := ""
 		switch r.Type {
@@ -75,11 +88,11 @@ func (m Movie) HomeRelease() (at time.Time, kind string, ok bool) {
 		default:
 			continue
 		}
-		if !ok || r.Date.Before(at) {
-			at, kind, ok = r.Date, k, true
+		if !ok || r.Date.Before(first.Date) {
+			first, kind, ok = r, k, true
 		}
 	}
-	return at, kind, ok
+	return first, kind, ok
 }
 
 // TheatricalRelease is the movie's first release in cinemas, in any country:

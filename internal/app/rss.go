@@ -152,7 +152,7 @@ func (s *Service) SyncRSS(ctx context.Context) (RSSRun, error) {
 	if !pol.GrabsAnything() {
 		return run, nil
 	}
-	episodes, movies, err := s.st.WantedForFeeds(ctx, store.FeedsWant{All: pol.AutoGrab, NewWithinDays: pol.newWithin(), AirDelay: pol.airDelay()})
+	episodes, movies, err := s.st.WantedForFeeds(ctx, store.FeedsWant{All: pol.AutoGrab, NewWithinDays: pol.newWithin(), DueOrder: pol.dueOrder()})
 	if err != nil || (episodes == 0 && movies == 0) {
 		return run, err
 	}
@@ -562,7 +562,7 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 			}
 			for _, t := range targetsOf(title.ID) {
 				if t.SeasonNumber != nil && t.EpisodeNumber != nil && cov.Covers(*t.SeasonNumber, *t.EpisodeNumber) &&
-					grabbableNow(title, t, now, pol.airDelay()) && pol.Grabs(title, t, now) {
+					grabbableNow(title, t, now, pol) && pol.Grabs(title, t, now) {
 					// After the episodes, tags only — the episode's title may
 					// come first.
 					if release.TagsOnly(rest, t.EpisodeTitle) {
@@ -582,7 +582,7 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 			continue
 		}
 		for _, t := range targetsOf(title.ID) {
-			if t.Kind == "movie" && grabbableNow(title, t, now, pol.airDelay()) && pol.Grabs(title, t, now) {
+			if t.Kind == "movie" && grabbableNow(title, t, now, pol) && pol.Grabs(title, t, now) {
 				run.Matched++
 				add(title, t, r)
 			}
@@ -595,29 +595,39 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 // (store's sweepable): wanted, not reserved, monitored with its title, listed
 // by TMDB, of holdings acquire knows — learned after the target was added —,
 // and open to an automatic grab (autoOpen).
-func grabbableNow(title store.Title, t store.Target, now time.Time, delay time.Duration) bool {
+func grabbableNow(title store.Title, t store.Target, now time.Time, pol SearchSettings) bool {
 	switch {
 	case t.State != store.TargetWanted, t.ReservedBy != "", !t.Monitored, !title.Monitored, !title.HoldingsKnown(), t.TMDBGoneAt != nil:
 		return false
 	case t.AddedAt != nil && t.AddedAt.After(*title.HoldingsAt):
 		return false
 	}
-	return autoOpen(t, now, delay)
+	return autoOpen(t, now, pol)
 }
 
 // autoOpen reports whether an automatic grab may take a target now, as
-// store's autoOpenSQL says: its window has opened and delay has passed since
-// its air date (00:00 UTC of the day TMDB dates it); a movie the import
-// tracks, without a window, is out.
-func autoOpen(t store.Target, now time.Time, delay time.Duration) bool {
+// store's autoOpenSQL says (openAt); a movie the import tracks, without a
+// window, is out.
+func autoOpen(t store.Target, now time.Time, pol SearchSettings) bool {
 	if t.WindowAt == nil {
 		return t.Kind == "movie" && !t.ReleasePending
 	}
-	at := *t.WindowAt
-	if t.AirDate != nil && t.AirDate.Add(delay).After(at) {
-		at = t.AirDate.Add(delay)
+	return !openAt(t, pol).After(now)
+}
+
+// openAt is when an automatic grab may take a target with a window: of an
+// episode whose air time the schedule source gives, the delay after it;
+// else its window, and the air delay after its air date (00:00 UTC of the
+// day TMDB dates it).
+func openAt(t store.Target, pol SearchSettings) time.Time {
+	if pol.exactAirTimes() && t.AirStamp != nil {
+		return t.AirStamp.Add(pol.stampDelay())
 	}
-	return !at.After(now)
+	at := *t.WindowAt
+	if t.AirDate != nil && t.AirDate.Add(pol.airDelay()).After(at) {
+		at = t.AirDate.Add(pol.airDelay())
+	}
+	return at
 }
 
 // grabMatched grabs, for each target matched, the best of its releases an
@@ -650,13 +660,18 @@ func (s *Service) grabMatched(ctx context.Context, pol SearchSettings, groups []
 				cov := release.ParseCoverage(c.Title)
 				c.Covers, c.Pack = cov.String(), cov.Pack()
 			}
-			markRejected(&c, g.title, g.target, blocked, days)
+			markRejected(&c, g.title, g.target, blocked, days, pol.exactAirTimes())
 			cands = append(cands, c)
 		}
-		s.blockPreAired(ctx, g.target, cands)
 		sortCandidates(cands)
 		usable := s.autoCandidates(ctx, g.target, cands, &pol)
 		if len(usable) == 0 {
+			if n := preAiredCount(cands); n > 0 {
+				// Skipped, not blocked: the target says why it is still
+				// missing, and a person may pick the release.
+				_ = s.st.SetTargetDetail(ctx, g.target.ID, clip(fmt.Sprintf(
+					"%d release(s) in a source's newest releases published before it aired — most likely fakes, skipped", n), 300))
+			}
 			continue
 		}
 		if !grabbing {

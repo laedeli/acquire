@@ -65,8 +65,8 @@ func TestMovieReadsItsReleases(t *testing.T) {
 		t.Errorf("releases = %+v, want the four with a date", m.Releases)
 	}
 	at, kind, ok := m.HomeRelease()
-	if !ok || kind != "digital" || !at.Equal(time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("home release = %v %q %v, want the digital one, the first of any country", at, kind, ok)
+	if !ok || kind != "digital" || !at.Equal(time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)) || m.HomeCountry() != "US" {
+		t.Errorf("home release = %v %q %v in %q, want the digital one, the first of any country", at, kind, ok, m.HomeCountry())
 	}
 	if at, ok := m.TheatricalRelease(); !ok || !at.Equal(time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("theatrical release = %v %v, want the release in cinemas, not the premiere before it", at, ok)

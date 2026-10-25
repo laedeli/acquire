@@ -54,6 +54,12 @@ type Title struct {
 	// at once.
 	PreMonitored *bool
 	Approved     bool
+	// ScheduleID is the series' show id at the schedule source (0: not
+	// looked up, or not known there); ScheduleAt when its air times were
+	// last read, and ScheduleError why the last read failed.
+	ScheduleID    int64
+	ScheduleAt    *time.Time
+	ScheduleError string
 }
 
 // HeldForApproval reports whether nothing of a followed title may be grabbed
@@ -86,7 +92,7 @@ const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.
 	COALESCE(t.year,0), t.status, t.series_type, t.monitored, t.monitor_new, t.profile_id,
 	t.holdings_at, t.holdings_error, t.catalog_id,
 	t.followed_at, t.unfollowed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country,
-	t.pre_monitored, ` + approvedSQL
+	t.pre_monitored, ` + approvedSQL + `, COALESCE(t.schedule_id, 0), t.schedule_at, t.schedule_error`
 
 func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
@@ -94,7 +100,7 @@ func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
 		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
 		&t.FollowedAt, &t.UnfollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries,
-		&t.PreMonitored, &t.Approved}, extra...)...)
+		&t.PreMonitored, &t.Approved, &t.ScheduleID, &t.ScheduleAt, &t.ScheduleError}, extra...)...)
 	return t, err
 }
 

@@ -43,8 +43,45 @@ type SearchSettings struct {
 	// requested movie comes out: TMDB dates the day, not the hour, and an
 	// evening broadcast in the Americas is a day later in UTC. Releases
 	// named for an episode before it was broadcast are most often fakes.
-	// 0 grabs from the air date on.
+	// 0 grabs from the air date on. It holds for an episode whose air time is
+	// not known (AirTimes).
 	AirDelayHours int `json:"airDelayHours"`
+	// AirTimes is where the moment an episode airs comes from: "tvmaze" —
+	// the default — reads it from TVmaze's public schedule, asking by the
+	// series' TVDB or IMDb id and nothing else; "off" tells an episode by its
+	// air date alone.
+	AirTimes string `json:"airTimes"`
+	// AirDelayAfterAirstampMinutes is how long an automatic grab waits after
+	// the moment an episode airs, when it is known; 0 grabs from then on.
+	AirDelayAfterAirstampMinutes int `json:"airDelayAfterAirstampMinutes"`
+}
+
+// Where exact air times come from (SearchSettings.AirTimes).
+const (
+	AirTimesTVmaze = "tvmaze"
+	AirTimesOff    = "off"
+)
+
+// DefaultAirDelayAfterAirstampMinutes is how long an automatic grab waits
+// after the moment an episode airs, by default, and
+// MaxAirDelayAfterAirstampMinutes the longest it may be set to wait.
+const (
+	DefaultAirDelayAfterAirstampMinutes = 60
+	MaxAirDelayAfterAirstampMinutes     = 1440
+)
+
+// airSlack is how long before the moment an episode airs a release of it may
+// be published: a schedule a little off, a broadcast a little early.
+const airSlack = 30 * time.Minute
+
+// exactAirTimes reports whether the moments the schedule source gives are
+// read and used.
+func (p SearchSettings) exactAirTimes() bool { return p.AirTimes != AirTimesOff }
+
+// stampDelay is how long after the moment an episode airs an automatic grab
+// may take it.
+func (p SearchSettings) stampDelay() time.Duration {
+	return time.Duration(p.AirDelayAfterAirstampMinutes) * time.Minute
 }
 
 // DefaultNewWithinDays is how recently an episode aired, by default, to be
@@ -66,7 +103,7 @@ func (p SearchSettings) airDelay() time.Duration { return time.Duration(p.AirDel
 // things first when they are grabbed on their own, and nothing before its air
 // delay is over.
 func (p SearchSettings) dueOrder() store.DueOrder {
-	o := store.DueOrder{AirDelay: p.airDelay()}
+	o := store.DueOrder{AirDelay: p.airDelay(), StampDelay: p.stampDelay(), Stamps: p.exactAirTimes()}
 	if p.AutoGrabNew {
 		o.NewWithinDays = p.newWithin()
 	}
@@ -93,6 +130,29 @@ func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) 
 // the missing tab.
 func handsOff(title store.Title) bool {
 	return title.Kind == "series" && (title.SeriesType == "anime" || title.SeriesType == "daily")
+}
+
+// grabbedWhen says when an automatic grab takes an episode, as the policy
+// has it: "an hour after it airs (TVmaze's air times), else 30 hours after
+// its air date".
+func (p SearchSettings) grabbedWhen() string {
+	date := "from its air date on"
+	if p.AirDelayHours > 0 {
+		date = fmt.Sprintf("%d hours after its air date", p.AirDelayHours)
+	}
+	if !p.exactAirTimes() {
+		return date
+	}
+	stamp := "from the moment it airs"
+	switch m := p.AirDelayAfterAirstampMinutes; {
+	case m == 60:
+		stamp = "an hour after it airs"
+	case m > 0 && m%60 == 0:
+		stamp = fmt.Sprintf("%d hours after it airs", m/60)
+	case m > 0:
+		stamp = fmt.Sprintf("%d minutes after it airs", m)
+	}
+	return stamp + " (TVmaze's air times), else " + date
 }
 
 // GrabsAnything reports whether the policy lets automatic grabs take
@@ -148,6 +208,9 @@ func (s *Service) envSearchSettings() SearchSettings {
 		MaxConcurrentGrabs: s.cfg.MaxConcurrentGrabs(),
 		NewWithinDays:      DefaultNewWithinDays,
 		AirDelayHours:      DefaultAirDelayHours,
+		AirTimes:           AirTimesTVmaze,
+
+		AirDelayAfterAirstampMinutes: DefaultAirDelayAfterAirstampMinutes,
 	}
 }
 
@@ -202,6 +265,9 @@ func (s *Service) SaveSearchSettings(ctx context.Context, in SearchSettings, ifR
 	if in.NewWithinDays == 0 {
 		in.NewWithinDays = DefaultNewWithinDays
 	}
+	if in.AirTimes == "" {
+		in.AirTimes = AirTimesTVmaze
+	}
 	if fe := validateSearchSettings(in); len(fe) > 0 {
 		return SearchSettingsDoc{}, &ValidationError{Fields: fe}
 	}
@@ -232,6 +298,13 @@ func validateSearchSettings(in SearchSettings) []FieldError {
 	}
 	if in.AirDelayHours < 0 || in.AirDelayHours > MaxAirDelayHours {
 		add("airDelayHours", fmt.Sprintf("must be between 0 and %d", MaxAirDelayHours))
+	}
+	// "" is a document that names none: the default.
+	if in.AirTimes != "" && in.AirTimes != AirTimesTVmaze && in.AirTimes != AirTimesOff {
+		add("airTimes", fmt.Sprintf("must be %q or %q", AirTimesTVmaze, AirTimesOff))
+	}
+	if in.AirDelayAfterAirstampMinutes < 0 || in.AirDelayAfterAirstampMinutes > MaxAirDelayAfterAirstampMinutes {
+		add("airDelayAfterAirstampMinutes", fmt.Sprintf("must be between 0 and %d", MaxAirDelayAfterAirstampMinutes))
 	}
 	return fe
 }

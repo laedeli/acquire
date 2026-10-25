@@ -23,6 +23,7 @@ import (
 	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/secretbox"
 	"github.com/laedeli/acquire/internal/store"
+	"github.com/laedeli/acquire/internal/tvmaze"
 )
 
 const sampleNZB = `<?xml version="1.0" encoding="UTF-8"?>
@@ -284,6 +285,8 @@ func e2eService(t *testing.T, gw *fakeGateway, box *secretbox.Box) *Service {
 	srv := gw.server(t)
 	cfg := config.Config{GatewayURL: srv.URL, DownloadsRoot: t.TempDir(), PreferUsenet: true}
 	svc := New(cfg, st, gateway.New(srv.URL, nil), nil, nil, nil, box)
+	// No schedule source unless a test gives one: no test asks TVmaze.
+	svc.sched = &tvmaze.Client{}
 	// Hostnames in these tests do not resolve; the policy must not care.
 	svc.policy.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("offline") }
 	// Admission is not under test here: the free space it reads is not the

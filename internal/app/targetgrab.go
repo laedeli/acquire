@@ -270,6 +270,9 @@ func (s *Service) GrabTarget(ctx context.Context, targetID, via string) (store.T
 		return store.TargetGrab{}, searchFailed{err}
 	}
 	if len(usable) == 0 {
+		if n := preAiredCount(cands); n > 0 {
+			return store.TargetGrab{}, onlyPreAired{found: len(cands), preAired: n, what: title.Title + " " + coords(t)}
+		}
 		return store.TargetGrab{}, fmt.Errorf("%w for %s %s", errNoReleases, title.Title, coords(t))
 	}
 	return s.grabBest(ctx, title, t, usable, via)
@@ -374,11 +377,9 @@ func gatewayDown(err error) bool {
 // with when the target is due again, and returns the releases an automatic
 // grab may take (autoCandidates; pol for a grab that comes on its own).
 // Recording every outcome is what makes the sweep rotate. A release published
-// before the target aired is blocked for it (blockPreAired).
+// before the target aired is skipped, saying so — never blocked: the date it
+// is told by may be a guess, and a person may pick it.
 func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Candidate, err error, pol *SearchSettings) []Candidate {
-	if err == nil {
-		s.blockPreAired(ctx, t, cands)
-	}
 	if err != nil {
 		// A search that errors is a failure to LOOK, not evidence of absence,
 		// so it backs off rather than marking anything.
@@ -392,7 +393,13 @@ func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Cand
 		// indexer without id support returns zero with no error — so this
 		// backs off too and will be asked again later.
 		detail := "nothing found"
-		if len(cands) > 0 {
+		switch n := preAiredCount(cands); {
+		case n > 0 && n == len(cands):
+			detail = fmt.Sprintf("%d release(s), every one published before it aired — most likely fakes, skipped", n)
+		case n > 0:
+			detail = fmt.Sprintf("%d release(s): %d published before it aired — most likely fakes, skipped —, none other an automatic grab takes",
+				len(cands), n)
+		case len(cands) > 0:
 			detail = fmt.Sprintf("%d release(s), none an automatic grab takes", len(cands))
 		}
 		_ = s.st.RecordSearch(ctx, t.ID, store.SearchRecord{Outcome: store.SearchNone,
@@ -409,20 +416,6 @@ func (s *Service) recordSearch(ctx context.Context, t store.Target, cands []Cand
 		Reason: fmt.Sprintf("%d candidate(s), best via %s", len(usable), best.MatchedVia),
 	})
 	return usable
-}
-
-// blockPreAired blocks for a target the releases rejected for having been
-// published before it aired (preAired): most often fakes, and never offered
-// to an automatic grab of it again for as long as a failed release is
-// blocked.
-func (s *Service) blockPreAired(ctx context.Context, t store.Target, cands []Candidate) {
-	for _, c := range cands {
-		if c.preAired {
-			if err := s.BlockFailedRelease(ctx, t.ID, c.Title, c.Indexer, clip(strings.SplitN(c.Reason, " · ", 2)[0], 200)); err != nil {
-				log.Printf("acquire: block %q for %s: %v", c.Title, t.ID, err)
-			}
-		}
-	}
 }
 
 // ── the grab queue (the console's Missing tab) ─────────────────────────────

@@ -29,6 +29,7 @@ import (
 	"github.com/laedeli/acquire/internal/secretbox"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
+	"github.com/laedeli/acquire/internal/tvmaze"
 )
 
 // Bus is the live channel to connected consoles: a payload-free ping to refetch
@@ -45,6 +46,9 @@ type Service struct {
 	kc  *katalog.Client
 	tm  *tmdb.Client
 	bus Bus
+	// sched is the schedule source the moment an episode airs is read from
+	// (search.airTimes).
+	sched *tvmaze.Client
 
 	// Download client configuration: credentials sealed by box, pushed to the
 	// gateway by sync, admin-entered addresses checked by policy, release files
@@ -107,7 +111,7 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		Namespace:     cfg.PodNamespace,
 		ClusterDomain: cfg.ClusterDomain,
 	}
-	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, bus: bus,
+	svc := &Service{cfg: cfg, st: st, gw: gw, kc: kc, tm: tm, bus: bus, sched: tvmaze.New(tvmaze.DefaultURL, userAgent(cfg.Version)),
 		box: box, policy: policy, fetch: policy.HTTPClient(90 * time.Second),
 		ixc:   &indexer.Client{HTTP: policy.HTTPClient(2 * typedPerSource)},
 		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming,

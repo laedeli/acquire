@@ -775,7 +775,7 @@ func TestTheAirDelay(t *testing.T) {
 	if got := due(30 * time.Hour); got != "movie:2:movie movie:4:movie series:1:s01e002" {
 		t.Errorf("30 hours after the air date: %s", got)
 	}
-	if eps, movies, _ := s.WantedForFeeds(ctx, FeedsWant{All: true, AirDelay: 30 * time.Hour}); eps != 1 || movies != 2 {
+	if eps, movies, _ := s.WantedForFeeds(ctx, FeedsWant{All: true, DueOrder: DueOrder{AirDelay: 30 * time.Hour}}); eps != 1 || movies != 2 {
 		t.Errorf("the feeds 30 hours after the air date: %d episodes, %d movies", eps, movies)
 	}
 	m, _ := s.TargetAt(ctx, "movie:4", nil, nil)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
+	"github.com/laedeli/acquire/internal/tvmaze"
 )
 
 // Reading TMDB for what acquire tracks.
@@ -33,6 +34,9 @@ import (
 // due on the next runs — the follows first, then what runs, a third of the
 // budget kept for the series that ended or were never read. A follow TMDB
 // could not be read for is read again every followRetry until it is.
+//
+// With search.airTimes, a series read is followed by a read of its air times
+// at the schedule source (readSchedule): the moment each episode airs.
 
 const (
 	// inventoryBudget bounds the TMDB calls one run starts titles with (the
@@ -57,6 +61,11 @@ const (
 	// the series that do not run — ended, or never read —, so a library of
 	// running series does not keep them waiting for ever.
 	inventoryReserve = 1
+	// scheduleEvery: the air times of a series that does not run are read
+	// again monthly; scheduleUnknownAgain: a show the schedule source does
+	// not know is looked up again after a week.
+	scheduleEvery        = 30 * 24 * time.Hour
+	scheduleUnknownAgain = 7 * 24 * time.Hour
 )
 
 // noTMDB is why nothing can be read without a TMDB key.
@@ -73,6 +82,10 @@ type InventoryRun struct {
 	// read on the next runs.
 	Left  bool   `json:"left"`
 	Error string `json:"error,omitempty"`
+	// Scheduled are the series whose air times were read; ScheduleError why
+	// the schedule source stopped being asked this run.
+	Scheduled     int    `json:"scheduled"`
+	ScheduleError string `json:"scheduleError,omitempty"`
 }
 
 // RequestInventory asks the worker to read TMDB: for the titles named first
@@ -190,6 +203,7 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		budget--
 		run.Calls++
 	}
+	schedule := s.grabPolicy(ctx).exactAirTimes() && s.sched.Enabled()
 	var reconcile []string
 	defer func() {
 		if len(reconcile) > 0 {
@@ -201,9 +215,12 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 			s.notify()
 			line := fmt.Sprintf("acquire inventory-refresh: %d title(s) read (%d followed), %d TMDB call(s), %d failed; "+
 				"%d target(s) added (%d aired), %d updated, %d renumbered; %d no longer listed (removed once a read a day later agrees), "+
-				"%d removed, %d kept as they hold something",
+				"%d removed, %d kept as they hold something; the air times of %d series read",
 				run.Titles, run.Followed, run.Calls, run.Failed, run.Added, run.AddedAired, run.Updated, run.Renumbered, run.Gone,
-				run.Removed, run.Kept)
+				run.Removed, run.Kept, run.Scheduled)
+			if run.ScheduleError != "" {
+				line += "; the schedule source stopped answering: " + run.ScheduleError
+			}
 			if run.Left {
 				line += "; the run's budget is spent, what is still due is read on the next runs"
 			}
@@ -242,6 +259,9 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		run.Renumbered += ch.Renumbered
 		if unknown {
 			reconcile = append(reconcile, t.ID)
+		}
+		if schedule && t.Kind == "series" {
+			schedule = s.readSchedule(ctx, t.ID, &run)
 		}
 		return true
 	}
@@ -342,9 +362,13 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 			return ch, false, tmdbError(err)
 		}
 		window, released, kind := movieWindow(m)
+		country := ""
+		if kind != "theatrical" {
+			country = m.HomeCountry()
+		}
 		target, err := s.st.ApplyMovieInventory(ctx, t.ID, store.MovieRead{
 			IMDBID: m.IMDBID, Name: m.Title, Year: m.Year(), Status: m.Status, Aliases: m.Aliases, Countries: m.Countries,
-			Window: window, Released: released, Kind: kind,
+			Window: window, Released: released, Kind: kind, Country: country,
 		})
 		if err != nil {
 			return ch, false, err
@@ -384,6 +408,68 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 	}
 	ch, err = s.st.ApplySeriesInventory(ctx, t.ID, r)
 	return ch, err == nil && (ch.Added > 0 || t.InventoryAt == nil), err
+}
+
+// readSchedule reads a series' air times at the schedule source when they
+// are due (scheduleDue): its show id, looked up once by the series' TVDB id
+// or IMDb id — nothing else is sent —, then its episodes, the moment each
+// airs kept on its target. It reports false when the source does not answer
+// as it should: no other series would fare better this run. Nothing fails of
+// the series either way; an episode without an air time is told by its air
+// date.
+func (s *Service) readSchedule(ctx context.Context, titleID string, run *InventoryRun) bool {
+	t, err := s.st.TitleByID(ctx, titleID)
+	if err != nil || (t.TVDBID == 0 && t.IMDBID == "") || !scheduleDue(t, time.Now()) {
+		return true
+	}
+	fail := func(err error, what string) bool {
+		switch {
+		case errors.Is(err, tvmaze.ErrNotFound):
+			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze does not know "+what+"; looked up again in a week", true)
+			return true
+		case tvmaze.Unavailable(err):
+			run.ScheduleError = err.Error()
+			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze did not answer: "+err.Error(), false)
+			return false
+		}
+		_ = s.st.ScheduleFailed(ctx, t.ID, err.Error(), false)
+		return true
+	}
+	show := t.ScheduleID
+	if show == 0 {
+		if show, err = s.sched.LookupShow(ctx, t.TVDBID, t.IMDBID); err != nil {
+			return fail(err, "it by its TVDB or IMDb id")
+		}
+	}
+	eps, err := s.sched.Episodes(ctx, show)
+	if err != nil {
+		return fail(err, fmt.Sprintf("its show %d any more", show))
+	}
+	listed := make([]store.ScheduledEpisode, 0, len(eps))
+	for _, e := range eps {
+		listed = append(listed, store.ScheduledEpisode{Season: e.Season, Episode: e.Number, AirDate: e.AirDate, AirStamp: e.AirStamp})
+	}
+	if _, err := s.st.ApplySchedule(ctx, t.ID, show, listed); err != nil {
+		log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
+		return true
+	}
+	run.Scheduled++
+	return true
+}
+
+// scheduleDue reports whether a series' air times are read now: never read;
+// of a series that runs, on every read of it; of any other, monthly; a show
+// the schedule source did not know, a week after it was looked up.
+func scheduleDue(t store.Title, now time.Time) bool {
+	switch {
+	case t.ScheduleAt == nil:
+		return true
+	case t.ScheduleID == 0:
+		return now.Sub(*t.ScheduleAt) >= scheduleUnknownAgain
+	case tmdb.Running(t.TMDBStatus):
+		return now.Sub(*t.ScheduleAt) >= runningEvery
+	}
+	return now.Sub(*t.ScheduleAt) >= scheduleEvery
 }
 
 // tmdbError says what a failed call to TMDB means for the run. TMDB out of

@@ -17,6 +17,7 @@ import (
 	"github.com/laedeli/acquire/internal/katalog"
 	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/store"
+	"github.com/laedeli/acquire/internal/zones"
 )
 
 // Search bounds. A source's daily allowance is the scarce resource, so these
@@ -102,8 +103,8 @@ type Candidate struct {
 	// link is the real link, server-side only.
 	link string
 	// preAired is set on a release rejected for having been published before
-	// its target aired (preAired): an automatic grab blocks it for the
-	// target.
+	// its target aired (preAired): an automatic grab skips it, saying so; a
+	// person may still pick it.
 	preAired bool
 }
 
@@ -545,6 +546,7 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 		log.Printf("acquire: blocklist of %s unreadable, not applied: %v", targetID, err)
 	}
 	days := s.airDays(ctx, t)
+	stamps := s.grabPolicy(ctx).exactAirTimes()
 	out := make([]Candidate, 0, len(results))
 	for _, r := range results {
 		c := s.candidate(r.Release, profile, routes)
@@ -555,7 +557,7 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 			cov := release.ParseCoverage(c.Title)
 			c.Covers, c.Pack = cov.String(), cov.Pack()
 		}
-		markRejected(&c, title, t, blocked, days)
+		markRejected(&c, title, t, blocked, days, stamps)
 		out = append(out, c)
 	}
 	sortCandidates(out)
@@ -564,8 +566,9 @@ func (s *Service) SearchTarget(ctx context.Context, targetID string) ([]Candidat
 
 // markRejected rejects, with the reason, a release blocked for the target, an
 // extra of the title (extraOf), or one published before the target aired
-// (preAired).
-func markRejected(c *Candidate, title store.Title, t store.Target, blocked map[string]string, days func() map[[2]int]time.Time) {
+// (preAired; stamps: the moments the schedule source gives are used). An
+// automatic grab takes none of them; a person may pick one.
+func markRejected(c *Candidate, title store.Title, t store.Target, blocked map[string]string, days func() map[[2]int]store.Target, stamps bool) {
 	if why, ok := blocked[c.Title]; ok {
 		c.Rejected, c.Reason = true, clip("blocked for this target: "+why+" · "+c.Reason, 300)
 		return
@@ -574,7 +577,7 @@ func markRejected(c *Candidate, title store.Title, t store.Target, blocked map[s
 		c.Rejected, c.Reason = true, clip(why+" · "+c.Reason, 300)
 		return
 	}
-	if why := preAired(*c, t, days); why != "" {
+	if why := preAired(*c, title, t, days, stamps); why != "" {
 		c.Rejected, c.Reason, c.preAired = true, clip(why+" · "+c.Reason, 300), true
 	}
 }
@@ -606,47 +609,80 @@ func extraOf(name string, title store.Title, t store.Target) string {
 }
 
 // preAired says why a release cannot be what its name says, or "" when it
-// can: it was published before the day its target aired — of a release of
-// several episodes, the last of them —, as TMDB dates the day (00:00 UTC), or
-// before the day a requested movie came out. A release named for an episode
-// before it was broadcast is most often a fake. A release whose source names
-// no publication time is not told; days reads the air dates of the title's
-// episodes, once, for a release of several.
-func preAired(c Candidate, t store.Target, days func() map[[2]int]time.Time) string {
-	if c.PubDate == nil || t.AirDate == nil {
+// can: it was published before its target aired (airCut) — of a release of
+// several episodes, the last of them to air —, or before the day a requested
+// movie came out to watch at home. A release named for an episode before it
+// was broadcast is most often a fake. A release whose source names no
+// publication time is not told; days reads the episodes of the title, once,
+// for a release of several.
+func preAired(c Candidate, title store.Title, t store.Target, days func() map[[2]int]store.Target, stamps bool) string {
+	if c.PubDate == nil {
 		return ""
 	}
-	due, what := *t.AirDate, coords(t)
+	cut, aired, ok := airCut(title, t, stamps)
+	what := coords(t)
 	if t.Kind != "movie" {
 		if cov := release.ParseCoverage(c.Title); cov.Multi() {
 			m := days()
 			for _, e := range cov.Episodes {
-				if d, ok := m[[2]int{cov.Season, e}]; ok && d.After(due) {
-					due, what = d, fmt.Sprintf("S%02dE%02d", cov.Season, e)
+				x, found := m[[2]int{cov.Season, e}]
+				if !found {
+					continue
+				}
+				if xc, xa, xok := airCut(title, x, stamps); xok && (!ok || xc.After(cut)) {
+					cut, aired, ok, what = xc, xa, true, coords(x)
 				}
 			}
 		}
 	}
-	if !c.PubDate.Before(due) {
+	if !ok || !c.PubDate.Before(cut) {
 		return ""
 	}
 	at := c.PubDate.UTC().Format("2006-01-02 15:04 UTC")
 	if t.Kind == "movie" {
-		return fmt.Sprintf("published %s, before the movie came out on %s: most likely a fake", at, due.Format("2006-01-02"))
+		return fmt.Sprintf("published before the movie came out (published %s; it %s): most likely a fake", at, aired)
 	}
-	return fmt.Sprintf("published %s, before %s aired on %s: most likely a fake", at, what, due.Format("2006-01-02"))
+	return fmt.Sprintf("published before the episode aired (published %s; %s %s): most likely a fake", at, what, aired)
 }
 
-// airDays reads, once and when asked, the air dates of the episodes of a
-// target's title, by season and episode: what preAired compares a release
-// of several episodes with. None for a movie, or when they cannot be read.
-func (s *Service) airDays(ctx context.Context, t store.Target) func() map[[2]int]time.Time {
-	var m map[[2]int]time.Time
-	return func() map[[2]int]time.Time {
+// airCut is the moment before which no real release of a target can exist,
+// and how it is known. Of an episode whose air time the schedule source gives
+// (stamps), airSlack before it; of any other episode, midnight of its air
+// date where its series comes from (TMDB's origin country; UTC when it names
+// none acquire knows) — TMDB dates the day as broadcast there, not the hour.
+// Of a requested movie, midnight of the day it comes out to watch at home,
+// where it does. ok is false when nothing dates it, and for a movie dated in
+// cinemas only: no release to watch at home is dated to tell one by.
+func airCut(title store.Title, t store.Target, stamps bool) (cut time.Time, aired string, ok bool) {
+	if t.AirDate == nil {
+		return time.Time{}, "", false
+	}
+	day := t.AirDate.UTC().Format("2006-01-02")
+	if t.Kind == "movie" {
+		how := map[string]string{"digital": "digitally", "physical": "on disc", "tv": "on TV"}[t.ReleaseKind]
+		if how == "" {
+			return time.Time{}, "", false
+		}
+		loc := zones.Of(append([]string{t.ReleaseCountry}, title.Countries...)...)
+		return zones.Midnight(*t.AirDate, loc), fmt.Sprintf("came out %s on %s, %s", how, day, loc), true
+	}
+	if stamps && t.AirStamp != nil {
+		return t.AirStamp.Add(-airSlack), "aired " + t.AirStamp.UTC().Format("2006-01-02 15:04 UTC"), true
+	}
+	loc := zones.Of(title.Countries...)
+	return zones.Midnight(*t.AirDate, loc), fmt.Sprintf("aired on %s, %s", day, loc), true
+}
+
+// airDays reads, once and when asked, the episodes of a target's title, by
+// season and episode: what preAired compares a release of several episodes
+// with. None for a movie, or when they cannot be read.
+func (s *Service) airDays(ctx context.Context, t store.Target) func() map[[2]int]store.Target {
+	var m map[[2]int]store.Target
+	return func() map[[2]int]store.Target {
 		if m != nil {
 			return m
 		}
-		m = map[[2]int]time.Time{}
+		m = map[[2]int]store.Target{}
 		if t.Kind == "movie" {
 			return m
 		}
@@ -655,13 +691,41 @@ func (s *Service) airDays(ctx context.Context, t store.Target) func() map[[2]int
 			return m
 		}
 		for _, x := range all {
-			if x.SeasonNumber != nil && x.EpisodeNumber != nil && x.AirDate != nil {
-				m[[2]int{*x.SeasonNumber, *x.EpisodeNumber}] = *x.AirDate
+			if x.SeasonNumber != nil && x.EpisodeNumber != nil {
+				m[[2]int{*x.SeasonNumber, *x.EpisodeNumber}] = x
 			}
 		}
 		return m
 	}
 }
+
+// preAiredCount is how many of the releases found were published before
+// their target aired.
+func preAiredCount(cands []Candidate) int {
+	n := 0
+	for _, c := range cands {
+		if c.preAired {
+			n++
+		}
+	}
+	return n
+}
+
+// onlyPreAired is a target's search and grab that found releases, every one
+// an automatic grab takes published before the target aired: not taken on
+// their own, but there to pick. It is no "nothing found".
+type onlyPreAired struct {
+	found, preAired int
+	what            string
+}
+
+func (e onlyPreAired) Error() string {
+	return fmt.Sprintf("%d release(s) found for %s, %d of them published before it aired — most likely fakes, not taken on their own; "+
+		"pick one under pick a release if you are sure", e.found, e.what, e.preAired)
+}
+
+// Is makes it count as no release an automatic grab takes.
+func (e onlyPreAired) Is(target error) bool { return target == errNoReleases }
 
 // autoCandidates are the releases an automatic grab of a target may take —
 // the sweep's, the sources' newest releases', and the Missing tab's search

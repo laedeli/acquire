@@ -307,16 +307,16 @@ func (s *Store) RetryableTargets(ctx context.Context, limit int) ([]Target, erro
 // DueTargetsBy orders them.
 func (s *Store) RetryableTargetsBy(ctx context.Context, limit int, o DueOrder) ([]Target, error) {
 	order := `a.search_backoff_until`
-	args := []any{limit, o.AirDelay.Seconds()}
+	args := o.args(limit)
 	if o.NewWithinDays > 0 {
-		order = newFirstSQL("$3") + order
+		order = newFirstSQL("$5") + order
 		args = append(args, o.NewWithinDays)
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+targetCols+`
 		  FROM acquisition_targets a
 		  JOIN titles t ON t.id = a.title_id
-		 WHERE `+sweepableSQL("$2")+`
+		 WHERE `+sweepableSQL(dueParams)+`
 		   AND a.search_failures > 0
 		   AND a.search_backoff_until IS NOT NULL AND a.search_backoff_until <= now()
 		 ORDER BY `+order+`
