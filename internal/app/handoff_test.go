@@ -280,6 +280,10 @@ func e2eService(t *testing.T, gw *fakeGateway, box *secretbox.Box) *Service {
 	svc := New(cfg, st, gateway.New(srv.URL, nil), nil, nil, nil, box)
 	// Hostnames in these tests do not resolve; the policy must not care.
 	svc.policy.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("offline") }
+	// Admission is not under test here: the free space it reads is not the
+	// machine's, whose disk may hold less than a grab's headroom. The tests of
+	// admission set what they read themselves.
+	svc.freeSpace = func(string) (int64, error) { return 1 << 40, nil }
 	ctx := context.Background()
 	if err := svc.SeedSettings(ctx); err != nil {
 		t.Fatal(err)
