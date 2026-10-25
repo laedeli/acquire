@@ -569,18 +569,31 @@ function QualityProfileSettings({ api, admin }: { api: Api; admin: boolean }) {
  */
 function airTimesLine(st: AirTimesStatus | undefined): string {
   if (!st || !st.on) return ''
-  if (st.running === 0) return "TVmaze's air times: no series that runs is tracked yet"
-  const parts = [`${st.read} of the ${st.running} series that run read`]
+  const parts: string[] = []
+  if (st.running === 0) parts.push('no series that runs is tracked yet')
+  else parts.push(`${st.read} of the ${st.running} series that run read`)
   if (st.unknown) parts.push(`${st.unknown} not known to TVmaze, told by their air date`)
-  if (st.pending)
+  if (st.pending) {
+    const earlier = st.earlier ?? 0
+    const never = st.pending - earlier
+    const what = [
+      never ? `${never} not read yet` : '',
+      earlier ? `${earlier} read by an earlier version of the rules, read again` : '',
+    ]
+      .filter(Boolean)
+      .join(', ')
     parts.push(
-      `${st.pending} not read yet — nothing of them is grabbed on its own until they are, on the next refreshes` +
+      `${what} — nothing of them is grabbed on its own until they are, on the next refreshes` +
         (st.lastError ? ` (${st.lastError})` : ''),
     )
-  if (st.held)
+  }
+  if (st.held) {
+    const moved = st.heldMoved ? `, ${st.heldMoved} of them after TMDB moved ${st.heldMoved === 1 ? 'it' : 'them'}, until TVmaze is read again` : ''
     parts.push(
-      `${st.held} ${st.held === 1 ? 'episode' : 'episodes'} held — not grabbed on its own until TVmaze and TMDB agree on ${st.held === 1 ? 'it' : 'them'}, or ${st.held === 1 ? 'it has' : 'they have'} an air time`,
+      `${st.held} ${st.held === 1 ? 'episode' : 'episodes'} held — not grabbed on ${st.held === 1 ? 'its' : 'their'} own until TVmaze dates ${st.held === 1 ? 'it' : 'them'} as TMDB does, or ${st.held === 1 ? 'it has' : 'they have'} an air time${moved}`,
     )
+  }
+  if (st.failingEnded) parts.push(`TVmaze did not answer for ${st.failingEnded} series that ended, when last asked`)
   return "TVmaze's air times: " + parts.join('; ')
 }
 

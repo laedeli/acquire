@@ -375,10 +375,15 @@ export interface AirTimesStatus {
   read: number
   unknown: number
   pending: number
+  /** Of pending: read by an earlier version of the rules, and read again. */
+  earlier?: number
   /** Why TVmaze last failed to give a pending series' air times. */
   lastError?: string
-  /** Their episodes not grabbed on their own until TVmaze and TMDB agree on them, or they have an air time. */
+  /** Series that ended whose air times TVmaze last failed to give. */
+  failingEnded?: number
+  /** Episodes of every series whose air times matter not grabbed on their own until TVmaze and TMDB agree on them, or they have an air time; heldMoved of them after TMDB moved them, until TVmaze is read again. */
   held: number
+  heldMoved?: number
   /** Set when more than a third of the series that run are not known to TVmaze. */
   warning?: string
 }
