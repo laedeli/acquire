@@ -250,7 +250,7 @@ func capabilityDoc(cfg config.Config) capability {
 			Sections: []capSetupSection{
 				{Key: "sources", Title: "search sources", Description: "where acquire searches for releases", Required: true, Target: "#/indexers", Ord: 10},
 				{Key: "clients", Title: "download clients", Description: "the download programs acquire hands releases to", Required: true, Target: "#/clients", Ord: 20},
-				{Key: "grab-policy", Title: "search and grab", Description: "protocol preference, free-space floor and concurrency", Required: false, Target: "#/settings", Ord: 30},
+				{Key: "grab-policy", Title: "search and grab", Description: "protocol preference, free-space floor, concurrency and what is grabbed on its own", Required: false, Target: "#/settings", Ord: 30},
 				{Key: "subtitles", Title: "subtitles", Description: "the subtitle source and its account", Required: false, Target: "#/settings", Ord: 40},
 			},
 		},

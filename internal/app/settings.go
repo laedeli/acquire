@@ -25,10 +25,56 @@ type SearchSettings struct {
 	StorageFloorGB int64 `json:"storageFloorGb"`
 	// MaxConcurrentGrabs bounds downloads in flight.
 	MaxConcurrentGrabs int `json:"maxConcurrentGrabs"`
-	// AutoGrab lets the backlog sweep grab the best acceptable release of
-	// what it finds missing, within the floor and the cap above. Off, the
-	// sweep only searches. Never for a title whose holdings are unknown.
+	// AutoGrab lets the backlog sweep — and the sources' newest releases —
+	// grab the best acceptable release of whatever is missing, within the
+	// floor and the cap above. Off, the sweep only searches. Never for a title
+	// whose holdings are unknown.
 	AutoGrab bool `json:"autoGrab"`
+	// AutoGrabNew lets them grab the new things only, with AutoGrab off: an
+	// episode aired in the last NewWithinDays days, an episode a follow or a
+	// read of TMDB added after its series was requested, and a requested
+	// movie once it is out (isNew). The old backlog waits for AutoGrab.
+	AutoGrabNew bool `json:"autoGrabNew"`
+	// NewWithinDays is how recently an episode aired to be one of the new
+	// things.
+	NewWithinDays int `json:"newWithinDays"`
+}
+
+// DefaultNewWithinDays is how recently an episode aired, by default, to be
+// one of the new things search.autoGrabNew grabs.
+const DefaultNewWithinDays = 14
+
+// Grabs reports whether the policy lets an automatic grab — the sweep's, a
+// newest release's — take a target: any with AutoGrab, a new one with
+// AutoGrabNew. Whether the target can be grabbed at all is the caller's.
+func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) bool {
+	return p.AutoGrab || (p.AutoGrabNew && isNew(title, t, p.newWithin(), now))
+}
+
+// GrabsAnything reports whether the policy lets automatic grabs take
+// anything at all.
+func (p SearchSettings) GrabsAnything() bool { return p.AutoGrab || p.AutoGrabNew }
+
+func (p SearchSettings) newWithin() int {
+	if p.NewWithinDays <= 0 {
+		return DefaultNewWithinDays
+	}
+	return p.NewWithinDays
+}
+
+// isNew reports whether a target is one of the new things: an episode aired
+// in the last days days (by its air date, as TMDB dates it), an episode a
+// follow or a read of TMDB added after its series was first requested, or a
+// requested movie. Everything else is the old backlog.
+func isNew(title store.Title, t store.Target, days int, now time.Time) bool {
+	if t.Kind == "movie" {
+		return title.Followed()
+	}
+	today := now.UTC().Truncate(24 * time.Hour)
+	if t.AirDate != nil && !t.AirDate.Before(today.AddDate(0, 0, -days)) {
+		return true
+	}
+	return title.Followed() && t.AddedAt != nil && !t.AddedAt.Before(*title.FollowedAt)
 }
 
 // SearchSettingsDoc is the stored policy with the revision an editor sends
@@ -50,6 +96,7 @@ func (s *Service) envSearchSettings() SearchSettings {
 		PreferProtocol:     prefer,
 		StorageFloorGB:     s.cfg.StorageFloorBytes() >> 30,
 		MaxConcurrentGrabs: s.cfg.MaxConcurrentGrabs(),
+		NewWithinDays:      DefaultNewWithinDays,
 	}
 }
 
@@ -92,12 +139,17 @@ func (s *Service) grabPolicy(ctx context.Context) SearchSettings {
 	return doc.SearchSettings
 }
 
-// SweepGrabs reports whether the backlog sweep grabs on its own
-// (search.autoGrab).
-func (s *Service) SweepGrabs(ctx context.Context) bool { return s.grabPolicy(ctx).AutoGrab }
+// GrabPolicy is the search and grab policy in force: what the console says
+// is grabbed on its own.
+func (s *Service) GrabPolicy(ctx context.Context) SearchSettings { return s.grabPolicy(ctx) }
 
-// SaveSearchSettings validates and stores the policy.
+// SaveSearchSettings validates and stores the policy. A document that names
+// no newWithinDays — one written by a console from before it — takes the
+// default.
 func (s *Service) SaveSearchSettings(ctx context.Context, in SearchSettings, ifRevision int64, actor string) (SearchSettingsDoc, error) {
+	if in.NewWithinDays == 0 {
+		in.NewWithinDays = DefaultNewWithinDays
+	}
 	if fe := validateSearchSettings(in); len(fe) > 0 {
 		return SearchSettingsDoc{}, &ValidationError{Fields: fe}
 	}
@@ -121,6 +173,10 @@ func validateSearchSettings(in SearchSettings) []FieldError {
 	}
 	if in.MaxConcurrentGrabs < 1 || in.MaxConcurrentGrabs > 100 {
 		add("maxConcurrentGrabs", "must be between 1 and 100")
+	}
+	// 0 is a document that names none: the default.
+	if in.NewWithinDays < 0 || in.NewWithinDays > 365 {
+		add("newWithinDays", "must be between 1 and 365")
 	}
 	return fe
 }

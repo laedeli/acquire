@@ -346,6 +346,18 @@ func (s *Service) Releases(ctx context.Context, wantedID string) (SearchResult, 
 	if err != nil {
 		return SearchResult{}, err
 	}
+	// A request that follows its movie is the movie's target: its typed
+	// search, by its identity.
+	if t, _, follows, err := s.requestTarget(ctx, w); follows {
+		if err != nil {
+			return SearchResult{}, err
+		}
+		cands, err := s.SearchTarget(ctx, t.ID)
+		if err != nil {
+			return SearchResult{}, err
+		}
+		return SearchResult{Candidates: cands, Incomplete: []string{}}, nil
+	}
 	return s.search(ctx, wantedQuery(w), mediaOf(w), nil)
 }
 
@@ -372,6 +384,21 @@ func mediaOf(w store.Wanted) string {
 func (s *Service) AutoGrab(ctx context.Context, wantedID string) error {
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
+		return err
+	}
+	// A request that follows its movie is grabbed as the movie's target, so
+	// the request, the sweep and the newest releases never grab it twice.
+	if t, _, follows, err := s.requestTarget(ctx, w); follows {
+		if err != nil {
+			return err
+		}
+		_, err = s.GrabTarget(ctx, t.ID, "request")
+		if err != nil {
+			wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			s.targetGrabFailed(wctx, t, err)
+		}
+		s.notify()
 		return err
 	}
 	f, err := s.loadFleet(ctx, nil)
@@ -736,11 +763,18 @@ func candidateHandoff(w store.Wanted, c Candidate, reason string) handoff {
 // GrabCandidate hands a specific release (chosen in a picker or the manual
 // search) to the client for its protocol, recording which one it was.
 func (s *Service) GrabCandidate(ctx context.Context, wantedID string, c Candidate) error {
-	if err := s.resolveCandidate(&c); err != nil {
-		return err
-	}
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
+		return err
+	}
+	if t, _, follows, err := s.requestTarget(ctx, w); follows {
+		if err != nil {
+			return err
+		}
+		_, err = s.GrabTargetCandidate(ctx, t.ID, c)
+		return err
+	}
+	if err := s.resolveCandidate(&c); err != nil {
 		return err
 	}
 	reason := c.Reason

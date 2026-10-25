@@ -9,6 +9,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -527,18 +528,22 @@ func (s *Server) controlDownload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": action})
 }
 
+// listWanted lists the requests, newest first. One that follows a series or a
+// movie reads as what acquire does with the title now, with its progress.
 func (s *Server) listWanted(w http.ResponseWriter, r *http.Request) {
-	items, err := s.st.ListWanted(r.Context())
+	items, err := s.svc.Requests(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	if items == nil {
-		items = []store.Wanted{}
+		items = []app.RequestView{}
 	}
 	writeJSON(w, 200, items)
 }
 
+// createWanted records a request. One for a series or a movie with a TMDB id
+// follows the title; asking for one again answers the request there is.
 func (s *Server) createWanted(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.UserRole) && !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.UserRole, http.StatusForbidden)
@@ -554,16 +559,26 @@ func (s *Server) createWanted(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	writeJSON(w, http.StatusCreated, out)
+	view, err := s.svc.RequestView(r.Context(), out)
+	if err != nil {
+		view = app.RequestView{Wanted: out}
+	}
+	writeJSON(w, http.StatusCreated, view)
 }
 
+// deleteWanted removes a request; the last one that follows a title ends its
+// follow.
 func (s *Server) deleteWanted(w http.ResponseWriter, r *http.Request) {
 	if !hasRole(r.Context(), s.cfg.AdminRole) {
 		http.Error(w, "forbidden: requires "+s.cfg.AdminRole, http.StatusForbidden)
 		return
 	}
-	if err := s.st.DeleteWanted(r.Context(), chi.URLParam(r, "id")); err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if err := s.svc.RemoveRequest(r.Context(), chi.URLParam(r, "id")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -633,7 +648,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": ""})
 		return
 	}
-	wnt, err := s.st.FindWantedByTMDB(r.Context(), tmdbID)
+	wnt, err := s.svc.RequestStatus(r.Context(), tmdbID)
 	if err != nil {
 		writeJSON(w, 200, map[string]any{"status": ""})
 		return
@@ -807,7 +822,8 @@ func (s *Server) calendar(w http.ResponseWriter, r *http.Request) {
 // INCLUDED and flagged rather than hidden — a backlog view that omits
 // everything currently failing is the least useful version of itself. It says
 // how many titles' holdings are unknown, and why, since those titles are left
-// out, and whether the sweep grabs on its own (search.autoGrab).
+// out, and what grabs on its own: everything missing (search.autoGrab), or
+// the new things (search.autoGrabNew, aired in the last newWithinDays days).
 func (s *Server) missing(w http.ResponseWriter, r *http.Request) {
 	out, err := s.st.Missing(r.Context(), intParam(r, "limit", 500, 1, 5000))
 	if err != nil {
@@ -819,7 +835,9 @@ func (s *Server) missing(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"missing": out, "holdings": holdings, "autoGrab": s.svc.SweepGrabs(r.Context())})
+	pol := s.svc.GrabPolicy(r.Context())
+	writeJSON(w, 200, map[string]any{"missing": out, "holdings": holdings,
+		"autoGrab": pol.AutoGrab, "autoGrabNew": pol.AutoGrabNew, "newWithinDays": pol.NewWithinDays})
 }
 
 func (s *Server) counts(w http.ResponseWriter, r *http.Request) {

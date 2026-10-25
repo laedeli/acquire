@@ -94,6 +94,13 @@ func main() {
 	// What the library holds, asked of katalog-api on the holdings-reconcile
 	// schedule and whenever titles are imported or derived.
 	go svc.RunHoldings(ctx)
+	// TMDB read for what acquire tracks: at once for a title a request
+	// follows, and on the inventory-refresh schedule for the series that run
+	// and the movies that wait for their release.
+	go svc.RunInventory(ctx)
+	// The sources' newest releases, on the rss-sync schedule, matched to what
+	// is wanted and grabbed as the search and grab policy allows.
+	go svc.RunRSS(ctx)
 	// Subtitles in the instance's languages: new arrivals first, then the
 	// library, within the day's download budget.
 	go svc.RunSubtitles(ctx)
@@ -131,9 +138,11 @@ func main() {
 	// Register the recurring jobs. EnsureSchedule never disturbs an existing
 	// row, so an operator's disable or interval survives a redeploy. The
 	// consumer acts on schedule.due (OnScheduleDue): the sweep searches the
-	// backlog (and grabs with search.autoGrab), the reconcile learns what the
-	// library holds, the grab recovery wants failed targets again after their
-	// wait and gives up grabs stuck in flight, the subtitle sweep looks for the
+	// backlog (and grabs as search.autoGrab and search.autoGrabNew allow),
+	// the reconcile learns what the library holds, the grab recovery wants
+	// failed targets again after their wait and gives up grabs stuck in
+	// flight, the inventory refresh reads TMDB again for what runs, rss-sync
+	// reads the sources' newest releases, the subtitle sweep looks for the
 	// instance's languages.
 	for _, sc := range []struct {
 		name  string
@@ -143,6 +152,8 @@ func main() {
 		{"retry-failed", 15 * time.Minute},
 		{"holdings-reconcile", 6 * time.Hour},
 		{"grab-recovery", time.Hour},
+		{"inventory-refresh", 6 * time.Hour},
+		{"rss-sync", 15 * time.Minute},
 		{"subtitles-sweep", 15 * time.Minute},
 		{"outbox-audit", 6 * time.Hour},
 	} {

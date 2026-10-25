@@ -80,6 +80,22 @@ type Service struct {
 	// Subtitles in the instance's languages (subtitles.go): the source's
 	// client and the worker's state.
 	subs *subtitleWork
+
+	// TMDB read for what acquire tracks (inventory.go): the worker's
+	// wake-up, whether a scheduled run is asked for, and the titles a
+	// request follows that are read first. The sources' newest releases
+	// (rss.go): their worker's wake-up.
+	inventoryWake chan struct{}
+	inventoryMu   sync.Mutex
+	inventoryRun  bool
+	inventoryIDs  map[string]bool
+	rssWake       chan struct{}
+	// inventoryBudget is the TMDB calls one run of the refresh starts titles
+	// with (inventory.go).
+	inventoryBudget int
+	// now is the clock what a request reads as, and the feeds' matches, are
+	// told by.
+	now func() time.Time
 }
 
 func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Client, tm *tmdb.Client, bus Bus, box *secretbox.Box) *Service {
@@ -94,7 +110,9 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		ixc:   &indexer.Client{HTTP: policy.HTTPClient(2 * typedPerSource)},
 		slots: make(chan struct{}, maxSourceRequests), refs: processKey(), timing: defaultTiming,
 		importWake: make(chan struct{}, 1), freeSpace: freeSpaceAt,
-		grabWake: make(chan struct{}, 1), holdingsWake: make(chan struct{}, 1), holdingsIDs: map[string]bool{}}
+		grabWake: make(chan struct{}, 1), holdingsWake: make(chan struct{}, 1), holdingsIDs: map[string]bool{},
+		inventoryWake: make(chan struct{}, 1), inventoryIDs: map[string]bool{}, rssWake: make(chan struct{}, 1),
+		inventoryBudget: inventoryBudget, now: time.Now}
 	svc.subs = newSubtitleWork(opensubtitles.New(opensubtitles.Config{APIKey: cfg.OpenSubtitlesAPIKey,
 		Username: cfg.OpenSubtitlesUsername, Password: cfg.OpenSubtitlesPassword, UserAgent: userAgent(cfg.Version)}))
 	if st != nil {
@@ -172,24 +190,6 @@ func newID() string {
 	return "w_" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "")
 }
 
-// Request records a new WantedItem (auto-approved v1: status stays pending until
-// an admin grabs).
-func (s *Service) Request(ctx context.Context, w store.Wanted, sub string) (store.Wanted, error) {
-	w.ID = newID()
-	w.RequestedBy = sub
-	if w.MediaType == "" {
-		w.MediaType = "movie"
-	}
-	if err := s.st.CreateWanted(ctx, w); err != nil {
-		return store.Wanted{}, err
-	}
-	out, err := s.st.GetWanted(ctx, w.ID)
-	if err == nil {
-		s.notify()
-	}
-	return out, err
-}
-
 // Grab hands a concrete source (magnet, release-file URL or hoster link) for a
 // request to a download client via the gateway, tagging the wanted id so the
 // completed event maps back. client names a client id; "" routes by what the
@@ -197,6 +197,23 @@ func (s *Service) Request(ctx context.Context, w store.Wanted, sub string) (stor
 func (s *Service) Grab(ctx context.Context, wantedID, source, client string) error {
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
+		return err
+	}
+	// A request that follows its movie hands the link over as a grab of the
+	// movie's target, so nothing else grabs it meanwhile.
+	if t, title, follows, err := s.requestTarget(ctx, w); follows {
+		if err != nil {
+			return err
+		}
+		if client != "" {
+			return errors.New("a request that follows its movie is grabbed by the client for the link's kind; name no client")
+		}
+		_, err = s.grabRelease(ctx, title, t, Candidate{Reason: "manual source", link: strings.TrimSpace(source)}, "request")
+		if err != nil {
+			wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			s.targetGrabFailed(wctx, t, err)
+		}
 		return err
 	}
 	out, err := s.handOff(ctx, handoff{

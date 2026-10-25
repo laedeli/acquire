@@ -40,6 +40,16 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 		return s.SweepRetries(ctx, retryBatch)
 	case "grab-recovery":
 		return s.RecoverGrabs(ctx)
+	case "inventory-refresh":
+		// TMDB is read in a worker of its own (inventory.go): the download
+		// events behind this one wait for nothing.
+		s.RequestInventory()
+		return nil
+	case "rss-sync":
+		// The sources' newest releases, read and matched in a worker of
+		// their own (rss.go).
+		s.wakeRSS()
+		return nil
 	case "subtitles-sweep":
 		// The subtitle worker searches and downloads; the event waits for nothing.
 		s.wakeSubtitles()
@@ -67,16 +77,25 @@ func (s *Service) OnScheduleDue(ctx context.Context, name string) error {
 // with when it is due again, so the next sweep takes the next slice instead of
 // the same one (store.DueTargets).
 //
-// It grabs only when search.autoGrab allows it. Searching is cheap and
-// reversible; grabbing spends disk and bandwidth and is not. With autoGrab
-// off — the default — the sweep only searches and records what it would
-// take. With it on, it grabs the best release an automatic grab may take —
-// the episode alone, or one run of at most ten episodes in a row that are all
-// missing (autoCandidates) — bound to every target that release covers, and
-// only while a download slot is free; a target whose title's holdings are
-// unknown is never grabbed.
+// It grabs only when the search and grab policy allows it. Searching is cheap
+// and reversible; grabbing spends disk and bandwidth and is not. With
+// search.autoGrab and search.autoGrabNew off — the default — the sweep only
+// searches and records what it would take. With autoGrab on, it grabs the
+// best release an automatic grab may take — the episode alone, or one run of
+// at most ten episodes in a row that are all missing (autoCandidates) — bound
+// to every target that release covers, and only while a download slot is
+// free; a target whose title's holdings are unknown is never grabbed. With
+// autoGrabNew on it grabs so the new things only (SearchSettings.Grabs), and
+// takes them first, before the old backlog.
 func (s *Service) SweepBacklog(ctx context.Context, limit int) error {
-	due, err := s.st.DueTargets(ctx, limit)
+	pol := s.grabPolicy(ctx)
+	var due []store.Target
+	var err error
+	if pol.AutoGrabNew {
+		due, err = s.st.DueTargetsNewFirst(ctx, limit, pol.newWithin())
+	} else {
+		due, err = s.st.DueTargets(ctx, limit)
+	}
 	if err != nil {
 		return err
 	}
@@ -86,19 +105,27 @@ func (s *Service) SweepBacklog(ctx context.Context, limit int) error {
 // SweepRetries re-examines targets whose searches found nothing or failed and
 // whose backoff has expired.
 func (s *Service) SweepRetries(ctx context.Context, limit int) error {
-	due, err := s.st.RetryableTargets(ctx, limit)
+	pol := s.grabPolicy(ctx)
+	var due []store.Target
+	var err error
+	if pol.AutoGrabNew {
+		due, err = s.st.RetryableTargetsNewFirst(ctx, limit, pol.newWithin())
+	} else {
+		due, err = s.st.RetryableTargets(ctx, limit)
+	}
 	if err != nil || len(due) == 0 {
 		return err
 	}
 	return s.sweep(ctx, "retry", due)
 }
 
-// sweep searches each target and, with autoGrab, grabs.
+// sweep searches each target and, as the policy allows, grabs.
 func (s *Service) sweep(ctx context.Context, what string, due []store.Target) error {
 	if len(due) == 0 {
 		return nil
 	}
-	grabbing := s.grabPolicy(ctx).AutoGrab
+	pol := s.grabPolicy(ctx)
+	grabbing := pol.GrabsAnything()
 	var found, empty, failed, grabbed int
 	var stopped, halted string
 	for _, t := range due {
@@ -123,7 +150,9 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 			continue
 		}
 		title, ok := s.autoGrabAllowed(ctx, t)
-		if !ok {
+		if !ok || !pol.Grabs(title, t, time.Now()) {
+			// The old backlog, with only the new things grabbed on their own:
+			// found, and left for the missing tab.
 			continue
 		}
 		if full, why := s.slotsFull(ctx); full {

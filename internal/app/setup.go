@@ -208,8 +208,11 @@ func (s *Service) grabPolicySection(ctx context.Context) SetupSection {
 	sec := SetupSection{Key: "grab-policy", State: SetupReady}
 	pol := s.grabPolicy(ctx)
 	sweep := "the sweep only searches"
-	if pol.AutoGrab {
+	switch {
+	case pol.AutoGrab:
 		sweep = "the sweep grabs what is missing"
+	case pol.AutoGrabNew:
+		sweep = fmt.Sprintf("new episodes (aired in the last %d days) and what was requested are grabbed on their own, the rest is searched", pol.newWithin())
 	}
 	sec.Summary = fmt.Sprintf("prefer %s · refuse below %d GB free · at most %d downloads at once · %s",
 		pol.PreferProtocol, pol.StorageFloorGB, pol.MaxConcurrentGrabs, sweep)
