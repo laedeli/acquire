@@ -1,7 +1,9 @@
 # The acquire service
 
 `acquire` (Go, module `github.com/laedeli/acquire`) is the addon's brain and face.
-It records requests, drives grabs, reacts to download and pipeline events,
+It records requests and follows the series and movies they ask for, reads
+TMDB again for what is still running, watches the sources' newest releases,
+drives grabs, reacts to download and pipeline events,
 downloads subtitles from OpenSubtitles.com in the configured languages, and serves its console: a federated module the portal hosts. acquire has **no page
 of its own** — the portal is the shell, and the console opens in place there,
 at `/portal/app/acquire`, on the portal's sign-in. The service serves the
@@ -11,7 +13,11 @@ that asks it for a page to the portal (see [the console](#the-console) and
 
 ## Request lifecycle
 
-A request is a **WantedItem**. Its `status` walks a small state machine:
+A request is a **WantedItem**. A request for a series or a movie with a TMDB
+id **follows** its title ([below](#a-request-that-follows-its-title)); one
+without — a title typed by hand, a release grabbed from the search tab that
+no request covers — is a request of its own, and its `status` walks a small
+state machine:
 
 ```mermaid
 stateDiagram-v2
@@ -47,19 +53,61 @@ stateDiagram-v2
 
 A request's movie is handed over with its TMDB identity (`identity`), and by
 title alone, as before, when the catalog does not take ingest by identity or
-refuses the identity. A request names a series, not its episodes, so a series
-request's download cannot say which episodes it holds and still fails:
-episodes are grabbed as [targets](#episodes-and-movies-acquire-tracks), from
-the missing tab, where each file goes to the catalog by identity.
+refuses the identity.
+
+### A request that follows its title
+
+A request for a **series** (`mediaType` `series`, or TMDB's `tv`) or a
+**movie** with a `tmdbId` makes acquire follow the title: it tracks it as it
+tracks an imported title — the title with the TVDB and IMDb ids TMDB's
+external ids name and the other titles TMDB knows it by as aliases, its
+seasons, and its [targets](#episodes-and-movies-acquire-tracks), derived from
+TMDB as the inventory derivation derives them: one per episode of a series
+(specials left out), monitored, or the one of the movie. TMDB is read for it
+at once, in a worker of its own ([TMDB, read again](#tmdb-read-again)), and the
+catalog is then asked what the library holds of it. Without `TMDB_API_KEY`
+nothing of it can be read, and the request says so.
+
+- **A series request** is never grabbed as a whole and never fails: it stays
+  open — **following** — while the series runs, and says how far acquire is
+  with it (`13 episodes: 6 in the library, 2 on the way, 1 missing, 4 not
+  aired yet; next S01E10 on 2026-10-30`). Its episodes are grabbed as targets:
+  on their own with [`search.autoGrabNew`](#what-is-grabbed-on-its-own), or
+  from the missing tab. It is **fulfilled** once TMDB says the series has
+  ended and the library holds every monitored episode.
+- **A movie request** is its movie's target, wanted from the start and
+  searched from its release on, as TMDB's release dates say: its first
+  release to watch at home — digital, physical or TV, in any country —, or,
+  when TMDB dates none of those, 90 days after it came to cinemas. Until then
+  it is **waiting** (`out digitally on 2026-11-25; searched from then on`),
+  and while TMDB dates nothing at all it waits for a date. Then it reads as
+  its target is: **pending** while it is searched for, **downloading**,
+  **packaging** once the library holds it, **fulfilled** once it plays,
+  **failed** when its last grab failed — tried again on its own. **find &
+  grab**, **releases** and **magnet** grab the movie's target, so a request,
+  the sweep and the sources' newest releases never grab it twice.
+
+A title acquire tracks already is not made twice: the request follows it, and
+it is monitored again, with its seasons to come. Its episodes from before —
+the import's — stay the old backlog ([what is grabbed on its
+own](#what-is-grabbed-on-its-own)). Asking for a title again answers the
+request there is; a request from before follows existed (a series request
+that failed, as they did) follows its title once it is asked for again.
+Removing the last request that follows a title ends the follow: a title the
+request created is no longer monitored, so nothing of it is hunted any more;
+one acquire tracked before keeps what it had.
 
 ## Episodes and movies acquire tracks
 
-The titles acquire tracks — series and movies imported from an earlier
-automation service (`POST /api/import/intent`), their episodes derived from
-TMDB (`POST /api/import/inventory`) — are **targets**: one per episode, one per
-movie (a movie imported as released). A target is what acquire hunts; the
-library's own word on what it holds comes from the catalog
-([what the library holds](#what-the-library-holds)).
+The titles acquire tracks — the series and movies a request follows
+([above](#a-request-that-follows-its-title)), and those imported from an
+earlier automation service (`POST /api/import/intent`), their episodes derived
+from TMDB (`POST /api/import/inventory`) — have **targets**: one per episode,
+one per movie (a movie imported as released, a requested one from the
+start). A target is what acquire hunts; the library's own word on what it
+holds comes from the catalog ([what the library holds](#what-the-library-holds)).
+TMDB is read again for what runs, so the episodes it announces later become
+targets too ([TMDB, read again](#tmdb-read-again)).
 
 ### A grab bound to targets
 
@@ -96,10 +144,15 @@ target:
   download's first event binds the grab — or, when none comes, the stale-grab
   sweep gives it up ([when a grab fails](#when-a-grab-fails)).
 
-Grabs come from four places:
+Grabs come from six places:
 
-- the **backlog sweep**, when `search.autoGrab` allows it
-  ([the sweep](#the-backlog-sweep));
+- the **backlog sweep**, as the search and grab policy allows
+  ([the sweep](#the-backlog-sweep), [what is grabbed on its
+  own](#what-is-grabbed-on-its-own));
+- the **sources' newest releases**, as the policy allows
+  ([the newest releases](#the-sources-newest-releases));
+- a **request that follows its movie**: its **find & grab**, **releases** and
+  **magnet** grab the movie's target ([above](#a-request-that-follows-its-title));
 - the console's **missing** tab: **grab now** in a row's action menu, **grab
   all** on a season's group, or **grab N selected** for the rows ticked — a
   search and grab of the best release an automatic grab may take,
@@ -116,11 +169,11 @@ Grabs come from four places:
   one that names a tracked series (and its year, when it names one) but no
   episode.
 
-An automatic grab — the sweep's, and the missing tab's **grab** — takes a
-release only when it holds the episode alone, or one run of at most ten
-episodes in a row, every one of them missing: tracked, aired, monitored,
-wanted or failed, not reserved by another grab, not left for someone to look
-at. Anything more — a longer range (`S01E01-E12`), episodes that are not one
+An automatic grab — the sweep's, a newest release's, and the missing tab's
+**grab** — takes a release only when it holds the episode alone, or one run of
+at most ten episodes in a row, every one of them missing: tracked, aired,
+monitored, wanted or failed, not reserved by another grab, not left for
+someone to look at. Anything more — a longer range (`S01E01-E12`), episodes that are not one
 run, a season pack, several seasons — spends disk and bandwidth on what may
 not be missing, or cannot go over as one file. It is grabbed when someone picks
 it.
@@ -145,8 +198,8 @@ stateDiagram-v2
     wanted --> held: the library holds it (reconcile, events)
 ```
 
-- **wanted** — not held, nothing under way. Aired, monitored and of a title
-  whose holdings are known, it is **missing**.
+- **wanted** — not held, nothing under way. Aired (a requested movie: out),
+  monitored and of holdings acquire knows, it is **missing**.
 - **grabbed** — a release that covers it is with a download client; the detail
   line says which (`grabbed NZB S04E07 from <source> via nzbget`).
 - **downloaded** — the download finished; acquire is copying it into the
@@ -293,7 +346,8 @@ a copy of the catalog:
   each title.
 - **When.** On the `holdings-reconcile` schedule (every six hours, the first
   run right after the first start), after titles are imported or their
-  episodes derived, after a hand-over the catalog answered "held already" or
+  episodes derived, after a follow or a read of TMDB added targets, after a
+  hand-over the catalog answered "held already" or
   that held a file of several, and on **ask the catalog now** in the missing
   tab (`POST /api/holdings/reconcile`). The reconcile runs in a worker of its
   own; the event that asks for it waits for nothing.
@@ -310,7 +364,10 @@ a copy of the catalog:
   or the catalog cannot answer — its targets are **holdings unknown**: not
   missing, not swept, and never grabbed automatically, because nothing says
   they are not on disk. The missing tab says how many titles that leaves out
-  and why; the series tab marks each one.
+  and why; the series tab marks each one. So is a target a follow or a read
+  of TMDB added since its title's holdings were last learned, until the
+  reconcile that addition asks for: the library may hold that episode
+  already.
 
 A holding acquire tracks no target for is ignored: the library holds things
 nobody monitors, and they must not become things acquire hunts. A movie the
@@ -320,10 +377,12 @@ library holds gets its one target.
 
 On its schedules (`backlog-sweep` every 30 minutes, `retry-failed` every 15
 for targets whose searches keep finding nothing), the sweep takes ten targets:
-wanted, aired, monitored with their title, of titles whose holdings are known,
+wanted, aired, monitored with their title, of holdings acquire knows,
 not reserved by a grab under way, due — the ones never searched first, then the
-ones searched longest ago. It searches each with its typed search and records
-the outcome on the target:
+ones searched longest ago; with `search.autoGrabNew` on, the new things
+([what is grabbed on its own](#what-is-grabbed-on-its-own)) before all others,
+so they do not wait their turn behind the old backlog. It searches each with
+its typed search and records the outcome on the target:
 
 | Outcome | Next search |
 |---|---|
@@ -334,17 +393,19 @@ the outcome on the target:
 So every searched target moves to the back, and the sweep works through the
 whole backlog.
 
-The sweep **grabs only with `search.autoGrab`**, which is off by default: then
-it only searches, and missing episodes are grabbed from the missing tab. With
-it on, it grabs the best release an automatic grab may take of each target it
-found releases for — never one whose title's holdings are unknown, and only
-while a download slot is free (the downloads in flight the gateway reports,
-and the grabs handed over it has not reported yet, against the downloads at
-once of the search and grab settings). The first grab refused for room, a slot
-or a client stops grabbing for the rest of that run; the gateway not taking
-adds — out of reach, failing, its answer lost — stops the run: the rest would
-be searched, spending the sources' allowance, for grabs that cannot be handed
-over.
+The sweep **grabs only what the search and grab policy lets it**: with
+`search.autoGrab` everything it finds, with `search.autoGrabNew` the new
+things alone ([what is grabbed on its own](#what-is-grabbed-on-its-own)). Both
+are off by default: then it only searches, and missing episodes are grabbed
+from the missing tab. It grabs the best release an automatic grab may take of
+each target it may grab and found releases for — never one whose holdings are
+unknown, and only while a download slot is free (the downloads in flight the
+gateway reports, and the grabs handed over it has not reported yet, against
+the downloads at once of the search and grab settings). The first grab refused
+for room, a slot or a client stops grabbing for the rest of that run; the
+gateway not taking adds — out of reach, failing, its answer lost — stops the
+run: the rest would be searched, spending the sources' allowance, for grabs
+that cannot be handed over.
 
 acquire reacts to these consumed events:
 
@@ -386,6 +447,130 @@ For the clients the deployment runs, acquire then releases the download in
 the client, through the client's own API — an NZB right after its verified
 copy, a torrent once qBittorrent stopped it at its seeding goal, removed with
 its data. acquire never moves or deletes a client's files itself.
+
+### TMDB, read again
+
+The episodes acquire hunts are TMDB's. The import's derivation read them once;
+the `inventory-refresh` schedule (every six hours) reads them again, so what
+TMDB announces later becomes a target too — and a follow is read at once, in
+the same worker. A read of a series takes its answer (its status, its TVDB
+and IMDb ids where acquire has none, its other titles as aliases, its seasons
+with their episode counts) and the episodes of the seasons that can have
+changed: every season on a series' first read; after that a season acquire
+does not know yet, one whose episode count changed, the last one, and one
+with an episode that aired in the last 60 days, airs in the next 14 or has no
+air date yet. Then:
+
+- a new episode becomes a target, wanted — monitored as its season is; a new
+  season is monitored when its title monitors new seasons, which a followed
+  title always does;
+- an episode's air date and title follow TMDB's; nothing anyone decided is
+  touched — monitoring and state stay as they are;
+- an episode TMDB no longer lists (in a season read, or of a season it no
+  longer lists) is removed, unless the library holds it or a grab is under
+  way for it: those stay. An answer that lists no season at all removes
+  nothing;
+- the catalog is asked what the library holds of what was added
+  ([what the library holds](#what-the-library-holds)).
+
+**What is read when.** A series that runs — TMDB says it returns, is in
+production or is planned; before TMDB was read for it, the import says it
+continues; or an episode aired in the last 60 days or airs in the next 14 —
+is read on every run. One that has ended is read at most weekly. A requested
+movie that waits for its release is read daily, for the date TMDB names; one
+that is out is not read again. The followed titles never read come first,
+then the ones that run, the ones read longest ago first.
+
+**Paced.** The whole library is thousands of calls to read, so a run starts
+no title once it has spent 300 calls; what is still due is read on the next
+runs. TMDB not answering — out of reach, failing, limiting, refusing the key
+— ends the run and fails nothing: the titles stay due, and a request whose
+title could not be read says why. A title TMDB does not know is recorded as
+failed and read again after its interval.
+
+### The sources' newest releases
+
+The sweep searches the backlog ten targets at a time, so a release that turns
+up in between waits for its target's turn. The `rss-sync` schedule (every
+fifteen minutes) reads each enabled source's newest releases instead — its
+RSS feed — and matches them to what is wanted:
+
+- **What is read.** `t=tvsearch` with the source's TV categories (5000 when it
+  names none) and `t=movie` with its movie categories (2000), without a query,
+  a hundred releases at a time; a source whose caps offer neither is read
+  with `t=search` over the categories it needs. Only what can be grabbed now
+  is read for: no TV feed while no episode can be grabbed on its own, no movie
+  feed while no movie can, and nothing at all while the policy grabs nothing
+  on its own — every read spends a query of the source's daily allowance.
+- **Each release once.** A cursor per source and feed — the newest
+  publication time looked at, and the releases of that time — makes a release
+  looked at once. A feed that moved further than a page since its last read is
+  read back a page at a time (`offset`) until the releases read before, up to
+  three pages; what is older is left to the sweep. A feed never read is read
+  once, its newest page. A release without a publication time is left to the
+  sweep.
+- **The match.** A series' release is matched by the words before the
+  episodes its name holds: the series' title or an alias, exactly — or with
+  the series' year or a country (`US`, `UK`, `AU`, `CA`, `NZ`) after it —,
+  the way scene names write them (`Example.Saga.Seven.Harbours` for
+  `Example Saga: Seven Harbours`). A movie's release by its title or an alias
+  and its year; a year off by one only when the feed's IMDb id says it is the
+  movie. A name several tracked titles share matches none. When the feed
+  carries identities (`tvdbid`, `imdbid` or `imdb`, `tmdbid`), one that names
+  another title than the match rejects it.
+- **The grab.** Of the episodes a release holds, the first that can be
+  grabbed now is what it is for: wanted, aired, monitored, of holdings
+  acquire knows, not reserved — and one the policy lets grab on its own. A
+  release named for an episode that has not aired is most often a fake, and
+  one of a movie not out yet a recording made in a cinema: neither is
+  grabbed. Then it is grabbed
+  as the sweep grabs: the releases found for a target ranked by its title's
+  quality profile, the ones blocked for it left out, only what an automatic
+  grab may take (one episode, or one short run of missing ones; never a
+  season pack), within the storage floor and the downloads at once, through
+  the same [grab bound to targets](#a-grab-bound-to-targets) (its `via` is
+  `rss`). A release that cannot be grabbed now — no slot, no room — leaves its
+  target due on the next sweep.
+- **A source that fails** or limits backs off as it does for any search
+  ([its health](./indexers-and-nzb.md#health-backoff-and-allowances)) and fails
+  nothing: the other sources are read, and its cursor stays where it was.
+
+### What is grabbed on its own
+
+Two switches of the search and grab settings say what the sweep and the
+sources' newest releases grab on their own; both are off by default, and then
+nothing is grabbed on its own — the sweep searches, and grabs are asked for in
+the missing tab or a request's row.
+
+| Setting | Grabs on its own |
+|---|---|
+| `autoGrabNew` (`false`) | the **new things**: an episode that aired in the last `newWithinDays` days (`14`), of any tracked series; an episode a follow or a read of TMDB added after its series was first requested — every episode of a series someone requested; a requested movie once it is out |
+| `autoGrab` (`false`) | **everything missing**: the old backlog too — the import's episodes and movies, however long ago they aired |
+
+`autoGrab` keeps its meaning; with it on, `autoGrabNew` changes nothing. With
+`autoGrabNew` alone, the old backlog — what the import brought, and the
+episodes of a tracked series from before it was requested — is searched and
+waits for the missing tab. Either way an automatic grab takes only what it may
+([a grab bound to targets](#a-grab-bound-to-targets)), within the storage floor
+and the downloads at once, and never a title whose holdings are unknown.
+
+## Schedules
+
+acquire's recurring work fires on the platform's event streaming (the clock
+writes `acquire.schedule.due`, the consumer acts on it); without brokers
+nothing runs on a schedule. Each is registered on start; a row an operator
+changed — its interval, or switched off — is left as it is.
+
+| Schedule | Every | Does |
+|---|---|---|
+| `backlog-sweep` | 30 minutes | searches ten due targets ([the sweep](#the-backlog-sweep)) — the new things first with `autoGrabNew` — and grabs what the policy allows |
+| `retry-failed` | 15 minutes | the same for targets whose searches found nothing or failed, once their backoff ran out |
+| `rss-sync` | 15 minutes | reads every source's newest releases, matches them to what is wanted and grabs what the policy allows ([the newest releases](#the-sources-newest-releases)); in a worker of its own |
+| `inventory-refresh` | 6 hours | reads TMDB for what runs, what ended (weekly) and the requested movies that wait (daily), at most 300 calls a run ([TMDB, read again](#tmdb-read-again)); in a worker of its own, which also reads every follow at once |
+| `holdings-reconcile` | 6 hours | asks the catalog what the library holds ([what the library holds](#what-the-library-holds)); in a worker of its own |
+| `grab-recovery` | 1 hour | makes failed targets wanted again once their wait ran out, and gives up stale grabs ([when a grab fails](#when-a-grab-fails)) |
+| `subtitles-sweep` | 15 minutes | a pass of the [subtitles](#subtitles) worker |
+| `outbox-audit` | 6 hours | logs how many events wait in the outbox |
 
 ## Subtitles
 
@@ -598,17 +783,17 @@ dev (every caller is treated as admin).
 | `GET` | `/readyz` | public | DB ping (503 when down) |
 | `GET` | `/api/config` | public | what the console reads: the admin role and the `autoGrab` flag — whether **find & grab** has a source and a client to work with, not the sweep's `search.autoGrab` |
 | `GET` | `/api/events` | any signed-in¹ | live stream: change pings + download telemetry |
-| `GET` | `/api/wanted` | any signed-in | list requests |
-| `POST` | `/api/wanted` | **user** or admin | create a request |
+| `GET` | `/api/wanted` | any signed-in | list requests; one that follows its title reads as what acquire does with it now, with `titleId`, `progress` (a series' episodes held, on the way, missing, not aired yet, the next to air; a movie's target) and `autoGrab` (whether what it waits for is grabbed on its own) |
+| `POST` | `/api/wanted` | **user** or admin | create a request `{tmdbId, mediaType, title, year, posterUrl}`; a series (`series`, `tv`) or a movie with a `tmdbId` follows its title; asking for one again answers the request there is |
 | `GET` | `/api/discover?q=` | any signed-in | TMDB search, flags in-library hits |
-| `GET` | `/api/status?tmdbId=` | any signed-in | status of the newest request for a TMDB id |
-| `POST` | `/api/wanted/{id}/grab` | **admin** | hand a magnet/URL to a client |
-| `POST` | `/api/wanted/{id}/autograb` | **admin** | search the sources + grab the best release |
-| `GET` | `/api/wanted/{id}/releases` | **admin** | the ranked releases for a request `{candidates, incomplete}` |
+| `GET` | `/api/status?tmdbId=` | any signed-in | status of the newest request for a TMDB id, as it reads now |
+| `POST` | `/api/wanted/{id}/grab` | **admin** | hand a magnet/URL to a client (a request that follows its movie: as a grab of the movie's target) |
+| `POST` | `/api/wanted/{id}/autograb` | **admin** | search the sources + grab the best release (a request that follows its movie: its target's typed search and grab; a series request: refused, its episodes are grabbed one by one) |
+| `GET` | `/api/wanted/{id}/releases` | **admin** | the ranked releases for a request `{candidates, incomplete}` (a followed movie: its target's typed search) |
 | `POST` | `/api/wanted/{id}/pick` | **admin** | grab one of them (sends back its `release` reference) |
 | `GET` | `/api/search?q=&indexers=` | **admin** | manual search across the sources `{candidates, incomplete}` |
 | `POST` | `/api/search/grab` | **admin** | grab a manual search result |
-| `DELETE` | `/api/wanted/{id}` | **admin** | remove a request |
+| `DELETE` | `/api/wanted/{id}` | **admin** | remove a request; the last one that follows a title ends its follow |
 | `GET` | `/api/downloads` | any signed-in | live + recently finished downloads |
 | `GET` | `/api/clients` | any signed-in | per-client health + aggregate speed |
 | `POST` | `/api/downloads/{adapter}/{id}/{action}` | **admin** | `pause` \| `resume` \| `cancel` (a target grab's download: the grab is given up at once, its targets wanted again) |
@@ -626,8 +811,8 @@ authenticated. Clients read it with **fetch-streaming** rather than
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| `GET` | `/api/missing?limit=` | any signed-in | the backlog: aired, monitored targets the library does not hold, of titles whose holdings are known, each with its state, detail and last search `{missing, holdings: {known, unknown, reason, lastAt}, autoGrab}` |
-| `GET` | `/api/series` | any signed-in | every tracked series with episodes, held, missing, on their way, unaired, and whether its holdings are known |
+| `GET` | `/api/missing?limit=` | any signed-in | the backlog: aired, monitored targets the library does not hold, of holdings acquire knows, each with its state, detail and last search `{missing, holdings: {known, unknown, reason, lastAt}, autoGrab, autoGrabNew, newWithinDays}` — the last three what is grabbed on its own |
+| `GET` | `/api/series` | any signed-in | every tracked series with episodes, held, missing, on their way, unaired, whether its holdings are known, and whether a request follows it (`followed`) |
 | `GET` | `/api/counts` | any signed-in | the headline numbers, with the titles and targets of unknown holdings |
 | `GET` | `/api/targets/{id}/search` | **admin** | a target's typed search `{candidates}`, each saying what it holds (`covers`, `pack`) |
 | `POST` | `/api/targets/{id}/pick` | **admin** | grab one of them, bound to every wanted target it covers (sends back its `release` reference) |
@@ -648,7 +833,7 @@ own data, edited by admins only:
 | `PUT` · `DELETE` | `/api/download-clients/{id}` | replace · remove a client (`409` while downloads are in flight, and for a managed client) |
 | `GET` | `/api/download-clients/types` | the client types the gateway runs |
 | `POST` | `/api/download-clients/test` | reach a client through the gateway without saving it |
-| `GET` · `PUT` | `/api/settings/search` | the search and grab policy: `preferProtocol`, `storageFloorGb`, `maxConcurrentGrabs` and `autoGrab` (the sweep grabs; `false` by default). A `PUT` replaces the whole document |
+| `GET` · `PUT` | `/api/settings/search` | the search and grab policy: `preferProtocol`, `storageFloorGb`, `maxConcurrentGrabs`, `autoGrab` (everything missing is grabbed on its own; `false` by default), `autoGrabNew` (the new things are; `false`) and `newWithinDays` (how recently an episode aired to be new; `14`, 1 to 365) — see [what is grabbed on its own](#what-is-grabbed-on-its-own). A `PUT` replaces the whole document; one that names no `newWithinDays` takes the default |
 
 Writes send the revision they were based on in `If-Match` and get `409` when it
 is stale; invalid content gets `422 {"fieldErrors":[…]}`. A **managed** client
@@ -698,11 +883,18 @@ of the bundle and other methods are a `404`, never a redirect or a page.
 Tabs:
 
 - **requests** — status pill, chosen release, and a live progress bar with speed,
-  ETA and the client's own state inline. Admin actions per row: **find & grab**
+  ETA and the client's own state inline. A request that follows a series is
+  *following*: its line says how many of its episodes the library holds, are
+  on the way, missing and not aired yet, and when the next airs, with a bar of
+  what is held, and whether new episodes are grabbed on their own; a
+  requested movie says when it comes out and is searched from (*waiting*),
+  then reads as its target is. Admin actions per row: **find & grab**
   (automatic pick), **releases** (interactive search — see below), **magnet**
-  (paste a magnet/`.torrent` URL), **remove**.
+  (paste a magnet/`.torrent` URL) — none for a series request, whose episodes
+  are grabbed one by one — and **remove**.
 - **series** — every tracked series: held of its episodes, missing and on
-  their way, or *holdings unknown* until the catalog has said what it holds.
+  their way, or *holdings unknown* until the catalog has said what it holds;
+  a series a request follows is marked *requested*.
 - **missing** — the backlog as a worklist. Tabs with counts filter it:
   *missing* (all of it), *on their way* (queued, grabbed, downloaded, waiting
   for the catalog), *needs attention* (the last grab failed, with the reason),
@@ -715,8 +907,9 @@ Tabs:
   looked at again, search failed, no id a source accepts. One message strip
   says how many titles' holdings are unknown and why, in words, with **show
   them** and **ask the catalog again**; the catalog's own sentence and the item
-  id are under its **details**. The header says whether the sweep grabs on its
-  own. Admin actions: one action menu per row (**pick a release** — the
+  id are under its **details**. The header says what is grabbed on its own:
+  everything missing, the new things (with the days that make an episode
+  new), or nothing. Admin actions: one action menu per row (**pick a release** — the
   target's typed search, a season pack among them — and **grab now**), **grab
   all** per group, and **grab N selected** for the rows ticked; a toast says
   how many were queued and how many skipped.
@@ -737,7 +930,9 @@ Tabs:
   the gateway's live state and whether it runs the stored revision. The ones
   the addon runs itself carry a **managed** badge and can only be tested.
 - **settings** — search and grab (protocol preference, free-space floor,
-  downloads at once, and whether the backlog sweep grabs or only searches),
+  downloads at once, and what is grabbed on its own: **new episodes and
+  requests**, with the days that make an episode new, and **everything
+  missing** — see [what is grabbed on its own](#what-is-grabbed-on-its-own)),
   subtitles (their languages and source, the day's downloads, whether they
   are downloaded on their own and whether a machine translation may be taken)
   and the quality profile.
@@ -784,7 +979,8 @@ acquire owns a small Postgres schema (applied on boot, idempotent):
 
 **`wanted_items`** — `id`, `tmdb_id`, `media_type` (`movie`/`series`), `title`,
 `year`, `poster_url`, `requested_by` (Keycloak sub), `requested_at`, `status`,
-`detail` (last status message), `item_id` (catalog id once created), `updated_at`.
+`detail` (last status message), `item_id` (catalog id once created), `updated_at`,
+and `title_id`, the title the request follows (`''` for one that follows none).
 
 **`grabs`** — `wanted_id` (FK, cascade), `adapter` (the client id),
 `client_job_id`, `source` (the link with its credentials removed), plus the
@@ -795,7 +991,10 @@ normally map back via the `wanted_item_id` the gateway echoes; this table is the
 fallback when a restarted gateway no longer knows it.
 
 **`indexers`** and **`indexer_usage`** — the search sources (API key sealed,
-cached caps, health) and what each spent per UTC day.
+cached caps, health) and what each spent per UTC day. **`rss_cursors`** — how
+far each source's newest releases were read, per feed (`tv`, `movie`,
+`search`): the newest publication time looked at, the releases of that time,
+when the feed was read and what that read did.
 
 **`imports`** — the finished downloads acquire copies into the arrivals and then
 releases in their clients — every target grab's download, copied or not: the
@@ -822,14 +1021,21 @@ again (`grab_failures`, `retry_at`), when acquire last handed a file for it
 over that the catalog took (`handed_over_at`), a grab asked for in the console
 (`grab_requested_at`), and what the library holds of it (`held_item_id`,
 `held_via` for an episode held through another's file, `held_playable`, the
-release and its score). A title's `holdings_at` is when
+release and its score), when a follow or a read of TMDB added it
+(`added_at`, NULL for the import's), TMDB's name of the episode
+(`episode_title`), and of a requested movie whether it waits for a release
+date (`release_pending`) and what its window is (`release_kind`: `digital`,
+`physical`, `tv`, `theatrical`). A title's `holdings_at` is when
 its holdings were last learned, NULL while they are unknown, with
-`holdings_error` saying why.
+`holdings_error` saying why; `followed_at` when a request first followed it
+(`origin` `request` for one a request created), `tmdb_status` TMDB's word on
+it, and `inventory_at` and `inventory_error` when TMDB was last read for it
+and why that failed.
 
 **`target_grabs`** — one row per release handed over for targets: the title,
 the targets it was bound to, the client job, its state (`pending`, `grabbed`,
 `downloaded`, `imported`, `failed`) and detail, what it covers, where it came
-from (`via`: sweep, missing, pick, search) and the release that won, with its
+from (`via`: sweep, rss, missing, pick, search, request) and the release that won, with its
 link redacted (`source`) and the full one sealed (`source_ct`).
 **`grab_targets`** records each target's file of a finished grab: the path
 handed over, the episode run it covers, the item the catalog answered, and
@@ -872,7 +1078,7 @@ progress message.
 | `KATALOG_MANAGER_URL` | — | ingest target |
 | `OIDC_TOKEN_URL` | — | token endpoint for the service account |
 | `ACQUIRE_SVC_CLIENT_ID` / `ACQUIRE_SVC_CLIENT_SECRET` | — | client-credentials for gateway + ingest calls |
-| `TMDB_API_KEY` | — | discovery (optional) |
+| `TMDB_API_KEY` | — | discovery, and what a request follows: a series' episodes and a movie's release dates, read again on the clock (optional; without it neither) |
 | `ACQUIRE_CONFIG_KEY` | — | base64 32-byte key sealing stored credentials; without it none can be stored |
 | `ACQUIRE_CONFIG_KEY_PREVIOUS` | — | the key before a rotation, still used to open values |
 | `ACQUIRE_ENDPOINT_DENY` | — | comma list of hostnames / domain suffixes configuration may never point at |

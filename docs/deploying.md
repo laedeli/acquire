@@ -60,6 +60,10 @@ flowchart TB
   once the catalog takes it; and since nothing says what the library holds,
   the missing tab lists nothing of a title and nothing is grabbed on its own
   (see [what the library holds](./acquire.md#what-the-library-holds)).
+- For **following what is requested**, a **TMDB API key** (`tmdb.apiKey`): a
+  requested series' episodes and a requested movie's release dates are read
+  from TMDB, and read again on the clock. Without it a request still follows
+  its title, and says that nothing of it can be read; discovery is off too.
 - For **subtitles**, the catalog's **subtitle API** in katalog-manager
   (`GET /api/library/subtitles/languages`, `GET`, `POST` and `DELETE
   /api/library/items/{id}/subtitles`, open to the addon role) and an
@@ -194,7 +198,7 @@ The inputs, declared in the chart's `values.schema.json`:
 | `oidc.serviceClientId` | `laedeli-acquire-svc` | `ACQUIRE_SVC_CLIENT_ID`, and the gateway's `ALLOWED_CLIENTS` |
 | `oidc.adminRole` | `zaentrum-admin` | `ACQUIRE_ADMIN_ROLE` |
 | `oidc.userRole` | `zaentrum-user` | `ACQUIRE_USER_ROLE` |
-| `tmdb.apiKey` | optional, secret | `TMDB_API_KEY` — discovery is off without it |
+| `tmdb.apiKey` | optional, secret | `TMDB_API_KEY` — discovery, and what a request follows (a series' episodes, a movie's release dates); both are off without it |
 | `config.key` | generated, secret | `ACQUIRE_CONFIG_KEY` (see [the config key](#the-config-key)) |
 | `config.previousKey` | optional, secret | `ACQUIRE_CONFIG_KEY_PREVIOUS`, while rotating the key |
 | `subtitles.enabled` | `true` | `ACQUIRE_SUBTITLES` — [subtitles](./acquire.md#subtitles) in the configured languages; nothing is searched for without the account below |
@@ -286,7 +290,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.5.2/acquire-0.5.2.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.0/acquire-0.6.0.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -411,6 +415,40 @@ file is over 2 GiB when it saved what the catalog said of it (`size_bytes`
 was sent as a 32-bit number), so those titles were never searched; TMDB ids
 over 2^31 had the same trap. No download was spent on them, and they are
 searched on the next pass after the update, without a step of yours.
+
+**To 0.6.0.** A request for a series or a movie follows its title (see
+[a request that follows its title](./acquire.md#a-request-that-follows-its-title)):
+a series request is no longer failed when a download of it completes — it
+stays open while the series runs, its episodes tracked and grabbed one by one
+—, and a movie request is its movie's target, searched from its release on.
+TMDB is read again on the clock for what runs, so the episodes it announces
+later become targets, and the sources' newest releases are read and matched
+to what is wanted. Migration `042` (follows, what TMDB was read for, the
+newest releases' cursors) is applied on start, and two schedules are
+registered: `inventory-refresh` (every six hours) and `rss-sync` (every
+fifteen minutes) — see [schedules](./acquire.md#schedules).
+
+- **Nothing is grabbed on its own that was not before.** The new switch
+  **new episodes and requests** (`search.autoGrabNew`) is off after the
+  upgrade, and so is `search.autoGrab` unless you had switched it on: the
+  sweep searches as before, and with both off no source's newest releases are
+  read at all. To have new episodes and what is requested arrive by
+  themselves, switch it on in settings → search and grab; the old backlog
+  stays with **everything missing** (`search.autoGrab`), which keeps its
+  meaning.
+- **The sources' allowance.** With a switch on, every source is read once or
+  twice every fifteen minutes (its TV and movie feeds, only while something
+  of the kind can be grabbed), and up to three pages when a feed moved
+  further than a page since its last read: a hundred to two hundred queries
+  a day per source. Set a source's queries per day if its allowance is
+  tighter: a source at its limit is not asked.
+- **TMDB.** The first runs read every tracked series once — a few thousand
+  calls for a large library, at most 300 a run, so it takes a few days —;
+  after that a run reads only what runs, the ended series weekly. It needs
+  `tmdb.apiKey`.
+- **Requests from before.** A series or movie request made before 0.6.0
+  follows nothing until it is asked for again (discover → request), which
+  answers the request there is and makes it follow its title.
 
 ### Moving an existing deployment to the chart
 
@@ -893,12 +931,16 @@ Right after install the checklist reads *needs setup*. Follow its
    and categories; acquire reads its caps on save. See
    [Search sources & NZB-first](./indexers-and-nzb.md).
 3. **Search and grab** — which protocol is searched first, the free-space floor,
-   how many downloads may run at once, and whether **the backlog sweep** grabs
-   on its own (`search.autoGrab`). It is **off** by default: the sweep then
-   only searches, and missing episodes are grabbed from the missing tab — per
-   row, or for a selection. Turn it on once the missing tab shows what you
-   expect: the sweep then grabs within the floor and the downloads at once, and
-   never a title whose holdings are unknown.
+   how many downloads may run at once, and what is grabbed on its own: **new
+   episodes and requests** (`search.autoGrabNew` — what aired in the last
+   days, the episodes of a requested series, a requested movie once it is
+   out) and **everything missing** (`search.autoGrab`, the old backlog too).
+   Both are **off** by default: the sweep then only searches, and missing
+   episodes are grabbed from the missing tab — per row, or for a selection.
+   Turn the first on to have new episodes arrive by themselves, from the
+   sources' newest releases and the sweep; turn the second on once the
+   missing tab shows what you expect. Either grabs within the floor and the
+   downloads at once, and never a title whose holdings are unknown.
 4. **What the library holds** — the missing tab's header says how many titles'
    holdings are known. acquire asks the catalog on its own six hours apart, the
    first time right after its first start, and after an import of titles; **ask
@@ -908,10 +950,13 @@ Right after install the checklist reads *needs setup*. Follow its
 A manual search answers within 50 seconds. Whatever sits between the browser
 and acquire must allow at least a minute per request.
 
-acquire's schedules — the sweep, the reconcile, the grab recovery — fire
-through the platform's event streaming, as its download events arrive through
-it: without brokers, nothing runs on a schedule, the reconcile runs only when it
-is asked for, and a failed episode waits for a grab from the missing tab.
+acquire's schedules — the sweep, the sources' newest releases, the TMDB
+refresh, the reconcile, the grab recovery (see
+[schedules](./acquire.md#schedules)) — fire through the platform's event
+streaming, as its download events arrive through it: without brokers, nothing
+runs on a schedule, the reconcile runs only when it is asked for, a request's
+title is read from TMDB only when it is made, and a failed episode waits for a
+grab from the missing tab.
 
 ## Verifying
 
@@ -930,6 +975,12 @@ is asked for, and a failed episode waits for a grab from the missing tab.
   episodes the library really lacks. One of them → **grab** moves
   `queued → grabbed → downloaded → held`, the row leaves the tab, and the
   episode plays.
+- A series requested in discover reads *following* in the requests tab within
+  a minute, with its episodes counted, and the series tab marks it
+  *requested*. With **new episodes and requests** on, the log says what each
+  `rss-sync` run read and grabbed (`acquire rss-sync: 1 feed(s) read …`), and
+  an episode that turns up in a source's newest releases is grabbed without a
+  step of yours.
 
 ## Upgrading to episode grabs
 

@@ -121,6 +121,22 @@ checked against the title (or a known alias) and the episode coordinates before
 it is ranked — the free-text stage is where another show with a similar name
 arrives.
 
+**The newest releases** (`rss-sync`, every fifteen minutes) are read without a
+query: `t=tvsearch` with the source's TV categories and `t=movie` with its
+movie categories — 5000 and 2000 when it names none —, or `t=search` over them
+for a source whose caps offer neither, a hundred at a time (the source's
+maximum page size, when its caps name a smaller one). A cursor per source and
+feed makes each release looked at once; a feed that moved further than a page
+since its last read is read back with `offset`, up to three pages. Each read
+is a query against the source's daily allowance and goes through the same
+health rules: a source that fails or limits backs off, and the others are
+read. Nothing is read while nothing is grabbed on its own, nor a feed of a
+kind nothing could be grabbed for now. A release read there is matched by
+name — the title or an alias, the episodes it holds, a movie's year — and the
+`tvdbid`, `imdbid` (or `imdb`) and `tmdbid` attributes a feed carries reject a
+match they contradict; what matches is ranked and grabbed as a typed search's
+result is (see [the newest releases](./acquire.md#the-sources-newest-releases)).
+
 ## Choosing a release
 
 Releases are scored by the **quality profile** (settings): resolution, source

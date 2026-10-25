@@ -171,6 +171,7 @@ flowchart TB
         SRC["search sources<br/><i>newznab · torznab</i>"]
         DC["download clients<br/><i>NZBGet · qBittorrent · oDownloader</i>"]
         OS["OpenSubtitles.com<br/><i>the deployment's account</i>"]
+        TM["TMDB<br/><i>the deployment's key</i>"]
     end
     subgraph coreapp["zaentrum core"]
         POR["portal-api<br/><i>addon install · components · setup checklist · proxy</i>"]
@@ -183,7 +184,8 @@ flowchart TB
     POR -.->|"reads the capability manifest · GET /api/setup"| ACQ
     WEB -->|"read slot"| POR
     ACQ --> DB
-    ACQ -->|"search · fetch release files"| SRC
+    ACQ -->|"search · newest releases · fetch release files"| SRC
+    ACQ -->|"discover · a request's episodes and release dates, read again"| TM
     ACQ -->|"push clients · add downloads"| GW
     GW --> DC
     GW --> MDC

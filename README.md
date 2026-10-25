@@ -19,6 +19,13 @@ builds on are documented canonically in the platform docs:
   the catalog via the platform's neutral ingest seam. Search sources and
   download clients are its own configuration, edited in its React console,
   hosted inside the portal shell.
+- **Following what is requested** — a requested series is followed: its
+  episodes come from TMDB, read again on the clock while it runs, so new
+  ones become wanted as they are announced; a requested movie is searched
+  from its release on. Each source's newest releases are read every fifteen
+  minutes and matched to what is wanted. Whether new episodes and requests are
+  grabbed on their own, and whether the whole backlog is, are two switches in
+  the console, both off until you turn them on.
 - **[download-gateway](https://github.com/laedeli/download-gateway)** — the
   download plane: one API + Kafka events (`download.client.*`) in front of the
   actual download clients.
@@ -62,7 +69,9 @@ Live end-to-end on the author's instance: request → grab → download → inge
 package → playback, with the console (requests, downloads, search, search
 sources, download clients, series, missing backlog, quality profiles) hosted
 in the portal. Subtitles (since chart 0.5.0) are new, and need the catalog's
-attach seam. Expect sharp
+attach seam; following requested series and movies, TMDB read again on the
+clock and the sources' newest releases (since chart 0.6.0) are newer still.
+Expect sharp
 edges: this is a young codebase serving one deployment so far, and
 installation still involves the manual steps the platform's
 [addon identity](https://github.com/zaentrum/zaentrum/wiki/extending-identity)
