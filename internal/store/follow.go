@@ -441,8 +441,10 @@ func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Dura
 }
 
 // MovieInventoryDue are the requested movies whose read of TMDB is due: one
-// never read, and one that waits for its release — TMDB dates none yet, or a
-// date to come, which TMDB may move — read longer ago than every.
+// never read, and one that waits for its release — TMDB dates none yet, a
+// date to come, which TMDB may move, or only its theatrical release, which
+// the window is a guess from until TMDB dates a release to watch at home —
+// read longer ago than every.
 func (s *Store) MovieInventoryDue(ctx context.Context, every time.Duration, limit int) ([]Title, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+titleCols+`
@@ -450,7 +452,8 @@ func (s *Store) MovieInventoryDue(ctx context.Context, every time.Duration, limi
 		  LEFT JOIN acquisition_targets a ON a.title_id = t.id AND a.season_number IS NULL AND a.episode_number IS NULL
 		 WHERE t.kind = 'movie' AND t.monitored AND t.followed_at IS NOT NULL
 		   AND (a.id IS NULL OR t.inventory_at IS NULL
-		        OR (a.state <> 'held' AND a.added_at IS NOT NULL AND (a.release_pending OR a.air_window_opens_at > now())))
+		        OR (a.state <> 'held' AND a.added_at IS NOT NULL
+		            AND (a.release_pending OR a.air_window_opens_at > now() OR a.release_kind = 'theatrical')))
 		   AND (t.inventory_at IS NULL OR t.inventory_at < now() - make_interval(secs => $1::float8))
 		 ORDER BY t.inventory_at NULLS FIRST, t.id
 		 LIMIT $2`, every.Seconds(), limit)

@@ -562,6 +562,46 @@ func TestARequestedMovie(t *testing.T) {
 	}
 }
 
+// A movie that premiered at a festival long before it reached cinemas is
+// searched 90 days after it reached them, not after the premiere; and while
+// its window is that guess, TMDB is read for it daily, until TMDB dates a
+// release to watch at home.
+func TestAMovieInCinemasIsReadUntilItIsOutAtHome(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	festival, cinema := day(-200), day(-100)
+	dates := []map[string]any{{"type": 1, "release_date": festival.Format(time.RFC3339)}, {"type": 3, "release_date": cinema.Format(time.RFC3339)}}
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.movies[9100] = map[string]any{"id": 9100, "title": "Example Clay Film", "status": "Released", "release_date": dateOf(festival),
+			"release_dates": map[string]any{"results": []map[string]any{{"iso_3166_1": "US", "release_dates": dates}}}}
+	})
+	if _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 9100, MediaType: "movie", Title: "Example Clay Film", Year: 2026}, "friend"); err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	tg, _ := r.svc.st.TargetAt(ctx, "movie:9100", nil, nil)
+	if tg.ReleaseKind != "theatrical" || tg.WindowAt == nil || !tg.WindowAt.Equal(cinema.Add(theatricalWait)) || !tg.AirDate.Equal(*cinema) {
+		t.Fatalf("the window: %+v", tg)
+	}
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	if run := r.settle(t, true); run.Titles != 1 {
+		t.Errorf("a movie whose window is a guess, read a day ago: %+v", run)
+	}
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.movies[9100]["release_dates"] = map[string]any{"results": []map[string]any{{"iso_3166_1": "US",
+			"release_dates": append(dates, map[string]any{"type": 4, "release_date": day(-3).Format(time.RFC3339)})}}}
+	})
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	r.settle(t, true)
+	if tg, _ := r.svc.st.TargetAt(ctx, "movie:9100", nil, nil); tg.ReleaseKind != "digital" || !tg.WindowAt.Equal(*day(-3)) {
+		t.Errorf("once out at home: %+v", tg)
+	}
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '1 day' WHERE id = 'movie:9100'`)
+	if run := r.settle(t, true); run.Titles != 0 {
+		t.Errorf("a movie out at home read again: %+v", run)
+	}
+}
+
 // ── what grabs on its own ──────────────────────────────────────────────────
 
 func TestWhatIsNew(t *testing.T) {
@@ -614,7 +654,7 @@ func TestWhatIsNew(t *testing.T) {
 }
 
 func TestMovieWindow(t *testing.T) {
-	cinema, home := *day(-10), *day(20)
+	cinema, home, festival, limited := *day(-10), *day(20), *day(-120), *day(-20)
 	for _, tc := range []struct {
 		name string
 		m    tmdb.Movie
@@ -624,6 +664,15 @@ func TestMovieWindow(t *testing.T) {
 		{"a digital release", tmdb.Movie{Releases: []tmdb.Release{{Type: tmdb.ReleaseTheatrical, Date: cinema}, {Type: tmdb.ReleaseDigital, Date: home}}}, &home, "digital"},
 		{"in cinemas only", tmdb.Movie{Releases: []tmdb.Release{{Type: tmdb.ReleaseTheatrical, Date: cinema}}}, ptr(cinema.Add(theatricalWait)), "theatrical"},
 		{"nothing dated", tmdb.Movie{}, nil, ""},
+		// A festival's premiere months before it reaches cinemas opens
+		// nothing: the theatrical releases do, the first of them.
+		{"a premiere, then cinemas", tmdb.Movie{Releases: []tmdb.Release{{Type: tmdb.ReleasePremiere, Date: festival},
+			{Type: tmdb.ReleaseTheatrical, Date: cinema}, {Type: tmdb.ReleaseTheatricalLimited, Date: limited}}},
+			ptr(limited.Add(theatricalWait)), "theatrical"},
+		{"a premiere and a primary date", tmdb.Movie{ReleaseDate: &cinema, Releases: []tmdb.Release{{Type: tmdb.ReleasePremiere, Date: festival}}},
+			ptr(cinema.Add(theatricalWait)), "theatrical"},
+		{"a premiere only", tmdb.Movie{Releases: []tmdb.Release{{Type: tmdb.ReleasePremiere, Date: festival}}},
+			ptr(festival.Add(theatricalWait)), "theatrical"},
 	} {
 		at, _, kind := movieWindow(tc.m)
 		if kind != tc.kind || (at == nil) != (tc.at == nil) || (at != nil && !at.Equal(*tc.at)) {

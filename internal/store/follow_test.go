@@ -385,6 +385,12 @@ func TestWhichMoviesAreReadAgain(t *testing.T) {
 	if _, err := s.ApplyMovieInventory(ctx, out.ID, MovieRead{Window: day(-30), Kind: "digital"}); err != nil {
 		t.Fatal(err)
 	}
+	// In cinemas long ago, TMDB dating no release to watch at home: its
+	// window is a guess, and it is read again until TMDB dates one.
+	guess, _, _ := s.FollowTitle(ctx, Title{TMDBID: 5, Kind: "movie", Title: "Guessed"})
+	if _, err := s.ApplyMovieInventory(ctx, guess.ID, MovieRead{Window: day(-10), Released: day(-100), Kind: "theatrical"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.pool.Exec(ctx, `UPDATE titles SET inventory_at = now() - interval '2 days' WHERE inventory_at IS NOT NULL`); err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +402,10 @@ func TestWhichMoviesAreReadAgain(t *testing.T) {
 	for _, d := range due {
 		got = append(got, d.ID)
 	}
-	if want := []string{never.ID, waiting.ID}; !reflect.DeepEqual(got, want) {
+	sort.Strings(got)
+	want := []string{guess.ID, never.ID, waiting.ID}
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("due = %v, want %v", got, want)
 	}
 }

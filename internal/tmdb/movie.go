@@ -78,22 +78,31 @@ func (m Movie) HomeRelease() (at time.Time, kind string, ok bool) {
 	return at, kind, ok
 }
 
-// TheatricalRelease is the movie's first premiere or theatrical release, in
-// any country, or else its primary release date. ok is false when TMDB dates
+// TheatricalRelease is the movie's first release in cinemas, in any country:
+// a limited or a wide theatrical release; else its primary release date;
+// else, when TMDB dates nothing else, its premiere — a festival's premiere
+// can come months before it reaches cinemas. ok is false when TMDB dates
 // none.
 func (m Movie) TheatricalRelease() (at time.Time, ok bool) {
-	for _, r := range m.Releases {
-		if r.Type < ReleasePremiere || r.Type > ReleaseTheatrical {
-			continue
+	first := func(types ...int) (time.Time, bool) {
+		var at time.Time
+		ok := false
+		for _, r := range m.Releases {
+			for _, t := range types {
+				if r.Type == t && (!ok || r.Date.Before(at)) {
+					at, ok = r.Date, true
+				}
+			}
 		}
-		if !ok || r.Date.Before(at) {
-			at, ok = r.Date, true
-		}
+		return at, ok
 	}
-	if !ok && m.ReleaseDate != nil {
+	if at, ok := first(ReleaseTheatricalLimited, ReleaseTheatrical); ok {
+		return at, true
+	}
+	if m.ReleaseDate != nil {
 		return *m.ReleaseDate, true
 	}
-	return at, ok
+	return first(ReleasePremiere)
 }
 
 // Movie reads a movie's answer: one call, with its external ids, its other

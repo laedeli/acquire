@@ -66,8 +66,8 @@ func TestMovieReadsItsReleases(t *testing.T) {
 	if !ok || kind != "digital" || !at.Equal(time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("home release = %v %q %v, want the digital one, the first of any country", at, kind, ok)
 	}
-	if at, ok := m.TheatricalRelease(); !ok || !at.Equal(time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("theatrical release = %v %v, want the premiere", at, ok)
+	if at, ok := m.TheatricalRelease(); !ok || !at.Equal(time.Date(2026, 9, 11, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("theatrical release = %v %v, want the release in cinemas, not the premiere before it", at, ok)
 	}
 
 	// A movie TMDB does not know is a 404 the caller can tell from an outage.
@@ -97,6 +97,11 @@ func TestReleasesOfAMovie(t *testing.T) {
 		{"tv", Movie{Releases: []Release{{Type: ReleaseTV, Date: day(time.July, 4)}}},
 			"tv", day(time.July, 4), time.Time{}, true},
 		{"only a primary date", Movie{ReleaseDate: &primary}, "", time.Time{}, primary, false},
+		{"a festival premiere, then a limited release", Movie{Releases: []Release{
+			{Type: ReleasePremiere, Date: day(time.January, 20)}, {Type: ReleaseTheatrical, Date: day(time.May, 1)},
+			{Type: ReleaseTheatricalLimited, Date: day(time.April, 10)}}}, "", time.Time{}, day(time.April, 10), false},
+		{"a premiere only", Movie{Releases: []Release{{Type: ReleasePremiere, Date: day(time.January, 20)}}},
+			"", time.Time{}, day(time.January, 20), false},
 		{"nothing dated", Movie{}, "", time.Time{}, time.Time{}, true},
 	} {
 		at, kind, ok := tc.movie.HomeRelease()
