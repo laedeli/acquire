@@ -115,16 +115,20 @@ func TestAnEpisodeTheTwoCannotTellApartIsHeld(t *testing.T) {
 	}
 }
 
-// An episode of a broadcast TVmaze does not list is told by the usual hour
-// of its season's other broadcasts, on TMDB's day: the fake from the morning
-// before the evening's broadcast is skipped, the release from after it ended
-// taken. Without a usual hour — no episode of it dated to the hour, no
-// schedule of the show — it is held until it has an air time.
-func TestAnEpisodeTVmazeDoesNotList(t *testing.T) {
-	r, _, start := nightShowRead(t, func(f *fakeSchedule) { f.eps[501] = f.eps[501][1:] })
+// An episode of a broadcast TVmaze dates to the day alone is told by the
+// usual hour of its season's other broadcasts, on its day: the fake from the
+// morning before the evening's broadcast is skipped, the release from after
+// it ended taken; when no episode of the season has an hour, by the show's
+// schedule. Without a usual hour it is held until it has an air time. An
+// episode TVmaze does not list, though it lists later ones of its season, is
+// held while it is recent — TMDB's day tells nothing then —; of the old
+// backlog, it is told by the usual hour.
+func TestAnEpisodeTVmazeDatesToTheDayOrDoesNotList(t *testing.T) {
+	dayOnly := func(f *fakeSchedule) { f.eps[501][0]["airtime"] = "" }
+	r, _, start := nightShowRead(t, dayOnly)
 	one := target(t, r.svc, "series:990721:s01e001")
 	if one.AirStamp == nil || !one.AirStamp.Equal(start) || !one.AirStampEstimated || one.ScheduleHold != "" {
-		t.Fatalf("E01, not listed: %+v", one)
+		t.Fatalf("E01, dated to the day: %+v", one)
 	}
 	if got := sweepFor(t, r, nightFake, start.Add(-15*time.Hour)); len(got) != 0 {
 		t.Errorf("the morning's fake was taken: %v", got)
@@ -133,7 +137,7 @@ func TestAnEpisodeTVmazeDoesNotList(t *testing.T) {
 		t.Errorf("E01 says nothing of the fake: %q", st.SearchDetail)
 	}
 	real := "Example.Night.Show.S01E01.1080p.WEB.h264-GRP"
-	r2, _, _ := nightShowRead(t, func(f *fakeSchedule) { f.eps[501] = f.eps[501][1:] })
+	r2, _, _ := nightShowRead(t, dayOnly)
 	if got := sweepFor(t, r2, real, start.Add(70*time.Minute)); len(got) != 1 || got[0] != real {
 		t.Errorf("the real E01 after its estimated broadcast: %v", got)
 	}
@@ -149,13 +153,48 @@ func TestAnEpisodeTVmazeDoesNotList(t *testing.T) {
 		t.Errorf("E01 by the show's schedule: %+v", one)
 	}
 	// Neither: held.
-	r4, _, _ := nightShowRead(t, func(f *fakeSchedule) { f.eps[501] = f.eps[501][1:2]; f.eps[501][0]["airtime"] = "" })
+	r4, _, _ := nightShowRead(t, func(f *fakeSchedule) {
+		for _, e := range f.eps[501] {
+			e["airtime"] = ""
+		}
+	})
 	one = target(t, r4.svc, "series:990721:s01e001")
-	if one.AirStamp != nil || !strings.HasPrefix(one.ScheduleHold, "TVmaze does not list it, and the series' broadcasts have no usual hour") {
+	if one.AirStamp != nil || !strings.HasPrefix(one.ScheduleHold, "TVmaze dates it to the day alone, and the series' broadcasts have no usual hour") {
 		t.Errorf("E01 without a usual hour: %+v", one)
 	}
 	if got := sweepFor(t, r4, nightFake, start.Add(3*time.Hour)); len(got) != 0 {
 		t.Errorf("a held episode was grabbed: %v", got)
+	}
+
+	// Not listed, TVmaze listing the next one: held while recent.
+	r5, _, _ := nightShowRead(t, func(f *fakeSchedule) { f.eps[501] = f.eps[501][1:] })
+	one = target(t, r5.svc, "series:990721:s01e001")
+	if one.AirStamp != nil || one.ScheduleHold != "TVmaze does not list it, though it lists later episodes of its season: no automatic grab takes it until it does" ||
+		one.Detail != one.ScheduleHold {
+		t.Errorf("E01, not listed: %+v", one)
+	}
+	if got := sweepFor(t, r5, real, start.Add(3*time.Hour)); len(got) != 0 {
+		t.Errorf("an episode TVmaze does not list was grabbed: %v", got)
+	}
+	// Of the old backlog, not listed: its usual hour.
+	r6 := newFollowRig(t)
+	f6 := newFakeSchedule(t, r6.svc)
+	r6.tmdb.set(func(t *fakeTMDB) {
+		t.series[990723] = &tmdbSeries{name: "Example Old Show", status: "Returning Series", tvdb: 9907723, firstAir: day(-60),
+			countries: []string{"US"}, seasons: map[int][]tmdbEpisode{1: {{title: "One", air: day(-60)}, {title: "Two", air: day(-53)}}}}
+	})
+	f6.set(func(f *fakeSchedule) {
+		f.shows["thetvdb=9907723"] = 523
+		f.records[523] = map[string]any{"name": "Example Old Show"}
+		f.eps[523] = []map[string]any{airs(1, 2, local(-53, 21, 0, "America/New_York"))}
+	})
+	if _, _, err := r6.svc.Request(context.Background(), store.Wanted{TMDBID: 990723, MediaType: "series", Title: "x"}, asAdmin("admin")); err != nil {
+		t.Fatal(err)
+	}
+	r6.settle(t, false)
+	if one := target(t, r6.svc, "series:990723:s01e001"); one.ScheduleHold != "" || one.AirStamp == nil || !one.AirStampEstimated ||
+		!one.AirStamp.Equal(local(-60, 21, 0, "America/New_York")) {
+		t.Errorf("an old episode not listed: %+v", one)
 	}
 }
 

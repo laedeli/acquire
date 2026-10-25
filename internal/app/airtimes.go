@@ -27,15 +27,21 @@ import (
 //   - more than a day apart, and not clearly the same episode — another id at
 //     its numbers than the one taken before, or a name of TVmaze's neither
 //     TMDB's nor a placeholder —: held, no automatic grab takes it until they
-//     agree. An episode that aired more than holdWithin ago is not held: of
-//     the old backlog, TMDB's day tells.
+//     agree.
+//
+// An episode TMDB dates recently — within holdWithin, or to come — that
+// TVmaze dates nowhere is held too, until TVmaze dates it: TVmaze lists it
+// with no date (postponed, perhaps), lists it no more (pulled), or never
+// listed it — whether or not it lists later episodes of its season. TMDB's day
+// may be the one it was moved from. An episode that aired more than
+// holdWithin ago is not held: of the old backlog, TMDB's day tells.
 //
 // Of a broadcast — or a series TVmaze names no network or service of —
-// without an hour from TVmaze (not listed, or dated to the day alone), the
-// hour is estimated from the usual one of its season's broadcasts, else of the
-// show's schedule, in its network's zone, on the day it is told by; without
-// one, a recent episode is held until it has an air time. A streamed episode
-// without an hour is told by its day.
+// without an hour from TVmaze (dated to the day alone, or of the old backlog
+// and not listed), the hour is estimated from the usual one of its season's
+// broadcasts, else of the show's schedule, in its network's zone, on the day
+// it is told by; without one, a recent episode is held until it has an air
+// time. A streamed episode without an hour is told by its day.
 
 // holdWithin is how recently an episode aired, or how soon it airs, to be
 // held for TVmaze: an older one is the old backlog.
@@ -101,7 +107,21 @@ func planSchedule(title store.Title, show tvmaze.Show, targets []store.Target, n
 		}
 		tmdbDay := t.AirDate.UTC()
 		day, stamp := tmdbDay, (*time.Time)(nil)
-		if ep != nil && ep.AirDate != nil {
+		// Of a recent episode, TVmaze dating it nowhere is no leave to tell it
+		// by TMDB's day, which may be the one it was moved from.
+		if recent(tmdbDay) {
+			switch {
+			case ep != nil && ep.AirDate == nil:
+				plan.Hold = "TVmaze lists it with no date — postponed, perhaps —: no automatic grab takes it until TVmaze dates it"
+			case ep == nil && t.ScheduleEpisodeID != 0:
+				plan.Hold = "TVmaze listed it and does not any more — pulled, perhaps —: no automatic grab takes it until TVmaze lists it again"
+			case ep == nil && laterListed(show, season, number):
+				plan.Hold = "TVmaze does not list it, though it lists later episodes of its season: no automatic grab takes it until it does"
+			case ep == nil:
+				plan.Hold = "TVmaze does not list it: no automatic grab takes it until it does"
+			}
+		}
+		if plan.Hold == "" && ep != nil && ep.AirDate != nil {
 			apart := daysBetween(tmdbDay, *ep.AirDate)
 			switch {
 			case apart >= -1 && apart <= 1:
@@ -128,16 +148,24 @@ func planSchedule(title store.Title, show tvmaze.Show, targets []store.Target, n
 			if est := estimate(season, day); est != nil {
 				plan.Stamp, plan.Estimated = est, true
 			} else if recent(day) {
-				what := "TVmaze dates it to the day alone"
-				if ep == nil {
-					what = "TVmaze does not list it"
-				}
-				plan.Hold = what + ", and the series' broadcasts have no usual hour to tell it by: no automatic grab takes it until it has an air time"
+				plan.Hold = "TVmaze dates it to the day alone, and the series' broadcasts have no usual hour to tell it by: " +
+					"no automatic grab takes it until it has an air time"
 			}
 		}
 		out = append(out, plan)
 	}
 	return out
+}
+
+// laterListed reports whether TVmaze lists an episode of season after
+// number.
+func laterListed(show tvmaze.Show, season, number int) bool {
+	for _, e := range show.Episodes {
+		if e.Season == season && e.Number > number {
+			return true
+		}
+	}
+	return false
 }
 
 // usualHours is, by season, the hour most of its episodes air at as TVmaze

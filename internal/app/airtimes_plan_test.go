@@ -13,11 +13,13 @@ import (
 // on the day; TVmaze's day and hour when it dates the episode more than a day
 // later — TMDB has not caught up with a move —; TMDB's day when TVmaze's is
 // more than a day earlier, the later of the two; held when the two are days
-// apart and cannot be told the same episode, unless it is of the old backlog.
-// A broadcast's episode without an hour from TVmaze — not listed, or dated to
-// the day alone — gets its season's usual hour, else the show's, in its
-// network's zone; without one, a recent one is held. A streamed one without
-// an hour is told by its day. The ids are invented.
+// apart and cannot be told the same episode, unless it is of the old backlog,
+// and held when TMDB dates it recently and TVmaze nowhere — with no date,
+// not any more, or never. A broadcast's episode without an hour from TVmaze —
+// dated to the day alone, or of the old backlog and not listed — gets its
+// season's usual hour, else the show's, in its network's zone; without one, a
+// recent one is held. A streamed one without an hour is told by its day. The
+// ids are invented.
 func TestWhatAReadOfTVmazeMakesOfAnEpisode(t *testing.T) {
 	now := time.Now()
 	ny, _ := time.LoadLocation("America/New_York")
@@ -58,7 +60,7 @@ func TestWhatAReadOfTVmazeMakesOfAnEpisode(t *testing.T) {
 		target(1, 3, -2, "Three", 0),
 		target(1, 4, 6, "Four", 0),
 		target(1, 5, 6, "Five", 0),
-		target(1, 6, 7, "Six", 0), // not listed: the season's usual hour
+		target(1, 6, 7, "Six", 0), // not listed, TVmaze listing later ones: held
 		target(1, 7, 8, "Nine", 9),
 		target(1, 8, -60, "Eight", 0),
 		target(2, 1, -1, "", 0), // a season without an hour: the show's
@@ -85,7 +87,8 @@ func TestWhatAReadOfTVmazeMakesOfAnEpisode(t *testing.T) {
 	p = plans["Five"]
 	check("to the day alone: the usual hour", p.Stamp != nil && p.Stamp.Equal(*at(6, 21, 0)) && p.Estimated, p)
 	p = plans["Six"]
-	check("not listed: the usual hour on TMDB's day", p.Stamp != nil && p.Stamp.Equal(*at(7, 21, 0)) && p.Estimated && p.EpisodeID == 0, p)
+	check("not listed, later ones listed: held", p.Stamp == nil && p.Hold == "TVmaze does not list it, though it lists later episodes of its season: "+
+		"no automatic grab takes it until it does", p)
 	p = plans["Nine"]
 	check("by the episode taken before, renumbered at TVmaze", p.EpisodeID == 9 && p.Stamp != nil && p.Stamp.Equal(*at(8, 21, 0)) && p.Hold == "", p)
 	p = plans["Eight"]
@@ -100,21 +103,42 @@ func TestWhatAReadOfTVmazeMakesOfAnEpisode(t *testing.T) {
 	if len(ps) != 1 || ps[0].Hold == "" || ps[0].EpisodeID != 10 {
 		t.Errorf("the episode taken before gone: %+v", ps)
 	}
-	// Without a usual hour, a recent episode is held; an old one is told by
-	// its day.
+	// TVmaze listing nothing: a recent episode is held; an old one is told by
+	// its day, without a usual hour to estimate one by.
 	bare := show
 	bare.ScheduleTime = ""
 	bare.Episodes = nil
 	ps = planSchedule(store.Title{Kind: "series"}, bare, []store.Target{target(1, 1, -2, "One", 0), target(1, 2, -90, "Two", 0)}, now)
-	if len(ps) != 2 || !strings.HasPrefix(ps[0].Hold, "TVmaze does not list it, and the series' broadcasts have no usual hour") || ps[0].Stamp != nil ||
+	if len(ps) != 2 || ps[0].Hold != "TVmaze does not list it: no automatic grab takes it until it does" || ps[0].Stamp != nil ||
 		ps[1].Hold != "" || ps[1].Stamp != nil {
+		t.Errorf("TVmaze listing nothing: %+v", ps)
+	}
+	// Dated to the day alone, no usual hour: held.
+	dayOnly := bare
+	dayOnly.Episodes = []tvmaze.Episode{ep(1, 1, 1, -2, "", "One")}
+	ps = planSchedule(store.Title{Kind: "series"}, dayOnly, []store.Target{target(1, 1, -2, "One", 0)}, now)
+	if len(ps) != 1 || !strings.HasPrefix(ps[0].Hold, "TVmaze dates it to the day alone, and the series' broadcasts have no usual hour") {
 		t.Errorf("no usual hour: %+v", ps)
 	}
-	// Streamed: no hour is estimated; its day tells.
+	// TVmaze lists it with no date — postponed —, or lists it no more: held
+	// while TMDB's day is recent; of the old backlog, not.
+	tba := show
+	tba.Episodes = append(append([]tvmaze.Episode(nil), show.Episodes...), tvmaze.Episode{ID: 30, Season: 3, Number: 1, Name: "Postponed"},
+		tvmaze.Episode{ID: 31, Season: 3, Number: 3, Name: "Old, postponed"})
+	ps = planSchedule(store.Title{Kind: "series"}, tba, []store.Target{target(3, 1, -2, "Postponed", 0), target(3, 2, -2, "Pulled", 77),
+		target(3, 3, -60, "Old, postponed", 0)}, now)
+	if len(ps) != 3 || ps[0].Hold != "TVmaze lists it with no date — postponed, perhaps —: no automatic grab takes it until TVmaze dates it" ||
+		ps[0].Stamp != nil || ps[0].EpisodeID != 30 ||
+		ps[1].Hold != "TVmaze listed it and does not any more — pulled, perhaps —: no automatic grab takes it until TVmaze lists it again" ||
+		ps[2].Hold != "" {
+		t.Errorf("dated nowhere: %+v", ps)
+	}
+	// Streamed: no hour is estimated; its day tells — but one TVmaze does not
+	// list is held as any other.
 	stream := show
 	stream.Kind = tvmaze.Streaming
 	ps = planSchedule(store.Title{Kind: "series"}, stream, []store.Target{target(1, 6, 7, "Six", 0), target(1, 5, 6, "Five", 0)}, now)
-	if len(ps) != 2 || ps[0].Stamp != nil || ps[0].Hold != "" || ps[1].Stamp != nil || ps[1].Hold != "" {
+	if len(ps) != 2 || ps[0].Stamp != nil || ps[0].Hold == "" || ps[1].Stamp != nil || ps[1].Hold != "" {
 		t.Errorf("streamed: %+v", ps)
 	}
 	// The zone of the show's hours: its network's; else its country's;
