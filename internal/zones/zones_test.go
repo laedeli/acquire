@@ -84,5 +84,12 @@ func TestWhenAStreamingServicePutsAnEpisodeOut(t *testing.T) {
 		if _, _, ok := Drop(d, c); ok {
 			t.Errorf("%q has a drop hour", c)
 		}
+		if _, _, ok := UsualDrop(d, c); ok {
+			t.Errorf("%q has a usual drop hour", c)
+		}
+	}
+	// Most put it out at 03:00 in New York on the day.
+	if at, _, ok := UsualDrop(d, "US"); !ok || at.UTC().Format(time.RFC3339) != "2026-10-23T07:00:00Z" {
+		t.Errorf("the usual hour in the US: %s", at.UTC())
 	}
 }

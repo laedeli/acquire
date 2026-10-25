@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/laedeli/acquire/internal/store"
 )
@@ -268,5 +269,41 @@ func TestTheConfirmationForSeriesReadBefore(t *testing.T) {
 	if !errors.As(err, &missing) || err.Error() != "1 of the 1 series that run was read by an earlier version of acquire's rules, and is read again: "+
 		"nothing of it is grabbed on its own until it is read, on the next refreshes — confirm to switch grabbing on its own on now" {
 		t.Errorf("the confirmation: %v", err)
+	}
+}
+
+// Of an episode streamed from the United States and dated to the day alone,
+// a release published from 03:00 in New York on its day is taken before one
+// from the evening before, however better that one scores; the earlier one
+// alone is taken still.
+func TestAStreamedEpisodeTakesTheLaterReleaseFirst(t *testing.T) {
+	ctx := context.Background()
+	shape := func(f *fakeSchedule) {
+		f.records[501] = streamed("Example Night Show", "US")
+		for _, e := range f.eps[501] {
+			e["airtime"] = ""
+		}
+	}
+	early, usual := "Example.Night.Show.S01E01.2160p.WEB.h265-EARLY", "Example.Night.Show.S01E01.720p.WEB.h264-GRP"
+	r, _, _ := nightShowRead(t, shape)
+	src := newFakeSource(t, "usenet", "K", early, usual)
+	src.pubs = map[string]time.Time{early: local(-3, 22, 0, "America/New_York"), usual: local(-2, 3, 30, "America/New_York")}
+	addSource(t, r.svc, "example", src, nil)
+	cands, err := r.svc.SearchTarget(ctx, "series:990721:s01e001")
+	if err != nil || len(cands) != 2 || cands[0].Title != usual || !cands[0].Best || cands[1].Rejected ||
+		!strings.Contains(cands[1].Reason, "when most streaming services there put the episode out: taken after the releases from then on") {
+		t.Fatalf("the ranking: %+v %v", cands, err)
+	}
+	autoGrabNew(t, r.svc, "")
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if got := handedOver(t, r.targetRig); len(got) != 1 || got[0] != usual {
+		t.Errorf("the sweep took %v, want the release from 03:00 on", got)
+	}
+	// The evening's alone: taken.
+	r2, _, _ := nightShowRead(t, shape)
+	if got := sweepFor(t, r2, early, local(-3, 22, 0, "America/New_York")); len(got) != 1 {
+		t.Errorf("the evening's release alone was not taken: %v", got)
 	}
 }

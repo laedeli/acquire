@@ -107,13 +107,22 @@ func sameDate(t, d time.Time) bool {
 	return y == d.Year() && m == d.Month() && dd == d.Day()
 }
 
-// drops are the earliest a streaming service of a country puts an episode
-// out, as a rule, against the day it is dated, in the country's zone
-// (byCountry): in the United States 21:00 in New York the evening before —
-// a service there puts an episode out then, or at midnight on the Pacific
-// coast, 03:00 in New York, on the day. A country it does not name has no
-// such rule acquire counts on: an episode's day there begins at midnight.
-var drops = map[string]struct{ days, hour int }{"US": {-1, 21}}
+// drops are when a streaming service of a country puts an episode out, as a
+// rule, against the day it is dated, in the country's zone (byCountry): the
+// earliest, and the usual — in the United States 21:00 in New York the evening
+// before at the earliest, a service there putting an episode out then, most at
+// midnight on the Pacific coast, 03:00 in New York, on the day. A country it
+// does not name has no such rule acquire counts on: an episode's day there
+// begins at midnight.
+var drops = map[string]struct{ earliest, usual dropAt }{"US": {dropAt{-1, 21}, dropAt{0, 3}}}
+
+// dropAt is an hour on a day before or after the one an episode is dated.
+type dropAt struct{ days, hour int }
+
+func (d dropAt) on(day time.Time, loc *time.Location) time.Time {
+	on := day.UTC().AddDate(0, 0, d.days)
+	return time.Date(on.Year(), on.Month(), on.Day(), d.hour, 0, 0, 0, loc)
+}
 
 // Drop is the earliest a streaming service of country puts out an episode
 // dated day, as a rule (drops), and the zone it is counted in; ok is false
@@ -124,6 +133,17 @@ func Drop(day time.Time, country string) (at time.Time, loc *time.Location, ok b
 	if loc = Country(code); !known || loc == nil {
 		return time.Time{}, nil, false
 	}
-	on := day.UTC().AddDate(0, 0, d.days)
-	return time.Date(on.Year(), on.Month(), on.Day(), d.hour, 0, 0, 0, loc), loc, true
+	return d.earliest.on(day, loc), loc, true
+}
+
+// UsualDrop is when most streaming services of country put out an episode
+// dated day (drops): a release from before, though not before Drop, is no
+// fake as a rule, but less sure; ok is false for a country without one.
+func UsualDrop(day time.Time, country string) (at time.Time, loc *time.Location, ok bool) {
+	code := strings.ToUpper(strings.TrimSpace(country))
+	d, known := drops[code]
+	if loc = Country(code); !known || loc == nil {
+		return time.Time{}, nil, false
+	}
+	return d.usual.on(day, loc), loc, true
 }

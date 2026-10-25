@@ -104,8 +104,11 @@ type Candidate struct {
 	link string
 	// preAired is set on a release rejected for having been published before
 	// its target aired (preAired): an automatic grab skips it, saying so; a
-	// person may still pick it.
+	// person may still pick it. early is set on one published after the
+	// earliest a streaming service puts its episode out but before most do
+	// (earlyStream): ranked after the ones from then on.
 	preAired bool
+	early    bool
 }
 
 // SearchResult is a manual search's answer.
@@ -581,7 +584,32 @@ func markRejected(c *Candidate, title store.Title, t store.Target, blocked map[s
 	}
 	if why := preAired(*c, title, t, days, stamps); why != "" {
 		c.Rejected, c.Reason, c.preAired = true, clip(why+" · "+c.Reason, 300), true
+		return
 	}
+	if why := earlyStream(*c, title, t, stamps); why != "" {
+		c.early, c.Reason = true, clip(why+" · "+c.Reason, 300)
+	}
+}
+
+// earlyStream says why a release of an episode streamed and dated to the day
+// alone is less sure than another, or "": it was published after the
+// earliest a streaming service of its country puts an episode out
+// (zones.Drop), but before most do (zones.UsualDrop) — some put it out then,
+// and so does a fake.
+func earlyStream(c Candidate, title store.Title, t store.Target, stamps bool) string {
+	if !stamps || c.PubDate == nil || t.Kind != "episode" || t.AirStamp != nil || title.ScheduleKind != store.ScheduleStreaming {
+		return ""
+	}
+	day := airDay(t, stamps)
+	if day == nil {
+		return ""
+	}
+	usual, loc, ok := zones.UsualDrop(*day, firstOf(title.ScheduleCountry, title.Countries...))
+	if !ok || !c.PubDate.Before(usual) {
+		return ""
+	}
+	return fmt.Sprintf("published before %s %s, when most streaming services there put the episode out: taken after the releases from then on",
+		usual.In(loc).Format("2006-01-02 15:04"), loc)
 }
 
 // extraOf says why a release is an extra of its title rather than the title,
@@ -914,10 +942,16 @@ func (s *Service) candidate(r release.Release, profile release.Profile, routes m
 	}
 }
 
+// sortCandidates ranks releases best first: the ones not rejected, of them
+// the sure before the less sure (early: published before most streaming
+// services put the episode out), each by its score.
 func sortCandidates(out []Candidate) {
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Rejected != out[j].Rejected {
 			return !out[i].Rejected
+		}
+		if out[i].early != out[j].early {
+			return !out[i].early
 		}
 		return out[i].Score > out[j].Score
 	})
