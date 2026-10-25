@@ -592,12 +592,12 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 }
 
 // grabbableNow reports whether a target is what the sweep may grab now
-// (store's sweepable): wanted, not reserved, monitored with its title, of
-// holdings acquire knows — learned after the target was added —, and open to
-// an automatic grab (autoOpen).
+// (store's sweepable): wanted, not reserved, monitored with its title, listed
+// by TMDB, of holdings acquire knows — learned after the target was added —,
+// and open to an automatic grab (autoOpen).
 func grabbableNow(title store.Title, t store.Target, now time.Time, delay time.Duration) bool {
 	switch {
-	case t.State != store.TargetWanted, t.ReservedBy != "", !t.Monitored, !title.Monitored, !title.HoldingsKnown():
+	case t.State != store.TargetWanted, t.ReservedBy != "", !t.Monitored, !title.Monitored, !title.HoldingsKnown(), t.TMDBGoneAt != nil:
 		return false
 	case t.AddedAt != nil && t.AddedAt.After(*title.HoldingsAt):
 		return false

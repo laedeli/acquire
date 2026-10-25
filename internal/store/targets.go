@@ -91,8 +91,11 @@ type Target struct {
 	WindowAt       *time.Time `json:"windowAt,omitempty"`
 	ReleasePending bool       `json:"releasePending,omitempty"`
 	ReleaseKind    string     `json:"releaseKind,omitempty"`
-	// EverHeld is set once the library has held it.
-	EverHeld bool `json:"everHeld,omitempty"`
+	// EverHeld is set once the library has held it. TMDBGoneAt is when a
+	// read of TMDB first did not list it: it is grabbed by nobody, and goes
+	// once a read a day or more later agrees, unless it holds anything.
+	EverHeld   bool       `json:"everHeld,omitempty"`
+	TMDBGoneAt *time.Time `json:"tmdbGoneAt,omitempty"`
 }
 
 // targetCols are the columns scanTarget reads, under the alias a.
@@ -100,7 +103,7 @@ const targetCols = `a.id, a.title_id, a.kind, a.season_number, a.episode_number,
 	a.detail, a.grab_id, a.reserved_by, a.grab_failures, a.retry_at, a.handed_over_at,
 	a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
 	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source,
-	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind, a.ever_held`
+	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind, a.ever_held, a.tmdb_gone_at`
 
 func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 	var t Target
@@ -108,7 +111,7 @@ func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 		&t.Detail, &t.GrabID, &t.ReservedBy, &t.GrabFailures, &t.RetryAt, &t.HandedOverAt,
 		&t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
 		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource,
-		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind, &t.EverHeld)
+		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind, &t.EverHeld, &t.TMDBGoneAt)
 	return t, err
 }
 
@@ -140,9 +143,10 @@ const knownSQL = `t.holdings_at IS NOT NULL AND (a.added_at IS NULL OR a.added_a
 
 // missingSQL is what "missing" means everywhere — the Missing view, the series
 // overview and the counts: aired, monitored (the target and its title), not
-// held, and of holdings acquire knows. A title whose holdings are unknown is
-// not missing anything that acquire can tell.
-const missingSQL = `a.state <> 'held' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + airedSQL
+// held, listed by TMDB (not gone from its last read), and of holdings acquire
+// knows. A title whose holdings are unknown is not missing anything that
+// acquire can tell.
+const missingSQL = `a.state <> 'held' AND a.monitored AND t.monitored AND a.tmdb_gone_at IS NULL AND ` + knownSQL + ` AND ` + airedSQL
 
 // UpsertTarget creates or updates a target by its coordinates. The unique index
 // is (title_id, season_number, episode_number) NULLS NOT DISTINCT, so a movie —
@@ -441,12 +445,12 @@ func autoOpenSQL(delay string) string {
 
 // sweepableSQL is what the backlog sweep may look at, and a source's newest
 // release be grabbed for: wanted (not failed, not in flight), monitored with
-// its title, of holdings acquire knows, open to an automatic grab
+// its title, listed by TMDB, of holdings acquire knows, open to an automatic grab
 // (autoOpenSQL, with the air delay in the parameter named), and not of a
 // title held for an admin's approval (heldForApprovalSQL).
 func sweepableSQL(delay string) string {
-	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + autoOpenSQL(delay) +
-		` AND NOT ` + heldForApprovalSQL
+	return `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND a.tmdb_gone_at IS NULL AND ` + knownSQL +
+		` AND ` + autoOpenSQL(delay) + ` AND NOT ` + heldForApprovalSQL
 }
 
 // recentSQL is the condition "this target aired in the last days days" (the

@@ -85,8 +85,10 @@ func SortTitle(name string) string {
 
 // ── reading TMDB ───────────────────────────────────────────────────────────
 
-// EpisodeRead is one episode as a read of TMDB lists it.
+// EpisodeRead is one episode as a read of TMDB lists it: TMDB's id of it
+// (0 when unknown), its numbers, its title and its air date.
 type EpisodeRead struct {
+	TMDBID          int64
 	Season, Episode int
 	Title           string
 	AirDate         *time.Time
@@ -121,8 +123,15 @@ type InventoryChange struct {
 	Added      int `json:"added"`      // targets new
 	AddedAired int `json:"addedAired"` // of them, aired already
 	Updated    int `json:"updated"`    // an air date or an episode's title changed
-	Removed    int `json:"removed"`    // TMDB no longer lists them: removed
-	Kept       int `json:"kept"`       // TMDB no longer lists them, kept: held, or a grab under way
+	// TMDB no longer lists them: Gone for the first time (kept, grabbed by
+	// nobody); Removed as a read a day or more later agrees; Kept as they
+	// hold something — the library's file, a grab, what grabs did.
+	Gone    int `json:"gone"`
+	Removed int `json:"removed"`
+	Kept    int `json:"kept"`
+	// Renumbered are episodes TMDB numbers anew whose holding went with
+	// them to their new number.
+	Renumbered int `json:"renumbered"`
 }
 
 // tmdbAliasSource is where the titles TMDB knows a title by come from.
@@ -133,12 +142,17 @@ const tmdbAliasSource = "tmdb"
 // resolved is never replaced), TMDB's status, the titles TMDB knows it by as
 // aliases, its seasons, and one target per episode of the seasons read — new
 // ones added, the air dates and titles of the others updated. Monitoring and
-// state are never touched: a read of TMDB is no decision of anyone's. An
-// episode TMDB no longer lists — in a season read, or of a season TMDB no
-// longer lists — is removed when nothing holds it: one the library holds, or
-// a grab is under way for, is kept. A title a request created takes TMDB's
-// name and year; one the import tracks keeps its own, and TMDB's name is one
-// of its aliases.
+// state are never touched: a read of TMDB is no decision of anyone's — but an
+// episode TMDB numbers anew (its TMDB id under other numbers) that the library
+// holds is held at its new number too, never wanted again.
+//
+// An episode TMDB no longer lists — in a season read, or of a season TMDB no
+// longer lists — is gone: marked so the first time, and grabbed by nobody; it
+// is removed once a read a day or more later agrees — an answer of TMDB's
+// that lists a season short is a fault, not the series — unless it holds
+// anything: the library's file, a grab under way, what its grabs did. A title
+// a request created takes TMDB's name and year; one the import tracks keeps
+// its own, and TMDB's name is one of its aliases.
 func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r SeriesRead) (InventoryChange, error) {
 	var ch InventoryChange
 	tx, err := s.pool.Begin(ctx)
@@ -195,6 +209,7 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 	seen := map[[2]int]bool{}
 	ids, names := []string{}, []string{}
 	es, en := []int32{}, []int32{}
+	tids := []int64{}
 	airs := []*time.Time{}
 	for _, e := range r.Episodes {
 		key := [2]int{e.Season, e.Episode}
@@ -206,14 +221,55 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		ids = append(ids, TargetID(titleID, &season, &ep))
 		es, en = append(es, int32(e.Season)), append(en, int32(e.Episode))
 		names, airs = append(names, clipText(strings.TrimSpace(e.Title))), append(airs, e.AirDate)
+		tids = append(tids, e.TMDBID)
+	}
+	// Where TMDB's ids of the episodes were before this read: an episode
+	// listed under other numbers now is one TMDB numbers anew.
+	before := map[int64]struct {
+		id    string
+		coord [2]int
+		held  bool
+	}{}
+	prev, err := tx.Query(ctx, `SELECT id, season_number, episode_number, state = 'held', tmdb_episode_id FROM acquisition_targets
+		 WHERE title_id = $1 AND kind = 'episode' AND tmdb_episode_id IS NOT NULL`, titleID)
+	if err != nil {
+		return ch, err
+	}
+	for prev.Next() {
+		var id string
+		var season, episode int
+		var held bool
+		var tid int64
+		if err := prev.Scan(&id, &season, &episode, &held, &tid); err != nil {
+			prev.Close()
+			return ch, err
+		}
+		before[tid] = struct {
+			id    string
+			coord [2]int
+			held  bool
+		}{id, [2]int{season, episode}, held}
+	}
+	prev.Close()
+	if err := prev.Err(); err != nil {
+		return ch, err
+	}
+	// Listed again: not gone; TMDB's id of each, as it says now.
+	if _, err := tx.Exec(ctx, `
+		UPDATE acquisition_targets a SET tmdb_gone_at = NULL, tmdb_episode_id = COALESCE(NULLIF(e.tid, 0), a.tmdb_episode_id)
+		  FROM unnest($2::int[], $3::int[], $4::bigint[]) AS e(season, episode, tid)
+		 WHERE a.title_id = $1 AND a.season_number = e.season AND a.episode_number = e.episode
+		   AND (a.tmdb_gone_at IS NOT NULL OR a.tmdb_episode_id IS DISTINCT FROM COALESCE(NULLIF(e.tid, 0), a.tmdb_episode_id))`,
+		titleID, es, en, tids); err != nil {
+		return ch, err
 	}
 	rows, err := tx.Query(ctx, `
 		WITH e AS (
-		  SELECT * FROM unnest($2::text[], $3::int[], $4::int[], $5::text[], $6::timestamptz[]) AS e(id, season, episode, name, air))
+		  SELECT * FROM unnest($2::text[], $3::int[], $4::int[], $5::text[], $6::timestamptz[], $9::bigint[]) AS e(id, season, episode, name, air, tid))
 		INSERT INTO acquisition_targets AS a (id, title_id, kind, season_number, episode_number, air_date,
-		                                      air_window_opens_at, episode_title, monitored, state, added_at)
+		                                      air_window_opens_at, episode_title, monitored, state, added_at, tmdb_episode_id)
 		SELECT e.id, $1, 'episode', e.season, e.episode, (e.air AT TIME ZONE 'UTC')::date,
-		       e.air + make_interval(hours => $7), e.name, $8 OR COALESCE(s.monitored, true), 'wanted', now()
+		       e.air + make_interval(hours => $7), e.name, $8 OR COALESCE(s.monitored, true), 'wanted', now(), NULLIF(e.tid, 0)
 		  FROM e LEFT JOIN seasons s ON s.title_id = $1 AND s.season_number = e.season
 		ON CONFLICT (title_id, season_number, episode_number) DO UPDATE
 		   SET air_date = EXCLUDED.air_date, air_window_opens_at = EXCLUDED.air_window_opens_at,
@@ -221,7 +277,7 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		 WHERE a.air_date IS DISTINCT FROM EXCLUDED.air_date OR a.episode_title <> EXCLUDED.episode_title
 		    OR a.air_window_opens_at IS DISTINCT FROM EXCLUDED.air_window_opens_at
 		RETURNING (a.xmax = 0), COALESCE(a.air_window_opens_at <= now(), false)`,
-		titleID, nonNil(ids), es, en, nonNil(names), airs, grace, monitorAll)
+		titleID, nonNil(ids), es, en, nonNil(names), airs, grace, monitorAll, tids)
 	if err != nil {
 		return ch, fmt.Errorf("targets of %s: %w", titleID, err)
 	}
@@ -246,6 +302,29 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		return ch, err
 	}
 
+	// An episode the library holds that TMDB numbers anew is held at its new
+	// number too: by the same file, never wanted again.
+	for i, tid := range tids {
+		was, ok := before[tid]
+		if tid == 0 || !ok || !was.held || was.coord == [2]int{int(es[i]), int(en[i])} {
+			continue
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE acquisition_targets n
+			   SET state = 'held', ever_held = true, held_item_id = o.held_item_id, held_via = o.held_via,
+			       held_playable = o.held_playable, held_release = o.held_release, held_quality = o.held_quality,
+			       held_score = o.held_score, held_score_profile = o.held_score_profile, held_source = o.held_source,
+			       held_scored_at = o.held_scored_at, held_at = o.held_at,
+			       detail = $3, updated_at = now()
+			  FROM acquisition_targets o
+			 WHERE n.id = $1 AND o.id = $2 AND o.state = 'held' AND n.state IN ('wanted','failed') AND n.reserved_by = ''`,
+			ids[i], was.id, clipText(fmt.Sprintf("in the library, as S%02dE%02d before TMDB numbered it anew", was.coord[0], was.coord[1])))
+		if err != nil {
+			return ch, err
+		}
+		ch.Renumbered += int(tag.RowsAffected())
+	}
+
 	// What TMDB no longer lists. Without a season listed at all nothing is
 	// taken for gone: an answer that short is a fault, not the series.
 	if len(seasons) > 0 {
@@ -257,13 +336,23 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		   AND ((a.season_number = ANY($2::int[]) AND NOT EXISTS (
 		          SELECT 1 FROM unnest($3::int[], $4::int[]) AS e(s, n) WHERE e.s = a.season_number AND e.n = a.episode_number))
 		        OR NOT (a.season_number = ANY($5::int[])))`
-		var all int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM acquisition_targets a WHERE `+gone,
-			titleID, read, es, en, seasons).Scan(&all); err != nil {
+		tag, err := tx.Exec(ctx, `UPDATE acquisition_targets a SET tmdb_gone_at = now(), updated_at = now()
+		 WHERE `+gone+` AND a.tmdb_gone_at IS NULL`, titleID, read, es, en, seasons)
+		if err != nil {
 			return ch, err
 		}
-		tag, err := tx.Exec(ctx, `DELETE FROM acquisition_targets a WHERE `+gone+`
-		   AND a.state IN ('wanted','failed') AND a.reserved_by = ''`, titleID, read, es, en, seasons)
+		ch.Gone = int(tag.RowsAffected())
+		var all int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM acquisition_targets a WHERE `+gone+`
+		   AND a.tmdb_gone_at <= now() - interval '1 day'`, titleID, read, es, en, seasons).Scan(&all); err != nil {
+			return ch, err
+		}
+		// Two reads a day apart agree, and it holds nothing: no file, no
+		// grab under way, nothing its grabs did.
+		tag, err = tx.Exec(ctx, `DELETE FROM acquisition_targets a WHERE `+gone+`
+		   AND a.tmdb_gone_at <= now() - interval '1 day'
+		   AND a.state IN ('wanted','failed') AND a.reserved_by = '' AND a.grab_id = '' AND NOT a.ever_held AND a.grab_failures = 0`,
+			titleID, read, es, en, seasons)
 		if err != nil {
 			return ch, err
 		}
@@ -597,19 +686,19 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, t.inventory_at, t.inventory_error, t.holdings_at IS NOT NULL,
-		       count(a.id) FILTER (WHERE a.monitored),
+		       count(a.id) FILTER (WHERE a.monitored AND (a.tmdb_gone_at IS NULL OR a.state = 'held')),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held'),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held' AND a.held_playable),
 		       count(*) FILTER (WHERE `+missingSQL+` AND a.state IN ('grabbed','downloaded','waiting')),
 		       count(*) FILTER (WHERE `+missingSQL+` AND a.state IN ('wanted','failed')),
 		       count(*) FILTER (WHERE `+missingSQL+` AND a.state = 'failed'),
-		       count(*) FILTER (WHERE a.monitored AND a.state <> 'held' AND NOT `+airedSQL+`),
+		       count(*) FILTER (WHERE a.monitored AND a.state <> 'held' AND a.tmdb_gone_at IS NULL AND NOT `+airedSQL+`),
 		       n.season_number, n.episode_number, n.episode_title, n.air_window_opens_at
 		  FROM titles t
 		  LEFT JOIN acquisition_targets a ON a.title_id = t.id
 		  LEFT JOIN LATERAL (
 		    SELECT x.season_number, x.episode_number, x.episode_title, x.air_window_opens_at FROM acquisition_targets x
-		     WHERE x.title_id = t.id AND x.kind = 'episode' AND x.monitored AND x.air_window_opens_at > now()
+		     WHERE x.title_id = t.id AND x.kind = 'episode' AND x.monitored AND x.tmdb_gone_at IS NULL AND x.air_window_opens_at > now()
 		     ORDER BY x.air_window_opens_at, x.season_number, x.episode_number LIMIT 1) n ON true
 		 WHERE t.id = ANY($1)
 		 GROUP BY t.id, t.kind, t.tmdb_status, t.status, t.inventory_at, t.inventory_error, t.holdings_at,

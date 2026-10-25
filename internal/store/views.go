@@ -37,11 +37,11 @@ func (s *Store) SeriesOverview(ctx context.Context) ([]SeriesRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.title, COALESCE(t.year,0),
 		       t.status, t.series_type, t.monitored,
-		       count(a.id),
+		       count(a.id) FILTER (WHERE a.tmdb_gone_at IS NULL OR a.state = 'held'),
 		       count(*) FILTER (WHERE a.state = 'held'),
 		       count(*) FILTER (WHERE `+missingSQL+`),
 		       count(*) FILTER (WHERE `+missingSQL+` AND a.state IN ('grabbed','downloaded','waiting')),
-		       count(*) FILTER (WHERE a.id IS NOT NULL AND NOT `+airedSQL+`),
+		       count(*) FILTER (WHERE a.id IS NOT NULL AND a.tmdb_gone_at IS NULL AND NOT `+airedSQL+`),
 		       t.holdings_at, t.holdings_error, `+followedSQL+`
 		  FROM titles t
 		  LEFT JOIN acquisition_targets a ON a.title_id = t.id

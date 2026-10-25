@@ -149,7 +149,7 @@ func TestSeriesAndOneSeason(t *testing.T) {
 			})
 		case "/tv/9900001/season/1":
 			_ = json.NewEncoder(w).Encode(map[string]any{"episodes": []map[string]any{
-				{"season_number": 1, "episode_number": 1, "name": "Arrival", "air_date": "2020-03-01"},
+				{"id": 99000101, "season_number": 1, "episode_number": 1, "name": "Arrival", "air_date": "2020-03-01"},
 				{"season_number": 1, "episode_number": 2, "name": "No date", "air_date": ""}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -169,7 +169,7 @@ func TestSeriesAndOneSeason(t *testing.T) {
 		t.Errorf("aliases = %q, countries = %v", got, s.Countries)
 	}
 	eps, err := c.Season(context.Background(), 9900001, 1)
-	if err != nil || len(eps) != 2 || eps[0].Title != "Arrival" || eps[1].AirDate != nil {
+	if err != nil || len(eps) != 2 || eps[0].Title != "Arrival" || eps[0].TMDBID != 99000101 || eps[1].AirDate != nil {
 		t.Errorf("season = %+v %v", eps, err)
 	}
 	if _, err := (&Client{}).Series(context.Background(), 1); err == nil {

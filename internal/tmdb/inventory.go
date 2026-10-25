@@ -13,6 +13,8 @@ import (
 
 // Episode is one derived WANT row: a coordinate and when it becomes searchable.
 type Episode struct {
+	// TMDBID is TMDB's id of the episode, which a renumbering keeps.
+	TMDBID        int64
 	SeasonNumber  int
 	EpisodeNumber int
 	Title         string
@@ -309,6 +311,7 @@ func (c *Client) Season(ctx context.Context, tmdbID int64, season int) ([]Episod
 	}
 	var raw struct {
 		Episodes []struct {
+			ID            int64  `json:"id"`
 			SeasonNumber  int    `json:"season_number"`
 			EpisodeNumber int    `json:"episode_number"`
 			Name          string `json:"name"`
@@ -320,7 +323,7 @@ func (c *Client) Season(ctx context.Context, tmdbID int64, season int) ([]Episod
 	}
 	out := make([]Episode, 0, len(raw.Episodes))
 	for _, e := range raw.Episodes {
-		ep := Episode{SeasonNumber: e.SeasonNumber, EpisodeNumber: e.EpisodeNumber, Title: e.Name}
+		ep := Episode{TMDBID: e.ID, SeasonNumber: e.SeasonNumber, EpisodeNumber: e.EpisodeNumber, Title: e.Name}
 		if e.AirDate != "" {
 			if d, err := time.Parse("2006-01-02", e.AirDate); err == nil {
 				ep.AirDate = &d

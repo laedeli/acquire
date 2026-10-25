@@ -19,8 +19,8 @@ import (
 // once; this reads them again — on the inventory-refresh schedule, and at
 // once for a title a request follows — so what TMDB announces later becomes
 // a target too: a new season, an episode added to one, a date set or moved,
-// an episode's title. An episode TMDB no longer lists goes unless the library
-// holds it or a grab is under way (store.ApplySeriesInventory).
+// an episode's title. An episode TMDB no longer lists goes once a read a day
+// or more later agrees, unless it holds anything (store.ApplySeriesInventory).
 //
 // A series that runs (TMDB says it returns, is in production or planned, or
 // an episode aired in the last 60 days or airs in the next 14) is read on
@@ -165,8 +165,10 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		if run.Titles > 0 || run.Failed > 0 || run.Error != "" {
 			s.notify()
 			line := fmt.Sprintf("acquire inventory-refresh: %d title(s) read (%d followed), %d TMDB call(s), %d failed; "+
-				"%d target(s) added (%d aired), %d updated, %d removed, %d kept as held or under way",
-				run.Titles, run.Followed, run.Calls, run.Failed, run.Added, run.AddedAired, run.Updated, run.Removed, run.Kept)
+				"%d target(s) added (%d aired), %d updated, %d renumbered; %d no longer listed (removed once a read a day later agrees), "+
+				"%d removed, %d kept as they hold something",
+				run.Titles, run.Followed, run.Calls, run.Failed, run.Added, run.AddedAired, run.Updated, run.Renumbered, run.Gone,
+				run.Removed, run.Kept)
 			if run.Left {
 				line += "; the run's budget is spent, what is still due is read on the next runs"
 			}
@@ -199,8 +201,10 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 		run.Added += ch.Added
 		run.AddedAired += ch.AddedAired
 		run.Updated += ch.Updated
+		run.Gone += ch.Gone
 		run.Removed += ch.Removed
 		run.Kept += ch.Kept
+		run.Renumbered += ch.Renumbered
 		if unknown {
 			reconcile = append(reconcile, t.ID)
 		}
@@ -315,7 +319,8 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 			return ch, false, tmdbError(fmt.Errorf("season %d: %w", n, err))
 		}
 		for _, e := range eps {
-			r.Episodes = append(r.Episodes, store.EpisodeRead{Season: e.SeasonNumber, Episode: e.EpisodeNumber, Title: e.Title, AirDate: e.AirDate})
+			r.Episodes = append(r.Episodes, store.EpisodeRead{TMDBID: e.TMDBID, Season: e.SeasonNumber, Episode: e.EpisodeNumber,
+				Title: e.Title, AirDate: e.AirDate})
 		}
 	}
 	ch, err = s.st.ApplySeriesInventory(ctx, t.ID, r)

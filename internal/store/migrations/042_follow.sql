@@ -50,8 +50,15 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin_country  text[] NOT NULL DEFA
 -- ever_held is set once the library has held the target: what it held once
 -- is not one of the new things any more, so a deletion, or a reconcile that
 -- missed it, does not have it grabbed again on its own.
+-- tmdb_episode_id is TMDB's id of the episode, which a renumbering keeps:
+-- the episode it holds is still held at its new number. tmdb_gone_at is when
+-- a read of TMDB first did not list the target: it goes once a read a day or
+-- more later agrees, unless it holds anything — the library's file, a grab,
+-- what its grabs did —, and it is grabbed by nobody meanwhile.
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS added_at        timestamptz;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS ever_held       boolean NOT NULL DEFAULT false;
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS tmdb_episode_id bigint;
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS tmdb_gone_at    timestamptz;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS episode_title   text NOT NULL DEFAULT '';
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_pending boolean NOT NULL DEFAULT false;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_kind    text NOT NULL DEFAULT '';

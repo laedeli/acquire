@@ -205,6 +205,40 @@ func TestFollowingATitle(t *testing.T) {
 // marked as added now, their air dates and titles kept up to date, an episode
 // TMDB no longer lists removed unless the library holds it or a grab is under
 // way — and nothing anyone decided (monitoring, state) touched.
+// An episode TMDB numbers anew — its TMDB id listed under other numbers —
+// that the library holds is held at its new number too, by the same file,
+// never wanted again; its old target keeps what it held, and goes nowhere.
+func TestAnEpisodeNumberedAnewKeepsItsHolding(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	ti := approvedFollow(t, s, Title{TMDBID: 77, Kind: "series", Title: "Example"})
+	read := SeriesRead{Status: "Returning Series", Running: true, Seasons: map[int]int{1: 2}, Read: []int{1},
+		Episodes: []EpisodeRead{{TMDBID: 701, Season: 1, Episode: 1, AirDate: day(-20)}, {TMDBID: 702, Season: 1, Episode: 2, AirDate: day(-13)}}}
+	if _, err := s.ApplySeriesInventory(ctx, ti.ID, read); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HoldTarget(ctx, Hold{TargetID: ti.ID + ":s01e002", ItemID: "item-702", Playable: true}); err != nil {
+		t.Fatal(err)
+	}
+	// TMDB puts a new episode first: the held one is E03 now.
+	read.Seasons = map[int]int{1: 3}
+	read.Episodes = []EpisodeRead{{TMDBID: 700, Season: 1, Episode: 1, AirDate: day(-27)},
+		{TMDBID: 701, Season: 1, Episode: 2, AirDate: day(-20)}, {TMDBID: 702, Season: 1, Episode: 3, AirDate: day(-13)}}
+	ch, err := s.ApplySeriesInventory(ctx, ti.ID, read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := targetsByCoord(t, s, ti.ID)
+	three := got[ti.ID+":s01e003"]
+	if ch.Renumbered != 1 || three.State != TargetHeld || three.HeldItemID != "item-702" || !three.HeldPlayable || !three.EverHeld ||
+		!strings.Contains(three.Detail, "as S01E02 before TMDB numbered it anew") {
+		t.Errorf("the held episode at its new number: %+v (%+v)", three, ch)
+	}
+	if two := got[ti.ID+":s01e002"]; two.State != TargetHeld || two.HeldItemID != "item-702" {
+		t.Errorf("its old target: %+v", two)
+	}
+}
+
 func TestASeriesReadOfTMDB(t *testing.T) {
 	s := migrated(t)
 	ctx := context.Background()
@@ -278,10 +312,28 @@ func TestASeriesReadOfTMDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// S02 is no longer listed: S02E01 is under way (kept), S02E02 wanted
-	// (removed); of S01, E02 is wanted and unmonitored (removed), E03 held (kept).
-	if ch != (InventoryChange{Added: 2, AddedAired: 1, Removed: 2, Kept: 2}) {
+	// S02 is no longer listed, nor S01E02 and E03: gone, and kept — an answer
+	// that lists a season short may be TMDB's fault — and grabbed by nobody.
+	if ch != (InventoryChange{Added: 2, AddedAired: 1, Gone: 4}) {
 		t.Errorf("second read: %+v", ch)
+	}
+	if n := len(targetsByCoord(t, s, id)); n != 7 {
+		t.Errorf("after a read that lists four short: %d targets, want all 7", n)
+	}
+	if due, _ := s.DueTargets(ctx, 10); len(due) != 0 {
+		t.Errorf("due: %+v", due)
+	}
+	// A read within the day agrees: nothing goes yet. A day later it does:
+	// S02E01 is under way (kept), S02E02 wanted (removed); of S01, E02 is
+	// wanted and unmonitored (removed), E03 held (kept).
+	if ch, _ := s.ApplySeriesInventory(ctx, id, second); ch.Removed != 0 || ch.Gone != 0 {
+		t.Errorf("a read within the day: %+v", ch)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE acquisition_targets SET tmdb_gone_at = now() - interval '25 hours' WHERE tmdb_gone_at IS NOT NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if ch, _ = s.ApplySeriesInventory(ctx, id, second); ch.Removed != 2 || ch.Kept != 2 || ch.Gone != 0 {
+		t.Errorf("a read a day later: %+v", ch)
 	}
 	got = targetsByCoord(t, s, id)
 	for _, gone := range []string{":s01e002", ":s02e002"} {

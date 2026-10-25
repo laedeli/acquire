@@ -726,7 +726,7 @@ func (s *Service) missingEpisodes(ctx context.Context, titleID string, pol *Sear
 	}
 	now := time.Now()
 	for _, x := range all {
-		if x.SeasonNumber == nil || x.EpisodeNumber == nil || !x.Monitored || !aired(x, now) ||
+		if x.SeasonNumber == nil || x.EpisodeNumber == nil || !x.Monitored || !aired(x, now) || x.TMDBGoneAt != nil ||
 			!store.Grabbable(x.State) || x.ReservedBy != "" || leftForAHuman(x) ||
 			(x.AddedAt != nil && x.AddedAt.After(*title.HoldingsAt)) || (pol != nil && !pol.Grabs(title, x, now)) {
 			continue

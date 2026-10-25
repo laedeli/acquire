@@ -522,12 +522,18 @@ func TestTheRefreshAddsWhatTMDBAnnounces(t *testing.T) {
 	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:9001'`)
 	before := len(r.tmdb.called())
 	run := r.settle(t, true)
-	if run.Titles != 1 || run.Added != 2 || run.Removed != 1 || run.Updated != 1 {
+	if run.Titles != 1 || run.Added != 2 || run.Gone != 1 || run.Removed != 0 || run.Updated != 1 {
 		t.Errorf("the refresh: %+v", run)
 	}
 	// The answer, the last season and the season that changed: three calls.
 	if calls := r.tmdb.called()[before:]; len(calls) != 3 {
 		t.Errorf("calls = %v", calls)
+	}
+	// E13 goes once a read a day or more later agrees.
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours' WHERE id = 'series:9001'`)
+	sqlExec(t, `UPDATE acquisition_targets SET tmdb_gone_at = now() - interval '25 hours' WHERE tmdb_gone_at IS NOT NULL`)
+	if run := r.settle(t, true); run.Removed != 1 {
+		t.Errorf("a day later: %+v", run)
 	}
 	targets, _ := r.svc.st.TitleTargets(ctx, "series:9001")
 	if len(targets) != 14 {
