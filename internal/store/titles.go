@@ -56,10 +56,15 @@ type Title struct {
 	Approved     bool
 	// ScheduleID is the series' show id at the schedule source (0: not
 	// looked up, or not known there); ScheduleAt when its air times were
-	// last read, and ScheduleError why the last read failed.
-	ScheduleID    int64
-	ScheduleAt    *time.Time
-	ScheduleError string
+	// last read — nil while never —, and ScheduleError why the last read
+	// failed. ScheduleKind is how the source says it airs (ScheduleBroadcast,
+	// ScheduleStreaming; "" when it says neither), ScheduleCountry the
+	// country of its network or streaming service.
+	ScheduleID      int64
+	ScheduleAt      *time.Time
+	ScheduleError   string
+	ScheduleKind    string
+	ScheduleCountry string
 	// Genres are TMDB's genre ids of a series, TMDBType its kind of show
 	// (Scripted, News, Talk Show …); LongSeason is set when one of its
 	// seasons holds more than longSeason episodes.
@@ -142,7 +147,7 @@ const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.
 	t.holdings_at, t.holdings_error, t.catalog_id,
 	t.followed_at, t.unfollowed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error, t.origin_country,
 	t.pre_monitored, ` + approvedSQL + `, COALESCE(t.schedule_id, 0), t.schedule_at, t.schedule_error,
-	t.genres, t.tmdb_type, ` + longSeasonSQL
+	t.schedule_kind, t.schedule_country, t.genres, t.tmdb_type, ` + longSeasonSQL
 
 func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
@@ -151,7 +156,7 @@ func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
 		&t.FollowedAt, &t.UnfollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError, &t.Countries,
 		&t.PreMonitored, &t.Approved, &t.ScheduleID, &t.ScheduleAt, &t.ScheduleError,
-		&t.Genres, &t.TMDBType, &t.LongSeason}, extra...)...)
+		&t.ScheduleKind, &t.ScheduleCountry, &t.Genres, &t.TMDBType, &t.LongSeason}, extra...)...)
 	return t, err
 }
 

@@ -1,7 +1,9 @@
 // Package tvmaze reads exact air times from TVmaze's public API, which needs
-// no key: a show is looked up by its TVDB id or its IMDb id, then its episodes
-// are read, each with its airstamp — the moment it airs, with its offset.
-// Only those ids leave acquire, never anything of its users or its library.
+// no key: a show is looked up by its TVDB id or its IMDb id, then its record
+// is read with its episodes in one call — how it airs (on a broadcaster's
+// network, or a streaming service's web channel), its runtime, and each
+// episode's airstamp, the moment it airs, with its offset, and runtime. Only
+// those ids leave acquire, never anything of its users or its library.
 //
 // TVmaze allows at least 20 calls every 10 seconds from one address; the
 // client spaces its calls under that, and waits out a 429 before it asks
@@ -80,15 +82,38 @@ func New(base, userAgent string) *Client {
 func (c *Client) Enabled() bool { return c != nil && strings.TrimSpace(c.BaseURL) != "" }
 
 // Episode is one episode as TVmaze lists it: its id, its numbers, its local
-// air date, and when it airs — only when TVmaze knows the hour, not just the
-// day.
+// air date, when it airs — only when TVmaze knows the hour, not just the day
+// —, and how long it runs in minutes: its own runtime, else the show's (0
+// when TVmaze gives neither).
 type Episode struct {
 	ID       int64
 	Season   int
 	Number   int
 	AirDate  *time.Time
 	AirStamp *time.Time
+	Runtime  int
 }
+
+// Show is a show as TVmaze's record of it says: its name; how it airs — on a
+// broadcaster's network (Broadcast) or a streaming service's web channel
+// (Streaming), "" when it names neither —, and the country of that network or
+// service (ISO 3166-1; "" when it names none, as of a service everywhere);
+// its runtime in minutes (0 when unknown); and its episodes, specials — which
+// TVmaze numbers in no season — left out.
+type Show struct {
+	ID       int64
+	Name     string
+	Kind     string
+	Country  string
+	Runtime  int
+	Episodes []Episode
+}
+
+// How a show airs (Show.Kind).
+const (
+	Broadcast = "broadcast"
+	Streaming = "streaming"
+)
 
 // LookupShow finds a show's TVmaze id by its TVDB id, else by its IMDb id.
 // ErrNotFound when TVmaze knows it by neither.
@@ -144,39 +169,80 @@ func (c *Client) lookup(ctx context.Context, q url.Values) (int64, error) {
 	return 0, &HTTPError{Status: resp.StatusCode, Path: "/lookup/shows"}
 }
 
-// Episodes reads a show's episodes. Specials, which TVmaze numbers in no
-// season, are left out.
-func (c *Client) Episodes(ctx context.Context, show int64) ([]Episode, error) {
-	p := "/shows/" + strconv.FormatInt(show, 10) + "/episodes"
-	resp, err := c.do(ctx, p, nil, true)
+// Show reads a show's record with its episodes, in one call
+// (/shows/{id}?embed=episodes).
+func (c *Client) Show(ctx context.Context, id int64) (Show, error) {
+	p := "/shows/" + strconv.FormatInt(id, 10)
+	resp, err := c.do(ctx, p, url.Values{"embed": {"episodes"}}, true)
 	if err != nil {
-		return nil, err
+		return Show{}, err
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return nil, ErrNotFound
+		return Show{}, ErrNotFound
 	default:
-		return nil, &HTTPError{Status: resp.StatusCode, Path: p}
+		return Show{}, &HTTPError{Status: resp.StatusCode, Path: p}
 	}
-	var raw []struct {
-		ID       int64  `json:"id"`
-		Season   int    `json:"season"`
-		Number   *int   `json:"number"`
-		AirDate  string `json:"airdate"`
-		AirTime  string `json:"airtime"`
-		AirStamp string `json:"airstamp"`
+	type channel struct {
+		Country *struct {
+			Code string `json:"code"`
+		} `json:"country"`
+	}
+	var raw struct {
+		ID             int64    `json:"id"`
+		Name           string   `json:"name"`
+		Runtime        *int     `json:"runtime"`
+		AverageRuntime *int     `json:"averageRuntime"`
+		Network        *channel `json:"network"`
+		WebChannel     *channel `json:"webChannel"`
+		Embedded       struct {
+			Episodes []struct {
+				ID       int64  `json:"id"`
+				Season   int    `json:"season"`
+				Number   *int   `json:"number"`
+				AirDate  string `json:"airdate"`
+				AirTime  string `json:"airtime"`
+				AirStamp string `json:"airstamp"`
+				Runtime  *int   `json:"runtime"`
+			} `json:"episodes"`
+		} `json:"_embedded"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("TVmaze %s: decode: %w", p, err)
+		return Show{}, fmt.Errorf("TVmaze %s: decode: %w", p, err)
 	}
-	out := make([]Episode, 0, len(raw))
-	for _, e := range raw {
+	show := Show{ID: raw.ID, Name: strings.TrimSpace(raw.Name)}
+	if show.ID == 0 {
+		show.ID = id
+	}
+	country := func(ch *channel) string {
+		if ch.Country == nil {
+			return ""
+		}
+		return strings.ToUpper(strings.TrimSpace(ch.Country.Code))
+	}
+	switch {
+	case raw.Network != nil:
+		show.Kind, show.Country = Broadcast, country(raw.Network)
+	case raw.WebChannel != nil:
+		show.Kind, show.Country = Streaming, country(raw.WebChannel)
+	}
+	switch {
+	case raw.Runtime != nil && *raw.Runtime > 0:
+		show.Runtime = *raw.Runtime
+	case raw.AverageRuntime != nil && *raw.AverageRuntime > 0:
+		show.Runtime = *raw.AverageRuntime
+	}
+	show.Episodes = make([]Episode, 0, len(raw.Embedded.Episodes))
+	for _, e := range raw.Embedded.Episodes {
 		if e.Number == nil || *e.Number < 1 || e.Season < 1 {
 			continue
 		}
-		ep := Episode{ID: e.ID, Season: e.Season, Number: *e.Number}
+		ep := Episode{ID: e.ID, Season: e.Season, Number: *e.Number, Runtime: show.Runtime}
+		if e.Runtime != nil && *e.Runtime > 0 {
+			ep.Runtime = *e.Runtime
+		}
 		if d, err := time.Parse("2006-01-02", strings.TrimSpace(e.AirDate)); err == nil {
 			ep.AirDate = &d
 		}
@@ -187,9 +253,9 @@ func (c *Client) Episodes(ctx context.Context, show int64) ([]Episode, error) {
 				ep.AirStamp = &at
 			}
 		}
-		out = append(out, ep)
+		show.Episodes = append(show.Episodes, ep)
 	}
-	return out, nil
+	return show, nil
 }
 
 // do sends one GET, spaced from the last (Every), and waits out a 429 — up

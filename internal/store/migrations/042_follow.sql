@@ -41,12 +41,18 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS origin_country  text[] NOT NULL DEFA
 
 -- titles: the schedule source's word on a series (search.airTimes, TVmaze):
 -- schedule_id is the show's id there (NULL: not looked up, or not known
--- there), schedule_at when its air times were last read, schedule_error why
--- the last read failed — a show the source does not know is looked up again
--- after a week.
-ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_id    bigint;
-ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_at    timestamptz;
-ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_error text NOT NULL DEFAULT '';
+-- there), schedule_at when its air times were last read (NULL: not yet — an
+-- automatic grab takes nothing of the series until they are), schedule_error
+-- why the last read failed — a show the source does not know, or knows under
+-- another name, is looked up again after a week. schedule_kind is how the
+-- source says it airs: broadcast (on a network) or streaming (on a web
+-- channel), '' when it says neither; schedule_country the country of that
+-- network or service (ISO 3166-1, '' when it names none).
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_id      bigint;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_at      timestamptz;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_error   text NOT NULL DEFAULT '';
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_kind    text NOT NULL DEFAULT '';
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_country text NOT NULL DEFAULT '';
 
 -- titles: genres are TMDB's genre ids of a series (16: animation) and
 -- tmdb_type its kind of show (Scripted, News, Talk Show …): an animation from
@@ -100,12 +106,16 @@ ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_pending boolean
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_kind    text NOT NULL DEFAULT '';
 
 -- acquisition_targets: air_stamp is the moment an episode airs, as the
--- schedule source says it (NULL: no hour known) — an automatic grab takes
--- nothing published more than 30 minutes before it, and waits
--- search.airDelayAfterAirstampMinutes after it. release_country is where a
--- requested movie's release to watch at home comes out (ISO 3166-1), whose
--- midnight the day it comes out begins at.
+-- schedule source says it (NULL: no hour known), and air_runtime how long it
+-- runs in minutes (0: not known). Of a broadcast, an automatic grab takes
+-- nothing published before it ends — air_stamp and its runtime, an hour when
+-- not known —, and waits search.airDelayAfterAirstampMinutes after that; of a
+-- streamed episode, nothing published more than 30 minutes before air_stamp,
+-- and it waits the same after it. release_country is where a requested
+-- movie's release to watch at home comes out (ISO 3166-1), whose midnight the
+-- day it comes out begins at.
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS air_stamp       timestamptz;
+ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS air_runtime     int  NOT NULL DEFAULT 0;
 ALTER TABLE acquisition_targets ADD COLUMN IF NOT EXISTS release_country text NOT NULL DEFAULT '';
 
 -- acquisition_targets: held_as is the number the catalog knows a held file

@@ -448,8 +448,14 @@ func requestState(p store.Progress, now time.Time, pol SearchSettings) (status, 
 	if !p.Running {
 		detail += "; TMDB says it has ended"
 	}
-	if p.HandsOff {
+	switch {
+	case p.HandsOff:
 		detail += "; its releases name no season and episode (an anime, a daily show): grabbed from the missing tab only"
+	case pol.exactAirTimes() && p.ScheduleAt == nil && p.Missing+p.Unaired > 0:
+		detail += "; nothing of it is grabbed on its own until TVmaze's air times of it are read"
+		if p.ScheduleErr != "" {
+			detail += " (" + p.ScheduleErr + ")"
+		}
 	}
 	return "following", clip(detail, 300)
 }
@@ -510,7 +516,7 @@ func searchedFrom(t *store.Target, pol SearchSettings) *time.Time {
 	if t.WindowAt == nil {
 		return nil
 	}
-	at := openAt(*t, pol)
+	at := openAt(store.Title{Kind: "movie"}, *t, pol)
 	return &at
 }
 

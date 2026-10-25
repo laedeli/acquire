@@ -2,7 +2,9 @@
 // of the country it comes from, as TMDB names it (origin_country). TMDB dates
 // an episode by its day, as broadcast where it comes from; the day begins at
 // midnight there, not at midnight UTC — a broadcast in Tokyo on the 23rd may
-// be out before the 23rd begins in UTC.
+// be out before the 23rd begins in UTC. It also tells the hour a streaming
+// service of a country puts an episode out on the day it is dated, where that
+// hour is the rule (Drop).
 package zones
 
 import (
@@ -73,9 +75,53 @@ func Of(countries ...string) *time.Location {
 	return time.UTC
 }
 
-// Midnight is 00:00 of day's date in loc: day is a date as TMDB writes one,
-// held at 00:00 UTC.
+// Midnight is when day's date begins in loc: 00:00 there — day is a date as
+// TMDB writes one, held at 00:00 UTC. Where the clocks jump past midnight
+// (Santiago and Cairo, the night their summer time begins), the day begins
+// when they jump: the first moment it is that day there.
 func Midnight(day time.Time, loc *time.Location) time.Time {
 	d := day.UTC()
-	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
+	m := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
+	if sameDate(m.In(loc), d) {
+		return m
+	}
+	// m is the day before there: the first moment of the day lies within
+	// the next hours, found to the second.
+	lo, hi := m, m.Add(3*time.Hour)
+	if !sameDate(hi.In(loc), d) {
+		return m
+	}
+	for hi.Sub(lo) > time.Second {
+		mid := lo.Add(hi.Sub(lo) / 2)
+		if sameDate(mid.In(loc), d) {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return hi.Truncate(time.Second)
+}
+
+func sameDate(t, d time.Time) bool {
+	y, m, dd := t.Date()
+	return y == d.Year() && m == d.Month() && dd == d.Day()
+}
+
+// dropHour is the hour a streaming service of a country puts an episode out
+// on the day it is dated, as a rule, in the country's zone (byCountry): in
+// the United States 03:00 in New York — midnight on the Pacific coast. A
+// country it does not name has no such rule acquire counts on: an episode's
+// day there begins at midnight.
+var dropHour = map[string]int{"US": 3}
+
+// Drop is when a streaming service of country puts out an episode dated day,
+// as a rule (dropHour), and the zone that hour is counted in; ok is false for
+// a country without one.
+func Drop(day time.Time, country string) (at time.Time, loc *time.Location, ok bool) {
+	code := strings.ToUpper(strings.TrimSpace(country))
+	h, known := dropHour[code]
+	if loc = Country(code); !known || loc == nil {
+		return time.Time{}, nil, false
+	}
+	return Midnight(day, loc).Add(time.Duration(h) * time.Hour), loc, true
 }

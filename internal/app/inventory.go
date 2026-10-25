@@ -82,10 +82,14 @@ type InventoryRun struct {
 	// read on the next runs.
 	Left  bool   `json:"left"`
 	Error string `json:"error,omitempty"`
-	// Scheduled are the series whose air times were read; ScheduleError why
-	// the schedule source stopped being asked this run.
+	// Scheduled are the series whose air times were read, in ScheduleCalls
+	// calls to the schedule source; ScheduleError is why it stopped being
+	// asked this run, ScheduleLeft set when the run's calls to it were spent
+	// with air times still due.
 	Scheduled     int    `json:"scheduled"`
+	ScheduleCalls int    `json:"scheduleCalls"`
 	ScheduleError string `json:"scheduleError,omitempty"`
+	ScheduleLeft  bool   `json:"scheduleLeft,omitempty"`
 }
 
 // RequestInventory asks the worker to read TMDB: for the titles named first
@@ -421,45 +425,66 @@ func (s *Service) readTitle(ctx context.Context, t store.Title, full bool, spend
 }
 
 // readSchedule reads a series' air times at the schedule source when they
-// are due (scheduleDue): its show id, looked up once by the series' TVDB id
-// or IMDb id — nothing else is sent —, then its episodes, the moment each
-// airs kept on its target. It reports false when the source does not answer
-// as it should: no other series would fare better this run. Nothing fails of
-// the series either way; an episode without an air time is told by its air
-// date.
+// are due (scheduleDue), as readScheduleOf does.
 func (s *Service) readSchedule(ctx context.Context, titleID string, run *InventoryRun) bool {
 	t, err := s.st.TitleByID(ctx, titleID)
-	if err != nil || (t.TVDBID == 0 && t.IMDBID == "") || !scheduleDue(t, time.Now()) {
+	if err != nil || !scheduleDue(t, time.Now()) {
+		return true
+	}
+	return s.readScheduleOf(ctx, t, run)
+}
+
+// readScheduleOf reads a series' air times at the schedule source: its show
+// id, looked up once by the series' TVDB id or IMDb id — nothing else is
+// sent —, then the show's record with its episodes in one call — how it
+// airs, broadcast or streamed, and the moment each episode airs and how long
+// it runs, kept on its target. It reports false when the source does not
+// answer as it should: no other series would fare better this run. Nothing
+// fails of the series either way; an episode without an air time is told by
+// its air date.
+func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *InventoryRun) bool {
+	if t.TVDBID == 0 && t.IMDBID == "" {
+		_ = s.st.ScheduleFailed(ctx, t.ID, "no TVDB or IMDb id to look it up at TVmaze by; looked up again in a week", store.ScheduleUnknown)
 		return true
 	}
 	fail := func(err error, what string) bool {
 		switch {
 		case errors.Is(err, tvmaze.ErrNotFound):
-			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze does not know "+what+"; looked up again in a week", true)
+			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze does not know "+what+"; looked up again in a week", store.ScheduleUnknown)
 			return true
 		case tvmaze.Unavailable(err):
 			run.ScheduleError = err.Error()
-			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze did not answer: "+err.Error(), false)
+			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze did not answer: "+err.Error(), store.ScheduleDown)
 			return false
 		}
-		_ = s.st.ScheduleFailed(ctx, t.ID, err.Error(), false)
+		_ = s.st.ScheduleFailed(ctx, t.ID, err.Error(), store.ScheduleUnreadable)
 		return true
 	}
-	show := t.ScheduleID
-	if show == 0 {
-		if show, err = s.sched.LookupShow(ctx, t.TVDBID, t.IMDBID); err != nil {
+	id := t.ScheduleID
+	if id == 0 {
+		run.ScheduleCalls++
+		var err error
+		if id, err = s.sched.LookupShow(ctx, t.TVDBID, t.IMDBID); err != nil {
 			return fail(err, "it by its TVDB or IMDb id")
 		}
 	}
-	eps, err := s.sched.Episodes(ctx, show)
+	run.ScheduleCalls++
+	show, err := s.sched.Show(ctx, id)
 	if err != nil {
-		return fail(err, fmt.Sprintf("its show %d any more", show))
+		return fail(err, fmt.Sprintf("its show %d any more", id))
 	}
-	listed := make([]store.ScheduledEpisode, 0, len(eps))
-	for _, e := range eps {
-		listed = append(listed, store.ScheduledEpisode{Season: e.Season, Episode: e.Number, AirDate: e.AirDate, AirStamp: e.AirStamp})
+	rec := store.ScheduledShow{ID: id, Country: show.Country}
+	switch show.Kind {
+	case tvmaze.Broadcast:
+		rec.Kind = store.ScheduleBroadcast
+	case tvmaze.Streaming:
+		rec.Kind = store.ScheduleStreaming
 	}
-	if _, err := s.st.ApplySchedule(ctx, t.ID, show, listed); err != nil {
+	for _, e := range show.Episodes {
+		rec.Episodes = append(rec.Episodes, store.ScheduledEpisode{Season: e.Season, Episode: e.Number, AirDate: e.AirDate,
+			AirStamp: e.AirStamp, Runtime: e.Runtime})
+	}
+	if _, err := s.st.ApplySchedule(ctx, t.ID, rec); err != nil {
 		log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
 		return true
 	}

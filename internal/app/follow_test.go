@@ -1103,10 +1103,26 @@ func TestRequestState(t *testing.T) {
 		{"a movie held", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetHeld}}, "packaging", "in the library; being packaged"},
 		{"a movie that plays", store.Progress{Kind: "movie", Movie: &store.Target{State: store.TargetHeld, HeldPlayable: true}}, "fulfilled", "in the library"},
 	} {
-		status, detail := requestState(tc.p, now, SearchSettings{AirDelayHours: 30})
+		status, detail := requestState(tc.p, now, SearchSettings{AirDelayHours: 30, AirTimes: AirTimesOff})
 		if status != tc.status || detail != tc.detail {
 			t.Errorf("%s:\n  got  %s %q\n  want %s %q", tc.name, status, detail, tc.status, tc.detail)
 		}
+	}
+	// With TVmaze's air times, a series whose air times were never read says
+	// that nothing of it is grabbed on its own until they are.
+	running := store.Progress{Kind: "series", InventoryAt: &read, Running: true, HoldingsKnown: true, Episodes: 2, Missing: 1, Unaired: 1}
+	withTimes := SearchSettings{AirDelayHours: 30, AirTimes: AirTimesTVmaze}
+	if _, detail := requestState(running, now, withTimes); detail !=
+		"2 episodes: 0 in the library, 1 missing, 1 not aired yet; nothing of it is grabbed on its own until TVmaze's air times of it are read" {
+		t.Errorf("air times never read: %q", detail)
+	}
+	running.ScheduleErr = "TVmaze did not answer: HTTP 503"
+	if _, detail := requestState(running, now, withTimes); !strings.HasSuffix(detail, "until TVmaze's air times of it are read (TVmaze did not answer: HTTP 503)") {
+		t.Errorf("air times never read, TVmaze down: %q", detail)
+	}
+	running.ScheduleAt = &read
+	if _, detail := requestState(running, now, withTimes); detail != "2 episodes: 0 in the library, 1 missing, 1 not aired yet" {
+		t.Errorf("air times read: %q", detail)
 	}
 }
 

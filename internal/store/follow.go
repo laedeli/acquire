@@ -345,6 +345,9 @@ func (s *Store) ApplySeriesInventory(ctx context.Context, titleID string, r Seri
 		       air_stamp = CASE WHEN EXCLUDED.air_date IS NULL
 		                          OR abs(EXCLUDED.air_date - (a.air_stamp AT TIME ZONE 'UTC')::date) > 1 THEN NULL
 		                        ELSE a.air_stamp END,
+		       air_runtime = CASE WHEN EXCLUDED.air_date IS NULL
+		                            OR abs(EXCLUDED.air_date - (a.air_stamp AT TIME ZONE 'UTC')::date) > 1 THEN 0
+		                          ELSE a.air_runtime END,
 		       updated_at = now()
 		 WHERE a.air_date IS DISTINCT FROM EXCLUDED.air_date OR a.episode_title <> EXCLUDED.episode_title
 		    OR a.air_window_opens_at IS DISTINCT FROM EXCLUDED.air_window_opens_at
@@ -916,7 +919,11 @@ type Progress struct {
 	InventoryErr string     `json:"inventoryError,omitempty"`
 	// InventoryRetryAt is when a title TMDB did not know is read again.
 	InventoryRetryAt *time.Time `json:"inventoryRetryAt,omitempty"`
-	HoldingsKnown    bool       `json:"holdingsKnown"`
+	// ScheduleAt is when a series' air times were last read at the schedule
+	// source, nil while never; ScheduleErr why the last read failed.
+	ScheduleAt    *time.Time `json:"scheduleAt,omitempty"`
+	ScheduleErr   string     `json:"scheduleError,omitempty"`
+	HoldingsKnown bool       `json:"holdingsKnown"`
 	// Of a series' monitored episodes: all of them, the ones the library
 	// holds (and plays), on their way, missing, whose last grab failed, and
 	// not aired yet.
@@ -951,7 +958,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, `+handsOffSQL+`, t.origin = 'request', t.tmdb_seasons,
 		       EXISTS (SELECT 1 FROM seasons s WHERE s.title_id = t.id),
-		       t.inventory_at, t.inventory_error, t.inventory_retry_at, t.holdings_at IS NOT NULL,
+		       t.inventory_at, t.inventory_error, t.inventory_retry_at, t.schedule_at, t.schedule_error, t.holdings_at IS NOT NULL,
 		       count(a.id) FILTER (WHERE a.monitored AND (a.tmdb_gone_at IS NULL OR a.state = 'held')),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held'),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held' AND a.held_playable),
@@ -967,7 +974,8 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		     WHERE x.title_id = t.id AND x.kind = 'episode' AND x.monitored AND x.tmdb_gone_at IS NULL AND x.air_window_opens_at > now()
 		     ORDER BY x.air_window_opens_at, x.season_number, x.episode_number LIMIT 1) n ON true
 		 WHERE t.id = ANY($1)
-		 GROUP BY t.id, t.kind, t.tmdb_status, t.status, t.inventory_at, t.inventory_error, t.inventory_retry_at, t.holdings_at,
+		 GROUP BY t.id, t.kind, t.tmdb_status, t.status, t.inventory_at, t.inventory_error, t.inventory_retry_at, t.schedule_at, t.schedule_error,
+		          t.holdings_at,
 		          n.season_number, n.episode_number, n.episode_title, n.air_window_opens_at`, nonNil(ids))
 	if err != nil {
 		return nil, err
@@ -979,7 +987,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		var title *string
 		var at *time.Time
 		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.HandsOff, &p.FromRequest, &p.Seasons, &p.EpisodesRead,
-			&p.InventoryAt, &p.InventoryErr, &p.InventoryRetryAt, &p.HoldingsKnown,
+			&p.InventoryAt, &p.InventoryErr, &p.InventoryRetryAt, &p.ScheduleAt, &p.ScheduleErr, &p.HoldingsKnown,
 			&p.Episodes, &p.Held, &p.Playable, &p.OnTheWay, &p.Missing, &p.Failed, &p.Unaired,
 			&season, &episode, &title, &at); err != nil {
 			rows.Close()

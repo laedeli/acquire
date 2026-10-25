@@ -52,8 +52,13 @@ type SearchSettings struct {
 	// air date alone.
 	AirTimes string `json:"airTimes"`
 	// AirDelayAfterAirstampMinutes is how long an automatic grab waits after
-	// the moment an episode airs, when it is known; 0 grabs from then on.
+	// an episode's broadcast ends, or after it streams, when its air time is
+	// known; 0 grabs from then on.
 	AirDelayAfterAirstampMinutes int `json:"airDelayAfterAirstampMinutes"`
+
+	// noSchedule is set on the policy in force when acquire has no schedule
+	// source to ask: air times are off whatever AirTimes says.
+	noSchedule bool
 }
 
 // Where exact air times come from (SearchSettings.AirTimes).
@@ -70,16 +75,17 @@ const (
 	MaxAirDelayAfterAirstampMinutes     = 1440
 )
 
-// airSlack is how long before the moment an episode airs a release of it may
-// be published: a schedule a little off, a broadcast a little early.
+// airSlack is how long before the moment a streamed episode streams a
+// release of it may be published: a schedule a little off, a service a
+// little early.
 const airSlack = 30 * time.Minute
 
-// exactAirTimes reports whether the moments the schedule source gives are
-// read and used.
-func (p SearchSettings) exactAirTimes() bool { return p.AirTimes != AirTimesOff }
+// exactAirTimes reports whether the schedule source's air times are read and
+// used.
+func (p SearchSettings) exactAirTimes() bool { return p.AirTimes != AirTimesOff && !p.noSchedule }
 
-// stampDelay is how long after the moment an episode airs an automatic grab
-// may take it.
+// stampDelay is how long after an episode's broadcast ends, or after it
+// streams, an automatic grab may take it.
 func (p SearchSettings) stampDelay() time.Duration {
 	return time.Duration(p.AirDelayAfterAirstampMinutes) * time.Minute
 }
@@ -132,8 +138,8 @@ func (p SearchSettings) Grabs(title store.Title, t store.Target, now time.Time) 
 func handsOff(title store.Title) bool { return title.HandsOff() }
 
 // grabbedWhen says when an automatic grab takes an episode, as the policy
-// has it: "an hour after it airs (TVmaze's air times), else 30 hours after
-// its air date".
+// has it: "an hour after its broadcast ends or it streams (TVmaze's air
+// times), else 30 hours after its air date".
 func (p SearchSettings) grabbedWhen() string {
 	date := "from its air date on"
 	if p.AirDelayHours > 0 {
@@ -142,14 +148,14 @@ func (p SearchSettings) grabbedWhen() string {
 	if !p.exactAirTimes() {
 		return date
 	}
-	stamp := "from the moment it airs"
+	stamp := "once its broadcast ends or it streams"
 	switch m := p.AirDelayAfterAirstampMinutes; {
 	case m == 60:
-		stamp = "an hour after it airs"
+		stamp = "an hour after its broadcast ends or it streams"
 	case m > 0 && m%60 == 0:
-		stamp = fmt.Sprintf("%d hours after it airs", m/60)
+		stamp = fmt.Sprintf("%d hours after its broadcast ends or it streams", m/60)
 	case m > 0:
-		stamp = fmt.Sprintf("%d minutes after it airs", m)
+		stamp = fmt.Sprintf("%d minutes after its broadcast ends or it streams", m)
 	}
 	return stamp + " (TVmaze's air times), else " + date
 }
@@ -250,14 +256,14 @@ func (s *Service) GetSearchSettings(ctx context.Context) (SearchSettingsDoc, err
 // grabPolicy is what grab decisions use. It never fails: an unreadable row
 // falls back to the environment, and admission itself still fails closed.
 func (s *Service) grabPolicy(ctx context.Context) SearchSettings {
-	if s.st == nil {
-		return s.envSearchSettings()
+	pol := s.envSearchSettings()
+	if s.st != nil {
+		if doc, err := s.GetSearchSettings(ctx); err == nil {
+			pol = doc.SearchSettings
+		}
 	}
-	doc, err := s.GetSearchSettings(ctx)
-	if err != nil {
-		return s.envSearchSettings()
-	}
-	return doc.SearchSettings
+	pol.noSchedule = !s.sched.Enabled()
+	return pol
 }
 
 // GrabPolicy is the search and grab policy in force: what the console says

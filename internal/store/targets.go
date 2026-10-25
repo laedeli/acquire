@@ -97,9 +97,11 @@ type Target struct {
 	EverHeld   bool       `json:"everHeld,omitempty"`
 	TMDBGoneAt *time.Time `json:"tmdbGoneAt,omitempty"`
 	// AirStamp is the moment an episode airs, as the schedule source says
-	// it; nil when no hour is known. ReleaseCountry is where a requested
-	// movie's release to watch at home comes out.
+	// it; nil when no hour is known. AirRuntime is how long it runs, in
+	// minutes, as the source says (0: not known). ReleaseCountry is where a
+	// requested movie's release to watch at home comes out.
 	AirStamp       *time.Time `json:"airStamp,omitempty"`
+	AirRuntime     int        `json:"airRuntime,omitempty"`
 	ReleaseCountry string     `json:"releaseCountry,omitempty"`
 }
 
@@ -109,7 +111,7 @@ const targetCols = `a.id, a.title_id, a.kind, a.season_number, a.episode_number,
 	a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
 	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source,
 	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind, a.ever_held, a.tmdb_gone_at,
-	a.air_stamp, a.release_country`
+	a.air_stamp, a.air_runtime, a.release_country`
 
 func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 	var t Target
@@ -118,7 +120,7 @@ func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 		&t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
 		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource,
 		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind, &t.EverHeld, &t.TMDBGoneAt,
-		&t.AirStamp, &t.ReleaseCountry)
+		&t.AirStamp, &t.AirRuntime, &t.ReleaseCountry)
 	return t, err
 }
 
@@ -444,21 +446,41 @@ func (s *Store) InvalidateHeldScores(ctx context.Context, profileID string) (int
 
 // openParams name the parameters autoOpenSQL reads: the air delay after an
 // air date and the delay after the moment an episode airs (in seconds), and
-// whether the moments the schedule source gives are used.
+// whether the schedule source's air times are used.
 type openParams struct{ delay, stampDelay, stamps string }
 
-// autoOpenSQL is airedSQL for an automatic grab. Of an episode whose air time
-// the schedule source gives (air_stamp, when stamps are used): the delay after
-// it has passed. Of any other target: its window has opened, and the air
-// delay has passed since its air date — 00:00 UTC on the day TMDB dates an
-// episode, or the day a requested movie comes out. TMDB dates the day, not
-// the hour: the window opens a day before an evening broadcast in the
-// Americas reaches UTC, and what turns up named for the episode before it was
-// broadcast is most often a fake.
+// Of an episode the schedule source dates to the minute, how long it is
+// taken to run: its runtime, RuntimeUnknown minutes when the source gives
+// none, at most RuntimeMost whatever it says.
+const (
+	RuntimeUnknown = 60
+	RuntimeMost    = 240
+)
+
+// runtimeSQL is the minutes the episode a is taken to run (RuntimeUnknown,
+// RuntimeMost).
+const runtimeSQL = `LEAST(COALESCE(NULLIF(a.air_runtime, 0), 60), 240)`
+
+// autoOpenSQL is airedSQL for an automatic grab. With the schedule source's
+// air times (stamps): nothing of a series whose air times were never read —
+// it is read first —, but of one whose releases name no season and episode,
+// which no automatic grab takes (handsOffSQL); of an episode it dates to the
+// minute (air_stamp), the delay once its broadcast ended — air_stamp and its
+// runtime (runtimeSQL) — or, of a series streamed (schedule_kind), after it
+// streams. Of any other target: its window has opened, and the air delay has
+// passed since its air date — 00:00 UTC on the day TMDB dates an episode, or
+// the day a requested movie comes out. TMDB dates the day, not the hour: the
+// window opens a day before an evening broadcast in the Americas reaches UTC,
+// and what turns up named for the episode before it was broadcast is most
+// often a fake.
 func autoOpenSQL(p openParams) string {
+	stamps := p.stamps + `::boolean`
 	return `(CASE WHEN a.air_window_opens_at IS NULL THEN a.kind = 'movie' AND NOT a.release_pending
-	         WHEN ` + p.stamps + `::boolean AND a.air_stamp IS NOT NULL
+	         WHEN ` + stamps + ` AND a.kind = 'episode' AND t.schedule_at IS NULL AND NOT ` + handsOffSQL + ` THEN false
+	         WHEN ` + stamps + ` AND a.air_stamp IS NOT NULL AND t.schedule_kind = '` + ScheduleStreaming + `'
 	              THEN a.air_stamp + make_interval(secs => ` + p.stampDelay + `::float8) <= now()
+	         WHEN ` + stamps + ` AND a.air_stamp IS NOT NULL
+	              THEN a.air_stamp + make_interval(mins => ` + runtimeSQL + `) + make_interval(secs => ` + p.stampDelay + `::float8) <= now()
 	         ELSE GREATEST(a.air_window_opens_at,
 	                       (a.air_date::timestamp AT TIME ZONE 'UTC') + make_interval(secs => ` + p.delay + `::float8)) <= now() END)`
 }
@@ -499,8 +521,10 @@ func newSQL(days string) string {
 // DueOrder is how the sweep picks the targets it searches: with
 // NewWithinDays, the new things first — what aired in the last NewWithinDays
 // days, then what a request asked for (newSQL) —; none before AirDelay has
-// passed since its air date, or — with Stamps, of an episode whose air time
-// the schedule source gives — StampDelay since it aired (autoOpenSQL).
+// passed since its air date, or — with Stamps, of an episode the schedule
+// source dates to the minute — StampDelay since its broadcast ended or it
+// streams, and nothing of a series whose air times are not read yet
+// (autoOpenSQL).
 type DueOrder struct {
 	NewWithinDays int
 	AirDelay      time.Duration
