@@ -253,6 +253,9 @@ func (s *Store) DeleteIndexer(ctx context.Context, id int64, ifRevision int64, a
 	if _, err := tx.Exec(ctx, `DELETE FROM indexer_usage WHERE indexer_id=$1`, id); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM rss_cursors WHERE indexer_id=$1`, id); err != nil {
+		return err
+	}
 	if err := audit(ctx, tx, actor, "source", strconv.FormatInt(id, 10), "delete"); err != nil {
 		return err
 	}

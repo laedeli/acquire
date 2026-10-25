@@ -78,20 +78,35 @@ type Target struct {
 	HeldRelease  string `json:"heldRelease,omitempty"`
 	HeldScore    int    `json:"heldScore"`
 	HeldSource   string `json:"heldSource,omitempty"` // grab | derived
+
+	// AddedAt is when a follow or a read of TMDB on the clock made the
+	// target; nil for one the import or a derivation made — the old backlog.
+	// EpisodeTitle is TMDB's name of the episode.
+	AddedAt      *time.Time `json:"addedAt,omitempty"`
+	EpisodeTitle string     `json:"episodeTitle,omitempty"`
+	// WindowAt is when the target can have a release (air_window_opens_at):
+	// an episode's air date, a requested movie's release. ReleasePending is a
+	// requested movie TMDB dates no release for yet; ReleaseKind what its
+	// window is (digital, physical, tv, theatrical).
+	WindowAt       *time.Time `json:"windowAt,omitempty"`
+	ReleasePending bool       `json:"releasePending,omitempty"`
+	ReleaseKind    string     `json:"releaseKind,omitempty"`
 }
 
 // targetCols are the columns scanTarget reads, under the alias a.
 const targetCols = `a.id, a.title_id, a.kind, a.season_number, a.episode_number, a.air_date, a.monitored, a.state,
 	a.detail, a.grab_id, a.reserved_by, a.grab_failures, a.retry_at, a.handed_over_at,
 	a.search_outcome, a.search_detail, a.last_search_at, a.search_backoff_until, a.search_failures,
-	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source`
+	a.held_item_id, a.held_via, a.held_playable, a.held_release, a.held_score, a.held_source,
+	a.added_at, a.episode_title, a.air_window_opens_at, a.release_pending, a.release_kind`
 
 func scanTarget(r interface{ Scan(...any) error }) (Target, error) {
 	var t Target
 	err := r.Scan(&t.ID, &t.TitleID, &t.Kind, &t.SeasonNumber, &t.EpisodeNumber, &t.AirDate, &t.Monitored, &t.State,
 		&t.Detail, &t.GrabID, &t.ReservedBy, &t.GrabFailures, &t.RetryAt, &t.HandedOverAt,
 		&t.SearchOutcome, &t.SearchDetail, &t.LastSearchAt, &t.NextSearchAt, &t.SearchFailures,
-		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource)
+		&t.HeldItemID, &t.HeldVia, &t.HeldPlayable, &t.HeldRelease, &t.HeldScore, &t.HeldSource,
+		&t.AddedAt, &t.EpisodeTitle, &t.WindowAt, &t.ReleasePending, &t.ReleaseKind)
 	return t, err
 }
 
@@ -110,14 +125,22 @@ func scanTargets(rows pgx.Rows) ([]Target, error) {
 // airedSQL is the condition "this target can have a release": its air window
 // has opened. An episode without an air date has not aired — searching for
 // one spends a source's allowance on something that may not exist — while a
-// movie target, which exists once the movie is out, has no window to wait for.
-const airedSQL = `COALESCE(a.air_window_opens_at <= now(), a.kind = 'movie')`
+// movie target, which exists once the movie is out, has no window to wait
+// for; a requested movie has one, its release, and while TMDB dates none it
+// waits (release_pending).
+const airedSQL = `COALESCE(a.air_window_opens_at <= now(), a.kind = 'movie' AND NOT a.release_pending)`
+
+// knownSQL is the condition "acquire knows what the library holds of this
+// target": its title's holdings are known, learned after the target was
+// added. A target a follow or a read of TMDB added since is of unknown
+// holdings until the next reconcile — the library may hold it already.
+const knownSQL = `t.holdings_at IS NOT NULL AND (a.added_at IS NULL OR a.added_at <= t.holdings_at)`
 
 // missingSQL is what "missing" means everywhere — the Missing view, the series
 // overview and the counts: aired, monitored (the target and its title), not
-// held, and of a title whose holdings acquire knows. A title whose holdings are
-// unknown is not missing anything that acquire can tell.
-const missingSQL = `a.state <> 'held' AND a.monitored AND t.monitored AND t.holdings_at IS NOT NULL AND ` + airedSQL
+// held, and of holdings acquire knows. A title whose holdings are unknown is
+// not missing anything that acquire can tell.
+const missingSQL = `a.state <> 'held' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + airedSQL
 
 // UpsertTarget creates or updates a target by its coordinates. The unique index
 // is (title_id, season_number, episode_number) NULLS NOT DISTINCT, so a movie —
@@ -402,9 +425,19 @@ func (s *Store) InvalidateHeldScores(ctx context.Context, profileID string) (int
 }
 
 // sweepableSQL is what the backlog sweep may look at: wanted (not failed, not
-// in flight), aired, monitored with its title, of a title whose holdings are
-// known, and due — its next search time has come.
-const sweepableSQL = `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND t.holdings_at IS NOT NULL AND ` + airedSQL
+// in flight), aired, monitored with its title, of holdings acquire knows, and
+// due — its next search time has come.
+const sweepableSQL = `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored AND t.monitored AND ` + knownSQL + ` AND ` + airedSQL
+
+// newSQL is the condition "this target is one of the new things": an episode
+// aired in the last $days days (the parameter named), an episode a follow or
+// a read of TMDB added after its title was followed, or a requested movie.
+// search.autoGrabNew lets an automatic grab take these, and the sweep looks
+// at them first; the old backlog is the rest.
+func newSQL(days string) string {
+	return `COALESCE((a.kind = 'episode' AND a.air_date >= (now() AT TIME ZONE 'UTC')::date - ` + days + `::int)
+	         OR (t.followed_at IS NOT NULL AND (a.kind = 'movie' OR a.added_at >= t.followed_at)), false)`
+}
 
 // DueTargets returns the targets the backlog sweep searches next: wanted,
 // aired, monitored, of a title whose holdings are known, and due.
@@ -419,14 +452,32 @@ const sweepableSQL = `a.state = 'wanted' AND a.reserved_by = '' AND a.monitored 
 // backlog rotates: before, a target whose search found something was given no
 // next time, and the sweep returned the same first targets on every run.
 func (s *Store) DueTargets(ctx context.Context, limit int) ([]Target, error) {
+	return s.dueTargets(ctx, limit, 0)
+}
+
+// DueTargetsNewFirst is DueTargets with the new things first (newSQL: aired
+// in the last days days, added after their title was followed, requested
+// movies): with search.autoGrabNew an automatic grab takes those, and they
+// do not wait their turn behind the old backlog.
+func (s *Store) DueTargetsNewFirst(ctx context.Context, limit, days int) ([]Target, error) {
+	return s.dueTargets(ctx, limit, days)
+}
+
+func (s *Store) dueTargets(ctx context.Context, limit, days int) ([]Target, error) {
+	order := `a.last_search_at NULLS FIRST, a.air_window_opens_at NULLS FIRST, a.id`
+	args := []any{limit}
+	if days > 0 {
+		order = newSQL("$2") + ` DESC, ` + order
+		args = append(args, days)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+targetCols+`
 		  FROM acquisition_targets a
 		  JOIN titles t ON t.id = a.title_id
 		 WHERE `+sweepableSQL+`
 		   AND (a.search_backoff_until IS NULL OR a.search_backoff_until <= now())
-		 ORDER BY a.last_search_at NULLS FIRST, a.air_window_opens_at NULLS FIRST, a.id
-		 LIMIT $1`, limit)
+		 ORDER BY `+order+`
+		 LIMIT $1`, args...)
 	if err != nil {
 		return nil, err
 	}

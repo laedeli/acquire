@@ -266,6 +266,62 @@ func TestMigrate040OverAnExistingWantModel(t *testing.T) {
 	}
 }
 
+// 042 over an install that tracks titles, holds some of their episodes, misses
+// others and has requests: every row keeps its state, nothing is followed,
+// every target reads as the old backlog (added by nothing 042 knows), and the
+// backlog is what it was — the same rows missing. Re-running changes nothing.
+func TestMigrate042OverAnExistingInstall(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	migrateUpTo(t, pool, "042_follow.sql")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO titles (id, tmdb_id, kind, title, tvdb_id, status, holdings_at) VALUES
+		  ('series:1396', 1396, 'series', 'Example Show', 81189, 'continuing', now()),
+		  ('movie:603', 603, 'movie', 'Example Film', NULL, 'released', now());
+		INSERT INTO acquisition_targets (id, title_id, kind, season_number, episode_number, state, air_date, air_window_opens_at, held_item_id)
+		VALUES ('series:1396:s01e001', 'series:1396', 'episode', 1, 1, 'wanted', current_date - 3, now() - interval '3 days', ''),
+		       ('series:1396:s01e002', 'series:1396', 'episode', 1, 2, 'held', current_date - 3, now() - interval '3 days', 'item-2'),
+		       ('movie:603:movie', 'movie:603', 'movie', NULL, NULL, 'wanted', NULL, NULL, '');
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, status, detail)
+		VALUES ('w_1', 1396, 'series', 'Example Show', 'failed', 'a series request cannot be handed over');`); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{pool: pool}
+	for i := 0; i < 2; i++ {
+		if err := migrate(ctx, pool); err != nil {
+			t.Fatalf("boot %d: %v", i+1, err)
+		}
+	}
+	// Missing as before 042: the wanted episode and the movie the import made.
+	after, err := s.Missing(ctx, 10)
+	if err != nil || len(after) != 2 {
+		t.Fatalf("missing after 042: %+v %v", after, err)
+	}
+	for _, id := range []string{"series:1396:s01e001", "series:1396:s01e002", "movie:603:movie"} {
+		tg, err := s.GetTarget(ctx, id)
+		if err != nil || tg.AddedAt != nil || tg.EpisodeTitle != "" || tg.ReleasePending || tg.ReleaseKind != "" {
+			t.Errorf("%s: %+v %v", id, tg, err)
+		}
+	}
+	if held, _ := s.GetTarget(ctx, "series:1396:s01e002"); held.State != TargetHeld || held.HeldItemID != "item-2" {
+		t.Errorf("a held target: %+v", held)
+	}
+	for _, id := range []string{"series:1396", "movie:603"} {
+		ti, err := s.TitleByID(ctx, id)
+		if err != nil || ti.Followed() || ti.Origin != "" || ti.TMDBStatus != "" || ti.InventoryAt != nil || !ti.HoldingsKnown() {
+			t.Errorf("%s: %+v %v", id, ti, err)
+		}
+	}
+	w, err := s.GetWanted(ctx, "w_1")
+	if err != nil || w.TitleID != "" || w.Status != "failed" {
+		t.Errorf("a request from before: %+v %v", w, err)
+	}
+	var cursors int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM rss_cursors`).Scan(&cursors); err != nil || cursors != 0 {
+		t.Errorf("rss_cursors: %d %v", cursors, err)
+	}
+}
+
 // The registry lives in the migrations directory, and migrate() Execs every file
 // it can see. Only *.sql is embedded, so a .md is invisible to it — but that is
 // one edit away from being false. Widening the embed to migrations/* would make

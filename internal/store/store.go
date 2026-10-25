@@ -88,15 +88,18 @@ type Wanted struct {
 	Detail      string    `json:"detail"`
 	ItemID      string    `json:"itemId"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// TitleID is the title the request follows (a series or a movie acquire
+	// tracks because it was asked for); "" when it follows none.
+	TitleID string `json:"titleId,omitempty"`
 }
 
-const wantedCols = `id, tmdb_id, media_type, title, year, poster_url, requested_by, requested_at, status, detail, item_id, updated_at`
+const wantedCols = `id, tmdb_id, media_type, title, year, poster_url, requested_by, requested_at, status, detail, item_id, updated_at, title_id`
 
 func scanWanted(r interface{ Scan(...any) error }) (Wanted, error) {
 	var w Wanted
 	var tmdb, year *int64
 	err := r.Scan(&w.ID, &tmdb, &w.MediaType, &w.Title, &year, &w.PosterURL,
-		&w.RequestedBy, &w.RequestedAt, &w.Status, &w.Detail, &w.ItemID, &w.UpdatedAt)
+		&w.RequestedBy, &w.RequestedAt, &w.Status, &w.Detail, &w.ItemID, &w.UpdatedAt, &w.TitleID)
 	if tmdb != nil {
 		w.TMDBID = *tmdb
 	}
@@ -115,10 +118,36 @@ func (s *Store) CreateWanted(ctx context.Context, w Wanted) error {
 		y := int64(w.Year)
 		year = &y
 	}
+	status := w.Status
+	if status == "" {
+		status = "pending"
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO wanted_items (id, tmdb_id, media_type, title, year, poster_url, requested_by, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
-		w.ID, tmdb, w.MediaType, w.Title, year, w.PosterURL, w.RequestedBy)
+		INSERT INTO wanted_items (id, tmdb_id, media_type, title, year, poster_url, requested_by, status, detail, title_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		w.ID, tmdb, w.MediaType, w.Title, year, w.PosterURL, w.RequestedBy, status, w.Detail, w.TitleID)
+	return err
+}
+
+// FindRequestFor returns the newest request for a TMDB id whose media type is
+// one of kinds, or ErrNotFound: asking for a title again finds the request
+// there is.
+func (s *Store) FindRequestFor(ctx context.Context, tmdbID int64, kinds []string) (Wanted, error) {
+	w, err := scanWanted(s.pool.QueryRow(ctx,
+		`SELECT `+wantedCols+` FROM wanted_items WHERE tmdb_id = $1 AND media_type = ANY($2)
+		  ORDER BY requested_at DESC LIMIT 1`, tmdbID, nonNil(kinds)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Wanted{}, ErrNotFound
+	}
+	return w, err
+}
+
+// LinkWanted records the title a request follows, with the status and detail
+// it reads as when nothing more is known.
+func (s *Store) LinkWanted(ctx context.Context, id, titleID, status, detail string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE wanted_items SET title_id = $2, status = $3, detail = $4, updated_at = now() WHERE id = $1`,
+		id, titleID, status, clipText(detail))
 	return err
 }
 

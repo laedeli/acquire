@@ -25,6 +25,8 @@ type SeriesRow struct {
 	HoldingsKnown bool       `json:"holdingsKnown"`
 	HoldingsAt    *time.Time `json:"holdingsAt"`
 	HoldingsError string     `json:"holdingsError,omitempty"`
+	// Followed is set when a request follows the series.
+	Followed bool `json:"followed"`
 }
 
 // SeriesOverview aggregates the WANT model per series in ONE query.
@@ -40,12 +42,12 @@ func (s *Store) SeriesOverview(ctx context.Context) ([]SeriesRow, error) {
 		       count(*) FILTER (WHERE `+missingSQL+`),
 		       count(*) FILTER (WHERE `+missingSQL+` AND a.state IN ('grabbed','downloaded','waiting')),
 		       count(*) FILTER (WHERE a.id IS NOT NULL AND NOT `+airedSQL+`),
-		       t.holdings_at, t.holdings_error
+		       t.holdings_at, t.holdings_error, t.followed_at IS NOT NULL
 		  FROM titles t
 		  LEFT JOIN acquisition_targets a ON a.title_id = t.id
 		 WHERE t.kind = 'series'
 		 GROUP BY t.id, t.tmdb_id, t.tvdb_id, t.title, t.year, t.status, t.series_type, t.monitored,
-		          t.holdings_at, t.holdings_error
+		          t.holdings_at, t.holdings_error, t.followed_at
 		 ORDER BY t.sort_title, t.title`)
 	if err != nil {
 		return nil, err
@@ -57,7 +59,7 @@ func (s *Store) SeriesOverview(ctx context.Context) ([]SeriesRow, error) {
 		if err := rows.Scan(&r.TitleID, &r.TMDBID, &r.TVDBID, &r.Title, &r.Year,
 			&r.Status, &r.Type, &r.Monitored,
 			&r.Episodes, &r.Held, &r.Missing, &r.InFlight, &r.Unaired,
-			&r.HoldingsAt, &r.HoldingsError); err != nil {
+			&r.HoldingsAt, &r.HoldingsError, &r.Followed); err != nil {
 			return nil, err
 		}
 		r.HoldingsKnown = r.HoldingsAt != nil
@@ -211,7 +213,7 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		                          AND a.search_backoff_until > now()),
 		       (SELECT count(*) FROM titles WHERE monitored AND holdings_at IS NULL),
 		       count(*) FILTER (WHERE a.state <> 'held' AND a.monitored AND t.monitored
-		                          AND t.holdings_at IS NULL AND `+airedSQL+`)
+		                          AND NOT (`+knownSQL+`) AND `+airedSQL+`)
 		  FROM acquisition_targets a
 		  JOIN titles t ON t.id = a.title_id`).
 		Scan(&c.Titles, &c.Series, &c.Movies, &c.Targets, &c.Held, &c.Missing, &c.InFlight, &c.Failed,
@@ -298,6 +300,22 @@ func (s *Store) RecentHistory(ctx context.Context, limit int) ([]map[string]any,
 // and whose backoff has expired — the ones the sweep may look at, as
 // DueTargets says.
 func (s *Store) RetryableTargets(ctx context.Context, limit int) ([]Target, error) {
+	return s.retryableTargets(ctx, limit, 0)
+}
+
+// RetryableTargetsNewFirst is RetryableTargets with the new things first, as
+// DueTargetsNewFirst orders them.
+func (s *Store) RetryableTargetsNewFirst(ctx context.Context, limit, days int) ([]Target, error) {
+	return s.retryableTargets(ctx, limit, days)
+}
+
+func (s *Store) retryableTargets(ctx context.Context, limit, days int) ([]Target, error) {
+	order := `a.search_backoff_until`
+	args := []any{limit}
+	if days > 0 {
+		order = newSQL("$2") + ` DESC, ` + order
+		args = append(args, days)
+	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+targetCols+`
 		  FROM acquisition_targets a
@@ -305,8 +323,8 @@ func (s *Store) RetryableTargets(ctx context.Context, limit int) ([]Target, erro
 		 WHERE `+sweepableSQL+`
 		   AND a.search_failures > 0
 		   AND a.search_backoff_until IS NOT NULL AND a.search_backoff_until <= now()
-		 ORDER BY a.search_backoff_until
-		 LIMIT $1`, limit)
+		 ORDER BY `+order+`
+		 LIMIT $1`, args...)
 	if err != nil {
 		return nil, err
 	}

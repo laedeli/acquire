@@ -32,21 +32,40 @@ type Title struct {
 	HoldingsAt    *time.Time
 	HoldingsError string
 	CatalogID     string
+
+	// FollowedAt is when a request first made acquire follow the title; nil
+	// for a title only the import tracks. Origin is OriginRequest for a title
+	// a request created. TMDBStatus is TMDB's word on it (Returning Series,
+	// Ended, Released …); InventoryAt is when TMDB was last read for it, nil
+	// while never, and InventoryError why the last read failed.
+	FollowedAt     *time.Time
+	Origin         string
+	TMDBStatus     string
+	InventoryAt    *time.Time
+	InventoryError string
 }
+
+// OriginRequest is the origin of a title a request created.
+const OriginRequest = "request"
 
 // HoldingsKnown reports whether acquire knows what the library holds of it.
 func (t Title) HoldingsKnown() bool { return t.HoldingsAt != nil }
 
-// titleCols are the columns scanTitle reads.
-const titleCols = `id, tmdb_id, COALESCE(tvdb_id,0), imdb_id, kind, title, sort_title,
-	COALESCE(year,0), status, series_type, monitored, monitor_new, profile_id,
-	holdings_at, holdings_error, catalog_id`
+// Followed reports whether a request follows the title.
+func (t Title) Followed() bool { return t.FollowedAt != nil }
 
-func scanTitle(r interface{ Scan(...any) error }) (Title, error) {
+// titleCols are the columns scanTitle reads, under the alias t.
+const titleCols = `t.id, t.tmdb_id, COALESCE(t.tvdb_id,0), t.imdb_id, t.kind, t.title, t.sort_title,
+	COALESCE(t.year,0), t.status, t.series_type, t.monitored, t.monitor_new, t.profile_id,
+	t.holdings_at, t.holdings_error, t.catalog_id,
+	t.followed_at, t.origin, t.tmdb_status, t.inventory_at, t.inventory_error`
+
+func scanTitle(r interface{ Scan(...any) error }, extra ...any) (Title, error) {
 	var t Title
-	err := r.Scan(&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
+	err := r.Scan(append([]any{&t.ID, &t.TMDBID, &t.TVDBID, &t.IMDBID, &t.Kind, &t.Title, &t.SortTitle,
 		&t.Year, &t.Status, &t.SeriesType, &t.Monitored, &t.MonitorNew, &t.ProfileID,
-		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID)
+		&t.HoldingsAt, &t.HoldingsError, &t.CatalogID,
+		&t.FollowedAt, &t.Origin, &t.TMDBStatus, &t.InventoryAt, &t.InventoryError}, extra...)...)
 	return t, err
 }
 
@@ -124,11 +143,11 @@ func (s *Store) UpsertSeason(ctx context.Context, titleID string, number, episod
 
 // TitlesOfKind lists tracked titles, optionally only the monitored ones.
 func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly bool) ([]Title, error) {
-	q := `SELECT ` + titleCols + ` FROM titles WHERE kind = $1`
+	q := `SELECT ` + titleCols + ` FROM titles t WHERE t.kind = $1`
 	if monitoredOnly {
-		q += ` AND monitored`
+		q += ` AND t.monitored`
 	}
-	q += ` ORDER BY sort_title, title`
+	q += ` ORDER BY t.sort_title, t.title`
 	rows, err := s.pool.Query(ctx, q, kind)
 	if err != nil {
 		return nil, err
@@ -147,7 +166,7 @@ func (s *Store) TitlesOfKind(ctx context.Context, kind string, monitoredOnly boo
 
 // TitleByID reads one title, or ErrNotFound.
 func (s *Store) TitleByID(ctx context.Context, id string) (Title, error) {
-	t, err := scanTitle(s.pool.QueryRow(ctx, `SELECT `+titleCols+` FROM titles WHERE id = $1`, id))
+	t, err := scanTitle(s.pool.QueryRow(ctx, `SELECT `+titleCols+` FROM titles t WHERE t.id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Title{}, ErrNotFound
 	}
@@ -159,10 +178,10 @@ func (s *Store) TitleByID(ctx context.Context, id string) (Title, error) {
 // none does.
 func (s *Store) TitleByIdentity(ctx context.Context, kind string, tmdb, tvdb int64, imdb string) (Title, error) {
 	t, err := scanTitle(s.pool.QueryRow(ctx, `
-		SELECT `+titleCols+` FROM titles
-		 WHERE kind = $1 AND (($2::bigint > 0 AND tmdb_id = $2) OR ($3::bigint > 0 AND tvdb_id = $3)
-		                      OR ($4::text <> '' AND imdb_id = $4))
-		 ORDER BY tmdb_id = $2 DESC, COALESCE(tvdb_id = $3, false) DESC, id
+		SELECT `+titleCols+` FROM titles t
+		 WHERE t.kind = $1 AND (($2::bigint > 0 AND t.tmdb_id = $2) OR ($3::bigint > 0 AND t.tvdb_id = $3)
+		                        OR ($4::text <> '' AND t.imdb_id = $4))
+		 ORDER BY t.tmdb_id = $2 DESC, COALESCE(t.tvdb_id = $3, false) DESC, t.id
 		 LIMIT 1`, kind, tmdb, tvdb, imdb))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Title{}, ErrNotFound
