@@ -560,15 +560,15 @@ func (s *Service) matchFresh(ctx context.Context, m matcher, pol SearchSettings,
 				continue
 			}
 			title, ok := m.seriesOf(r, name)
-			if !ok || cov.Pack() || release.Extra(rest) != "" {
+			if !ok || cov.Pack() {
 				continue
 			}
 			for _, t := range targetsOf(title.ID) {
 				if t.SeasonNumber != nil && t.EpisodeNumber != nil && cov.Covers(*t.SeasonNumber, *t.EpisodeNumber) &&
 					grabbableNow(title, t, now, pol) && pol.Grabs(title, t, now) {
 					// After the episodes, tags only — the episode's title may
-					// come first.
-					if release.TagsOnly(rest, t.EpisodeTitle) {
+					// come first, an extra's word in it too.
+					if release.ExtraAfter(rest, t.EpisodeTitle) == "" && release.TagsOnly(rest, t.EpisodeTitle) {
 						run.Matched++
 						add(title, t, r)
 					}

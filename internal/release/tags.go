@@ -50,20 +50,55 @@ var nameYearRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9])((?:19|20)\d{2})(?:$|[^A-
 
 // TagsOnly reports whether what a release name says after a year, or after
 // the episodes it holds (rest, as written), is tags only: words releases tag
-// themselves with, words with a digit in them (1080p, x264, DDP5.1), and a
-// release group at its end. lead, when set, may come first: an episode's
-// title, which a release of it may name.
+// themselves with, words with a digit in them (1080p, x264, DDP5.1), an
+// edition named as one (Special.Edition, Directors.Cut — "Special" alone is
+// something else of the title), and a release group at its end. lead, when
+// set, may come first: an episode's title, which a release of it may name.
 func TagsOnly(rest, lead string) bool {
-	words := strings.Fields(MatchKey(StripGroup(rest)))
+	words := afterLead(StripGroup(rest), lead)
+	tag := func(w string) bool { return tagWords[w] || strings.ContainsAny(w, "0123456789") }
+	prev := false
+	for i := 0; i < len(words); i++ {
+		w := words[i]
+		switch {
+		case editionWords[w]:
+			// A tag only in an edition's name, which ends in its head.
+			end := -1
+			for j := i + 1; j < len(words) && j <= i+3; j++ {
+				if editionHeads[words[j]] {
+					end = j
+					break
+				}
+				if !editionWords[words[j]] && !tag(words[j]) {
+					break
+				}
+			}
+			if end < 0 {
+				return false
+			}
+			i = end
+		case editionHeads[w]:
+			// Extended.Cut, Uncut.Version: after a tag.
+			if !prev {
+				return false
+			}
+		case !tag(w):
+			return false
+		}
+		prev = true
+	}
+	return true
+}
+
+// afterLead are the words, as MatchKey writes them, of what a release name
+// says after its year or episodes (rest), without lead when it comes first:
+// an episode's own title.
+func afterLead(rest, lead string) []string {
+	words := strings.Fields(MatchKey(rest))
 	if l := strings.Fields(MatchKey(lead)); len(l) > 0 && len(words) >= len(l) && strings.Join(words[:len(l)], " ") == strings.Join(l, " ") {
 		words = words[len(l):]
 	}
-	for _, w := range words {
-		if !tagWords[w] && !strings.ContainsAny(w, "0123456789") {
-			return false
-		}
-	}
-	return true
+	return words
 }
 
 // Extra names what a release name says after a year, or after the episodes
@@ -71,8 +106,12 @@ func TagsOnly(rest, lead string) bool {
 // than the title — a trailer, a teaser, a featurette, extras, a bonus, a
 // making-of, behind the scenes, a sample, an interview, a promo —; "" when it
 // says none.
-func Extra(rest string) string {
-	key := " " + MatchKey(rest) + " "
+func Extra(rest string) string { return ExtraAfter(rest, "") }
+
+// ExtraAfter is Extra of what follows lead, when the name says it first: an
+// episode's own title, which may hold one of the words — "The Interview".
+func ExtraAfter(rest, lead string) string {
+	key := " " + strings.Join(afterLead(rest, lead), " ") + " "
 	for _, w := range extraWords {
 		if strings.Contains(key, " "+w+" ") {
 			return w
@@ -80,6 +119,16 @@ func Extra(rest string) string {
 	}
 	return ""
 }
+
+// editionWords name an edition with a head after them (editionHeads):
+// Special.Edition, Directors.Cut, 25th.Anniversary.Edition, Open.Matte.
+// Alone, they are no tag: Example.Film.2026.Special is something else of the
+// film.
+var editionWords = set("special", "anniversary", "collectors", "collector", "ultimate", "final", "directors", "director",
+	"open", "alternate", "alternative", "international", "deluxe", "definitive")
+
+// editionHeads end an edition's name.
+var editionHeads = set("edition", "cut", "version", "collection", "matte")
 
 // extraWords are the words and phrases of an extra, singular and plural.
 var extraWords = []string{
@@ -129,11 +178,10 @@ var tagWords = set(
 	"lpcm", "pcm", "ch", "mono", "stereo", "audio", "dual", "multi",
 	// edition and flags
 	"proper", "repack", "rerip", "real", "internal", "limited", "extended", "uncut", "unrated", "uncensored",
-	"directors", "director", "dc", "cut", "theatrical", "remastered", "restored", "criterion", "open", "matte",
+	"dc", "theatrical", "remastered", "restored", "criterion",
 	"hybrid", "complete", "festival", "retail", "readnfo", "read", "nfo", "dubbed", "dub", "subbed", "sub",
 	"subs", "multisubs", "hardsub", "hardsubbed", "custom", "fixed", "sync", "dirfix", "nfofix", "samplefix",
-	"proof", "final", "edition", "version", "special", "anniversary", "collectors", "ultimate", "redux", "v2",
-	"v3", "ws", "fs", "pal", "ntsc", "ld", "md", "line", "mic", "dubbing",
+	"proof", "redux", "v2", "v3", "ws", "fs", "pal", "ntsc", "ld", "md", "line", "mic", "dubbing",
 	// languages
 	"english", "eng", "en", "german", "ger", "deu", "de", "french", "fre", "fra", "fr", "truefrench", "vff",
 	"vfq", "vf", "vf2", "vostfr", "subfrench", "spanish", "spa", "esp", "castellano", "latino", "lat",

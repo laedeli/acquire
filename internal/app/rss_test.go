@@ -447,6 +447,7 @@ func TestTheFeedsMatchByCategoryAndTags(t *testing.T) {
 		tv("Example.Clay.Film.2026.The.Making.Of.1080p.HDTV.x264-GRP", ago(3*time.Hour)),
 		tv("Example.Clay.Film.2026.1080p.WEB-DL.x264-GRP", ago(3*time.Hour)),
 		film("Example.Clay.Film.2026.Part.Two.1080p.WEB-DL.x264-GRP", ago(3*time.Hour)),
+		film("Example.Clay.Film.2026.Special.1080p.WEB-DL.x264-GRP", ago(3*time.Hour)),
 		film("Example.Saga.Seven.Harbours.S01E08.1080p.WEB.h264-GRP", ago(2*time.Hour)),
 		tv("Example.Saga.Seven.Harbours.S01E07.Harbour.7.1080p.WEB.h264-GRP", ago(2*time.Hour)),
 		tv("Example.Saga.Seven.Harbours.S01E09.Recap.Special.1080p.WEB.h264-GRP", ago(2*time.Hour)),
@@ -826,5 +827,39 @@ func TestTheFeedsSkipASourceOutOfDownloads(t *testing.T) {
 	sqlExec(t, `UPDATE downloads SET state = 'completed'`)
 	if run, _ := r.svc.SyncRSS(ctx); run.Skipped != "every search source has used its release downloads for today" || len(fresh.reads()) != 1 {
 		t.Errorf("every source out of downloads: %+v", run)
+	}
+}
+
+// An episode titled with an extra's word — "The Interview" — is no extra:
+// a release that names its own title after the episode is taken, by the
+// feeds and by a typed search, and one that names an extra after its title
+// is not.
+func TestAnEpisodeTitledLikeAnExtra(t *testing.T) {
+	ti := store.Title{Kind: "series", Title: "Show Name"}
+	season, ep := 2, 3
+	tg := store.Target{Kind: "episode", SeasonNumber: &season, EpisodeNumber: &ep, EpisodeTitle: "The Interview"}
+	if why := extraOf("Show.Name.S02E03.The.Interview.1080p.WEB.h264-GRP", ti, tg); why != "" {
+		t.Errorf("the episode titled %q: %s", tg.EpisodeTitle, why)
+	}
+	if why := extraOf("Show.Name.S02E03.The.Interview.Sample.1080p.WEB.h264-GRP", ti, tg); why == "" {
+		t.Error("a sample of it is taken for it")
+	}
+
+	r := newFollowRig(t)
+	ctx := context.Background()
+	r.tmdb.set(func(f *fakeTMDB) {
+		f.series[990761] = &tmdbSeries{name: "Show Name", status: "Returning Series", tvdb: 9907761, firstAir: day(-30),
+			seasons: map[int][]tmdbEpisode{1: {{title: "The Interview", air: day(-3)}}}}
+	})
+	if _, _, err := r.svc.Request(ctx, store.Wanted{TMDBID: 990761, MediaType: "series", Title: "Show Name"}, asAdmin("admin")); err != nil {
+		t.Fatal(err)
+	}
+	r.settle(t, false)
+	addFeed(t, r.svc, "feed", newFeedSource(t, true, tv("Show.Name.S01E01.The.Interview.1080p.WEB.h264-GRP", ago(time.Hour))))
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := r.svc.SyncRSS(ctx); run.Grabbed != 1 {
+		t.Errorf("the feeds: %+v", run)
 	}
 }

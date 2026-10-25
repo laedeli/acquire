@@ -26,6 +26,16 @@ func TestTagsOnly(t *testing.T) {
 		{".Official.Trailer.1080p.WEB-DL.x264-GRP", "", false},
 		{".The.Making.Of.1080p.HDTV.x264-GRP", "", false},
 		{".Part.Two.1080p.WEB-DL.x264-GRP", "", false},
+		// An edition named as one is a tag; its words alone are not.
+		{".Special.Edition.1080p.BluRay.x264-GRP", "", true},
+		{".Directors.Cut.1080p.BluRay.x264-GRP", "", true},
+		{".25th.Anniversary.Edition.REMASTERED.1080p-GRP", "", true},
+		{".Extended.Cut.1080p.BluRay-GRP", "", true},
+		{".Open.Matte.1080p.WEB-DL-GRP", "", true},
+		{".Special.1080p.WEB-DL.x264-GRP", "", false},
+		{".Final.1080p.WEB-DL.x264-GRP", "", false},
+		{".Edition.1080p.WEB-DL.x264-GRP", "", false},
+		{".Special.Something.Edition.1080p-GRP", "", false},
 	} {
 		if got := TagsOnly(tc.rest, tc.lead); got != tc.want {
 			t.Errorf("TagsOnly(%q, %q) = %v", tc.rest, tc.lead, got)
@@ -50,6 +60,17 @@ func TestExtra(t *testing.T) {
 	} {
 		if got := Extra(rest); got != want {
 			t.Errorf("Extra(%q) = %q, want %q", rest, got, want)
+		}
+	}
+	// An episode's own title may hold one of the words.
+	for _, tc := range []struct{ rest, lead, want string }{
+		{".The.Interview.1080p.WEB.h264-GRP", "The Interview", ""},
+		{".The.Interview.Bonus.1080p.WEB.h264-GRP", "The Interview", "bonus"},
+		{".The.Interview.1080p.WEB.h264-GRP", "", "interview"},
+		{".Sample.1080p.WEB.h264-GRP", "The Interview", "sample"},
+	} {
+		if got := ExtraAfter(tc.rest, tc.lead); got != tc.want {
+			t.Errorf("ExtraAfter(%q, %q) = %q, want %q", tc.rest, tc.lead, got, tc.want)
 		}
 	}
 }

@@ -588,7 +588,7 @@ func markRejected(c *Candidate, title store.Title, t store.Target, blocked map[s
 // or "": its name says trailer, teaser, featurette, extras, bonus, making of,
 // behind the scenes, sample, interview or promo (release.Extra) after the
 // movie's year or after the episodes it holds — never in the title's own
-// words before them.
+// words before them, nor in the episode's own title after them.
 func extraOf(name string, title store.Title, t store.Target) string {
 	rest, what := "", "the episode"
 	if t.Kind == "movie" {
@@ -604,7 +604,9 @@ func extraOf(name string, title store.Title, t store.Target) string {
 	} else if _, cov, after := release.SplitSeries(name); cov.Found {
 		rest = after
 	}
-	if w := release.Extra(rest); w != "" {
+	// An episode's own title may hold one of the words: what its release
+	// says after it is what tells.
+	if w := release.ExtraAfter(rest, t.EpisodeTitle); w != "" {
 		return fmt.Sprintf("its name says %q: an extra, not %s", w, what)
 	}
 	return ""
