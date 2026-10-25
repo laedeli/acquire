@@ -685,6 +685,68 @@ func TestAnEpisodeWithoutAnHour(t *testing.T) {
 	}
 }
 
+// Another show behind the series' TVDB id — a wrong id —, airing the same
+// day at 06:00: its name is neither the series' nor one of its aliases, so
+// none of its air times is taken — the series is told by its air dates —,
+// the title says why, and it is looked up again in a week. Air times taken
+// from it before go too.
+func TestAnotherShowBehindTheSameID(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	f := newFakeSchedule(t, r.svc)
+	nightShow(r, f)
+	requestNightShow(t, r)
+	if one := target(t, r.svc, "series:990721:s01e001"); one.AirStamp == nil {
+		t.Fatalf("the right show's air time: %+v", one)
+	}
+	f.set(func(f *fakeSchedule) {
+		f.records[501] = map[string]any{"name": "Example Morning Show"}
+		f.eps[501] = []map[string]any{airs(1, 1, local(-2, 6, 0, "America/New_York")), airs(1, 2, local(0, 6, 0, "America/New_York"))}
+	})
+	sqlExec(t, `UPDATE titles SET inventory_at = now() - interval '6 hours', schedule_at = now() - interval '6 hours' WHERE id = 'series:990721'`)
+	if run := r.settle(t, true); run.Scheduled != 0 || run.ScheduleError != "" {
+		t.Errorf("the read: %+v", run)
+	}
+	for _, id := range []string{"series:990721:s01e001", "series:990721:s01e002"} {
+		if st := target(t, r.svc, id); st.AirStamp != nil || st.AirRuntime != 0 {
+			t.Errorf("%s keeps another show's air time: %v", id, st.AirStamp)
+		}
+	}
+	ti, _ := r.svc.st.TitleByID(ctx, "series:990721")
+	if ti.ScheduleID != 0 || ti.ScheduleAt == nil || ti.ScheduleKind != "" ||
+		!strings.Contains(ti.ScheduleError, `TVmaze's show 501 by its TVDB or IMDb id is "Example Morning Show", not this series`) {
+		t.Errorf("the title: %+v", ti)
+	}
+	pol := r.svc.grabPolicy(ctx)
+	if at := openAt(ti, target(t, r.svc, "series:990721:s01e001"), pol); !at.Equal(day(-2).Add(pol.airDelay())) {
+		t.Errorf("E01 opens at %s, want by its air date", at.UTC())
+	}
+}
+
+// A show's name at TVmaze is the series' when it is its title or one of its
+// aliases, as release names compare, without a qualifier in brackets or a
+// leading "the" — or holds it, or is held by it, two words or more.
+func TestTheSameShow(t *testing.T) {
+	for _, tc := range []struct {
+		name, title string
+		aliases     []string
+		same        bool
+	}{
+		{"Example Night Show", "Example Night Show", nil, true},
+		{"Example Night Show (US)", "The Example Night Show", nil, true},
+		{"Exámple: Night Show", "Example Night Show", nil, true},
+		{"La Serie del Ejemplo", "Example Series", []string{"La serie del ejemplo"}, true},
+		{"Example Agency's Night Show", "Night Show", nil, true},
+		{"Example Morning Show", "Example Night Show", []string{"Night Show Example"}, false},
+		{"Show", "Example Night Show", nil, false},
+		{"", "Example Night Show", nil, true},
+	} {
+		if got := sameShow(tc.name, tc.title, tc.aliases); got != tc.same {
+			t.Errorf("%q for %q %v: %v", tc.name, tc.title, tc.aliases, got)
+		}
+	}
+}
+
 // TVmaze too slow to answer: the run goes on without it, and says so.
 func TestTVmazeTooSlow(t *testing.T) {
 	r := newFollowRig(t)

@@ -115,16 +115,38 @@ const (
 	// ScheduleUnreadable: the source answered what cannot be read. It is
 	// read again as a series read is.
 	ScheduleUnreadable
+	// ScheduleOtherShow: the show the source answers by the series' ids is
+	// another — a name neither the series' nor one of its aliases: its show
+	// id, how it airs and every air time taken from it are dropped, and it
+	// is looked up again after a week.
+	ScheduleOtherShow
 )
 
 // ScheduleFailed records why a series' air times could not be read, as how
 // says (ScheduleFailure). Of all but ScheduleDown, the series counts as read
 // now — told by its air dates, as far as the source gives it none.
 func (s *Store) ScheduleFailed(ctx context.Context, titleID, reason string, how ScheduleFailure) error {
-	_, err := s.pool.Exec(ctx, `
+	other := how == ScheduleOtherShow
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
 		UPDATE titles SET schedule_error = $2,
 		       schedule_id = CASE WHEN $4 THEN NULL ELSE schedule_id END,
+		       schedule_kind = CASE WHEN $5 THEN '' ELSE schedule_kind END,
+		       schedule_country = CASE WHEN $5 THEN '' ELSE schedule_country END,
 		       schedule_at = CASE WHEN $3 THEN now() ELSE schedule_at END, updated_at = now()
-		 WHERE id = $1`, titleID, clipText(reason), how != ScheduleDown, how == ScheduleUnknown)
-	return err
+		 WHERE id = $1`, titleID, clipText(reason), how != ScheduleDown, how == ScheduleUnknown || other, other); err != nil {
+		return err
+	}
+	if other {
+		if _, err := tx.Exec(ctx, `
+			UPDATE acquisition_targets SET air_stamp = NULL, air_runtime = 0, updated_at = now()
+			 WHERE title_id = $1 AND (air_stamp IS NOT NULL OR air_runtime <> 0)`, titleID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

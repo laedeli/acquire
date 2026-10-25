@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/store"
 	"github.com/laedeli/acquire/internal/tmdb"
 	"github.com/laedeli/acquire/internal/tvmaze"
@@ -438,10 +439,12 @@ func (s *Service) readSchedule(ctx context.Context, titleID string, run *Invento
 // id, looked up once by the series' TVDB id or IMDb id — nothing else is
 // sent —, then the show's record with its episodes in one call — how it
 // airs, broadcast or streamed, and the moment each episode airs and how long
-// it runs, kept on its target. It reports false when the source does not
-// answer as it should: no other series would fare better this run. Nothing
-// fails of the series either way; an episode without an air time is told by
-// its air date.
+// it runs, kept on its target. A show whose name is neither the series' nor
+// one of its aliases is another show behind the same id: none of its air
+// times is taken, and it is looked up again in a week. It reports false when
+// the source does not answer as it should: no other series would fare better
+// this run. Nothing fails of the series either way; an episode without an
+// air time is told by its air date.
 func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *InventoryRun) bool {
 	if t.TVDBID == 0 && t.IMDBID == "" {
 		_ = s.st.ScheduleFailed(ctx, t.ID, "no TVDB or IMDb id to look it up at TVmaze by; looked up again in a week", store.ScheduleUnknown)
@@ -473,6 +476,13 @@ func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *Invent
 	if err != nil {
 		return fail(err, fmt.Sprintf("its show %d any more", id))
 	}
+	if aliases, err := s.st.AliasesFor(ctx, t.ID); err == nil && !sameShow(show.Name, t.Title, aliases) {
+		log.Printf("acquire inventory-refresh: %s: TVmaze's show %d by its TVDB or IMDb id is %q, another show — its air times are not taken",
+			t.Title, id, show.Name)
+		_ = s.st.ScheduleFailed(ctx, t.ID, fmt.Sprintf("TVmaze's show %d by its TVDB or IMDb id is %q, not this series: its air times are not taken; "+
+			"looked up again in a week", id, show.Name), store.ScheduleOtherShow)
+		return true
+	}
 	rec := store.ScheduledShow{ID: id, Country: show.Country}
 	switch show.Kind {
 	case tvmaze.Broadcast:
@@ -490,6 +500,42 @@ func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *Invent
 	}
 	run.Scheduled++
 	return true
+}
+
+// sameShow reports whether the schedule source's name of a show is the
+// series' — its title or one of its aliases, compared as release names are
+// (release.MatchKey), without a qualifier in brackets at the end ("(US)",
+// "(2005)") or a leading "the" —, or holds it, or is held by it, whole words
+// of at least two.
+func sameShow(name, title string, aliases []string) bool {
+	key := func(s string) string {
+		s = strings.TrimSpace(s)
+		if i := strings.LastIndex(s, "("); i > 0 && strings.HasSuffix(s, ")") {
+			s = s[:i]
+		}
+		return strings.TrimPrefix(release.MatchKey(s), "the ")
+	}
+	n := key(name)
+	if n == "" {
+		return true
+	}
+	for _, a := range append([]string{title}, aliases...) {
+		k := key(a)
+		if k == "" {
+			continue
+		}
+		if k == n {
+			return true
+		}
+		short, long := k, n
+		if len(short) > len(long) {
+			short, long = long, short
+		}
+		if strings.Contains(short, " ") && strings.Contains(" "+long+" ", " "+short+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // scheduleDue reports whether a series' air times are read now: never read;
