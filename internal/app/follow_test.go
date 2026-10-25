@@ -1065,8 +1065,9 @@ func TestRequestState(t *testing.T) {
 		{"not read yet", store.Progress{Kind: "series"}, "following", "reading its episodes from TMDB"},
 		{"not readable", store.Progress{Kind: "series", InventoryErr: "TMDB did not answer: 503"}, "following",
 			"its episodes could not be read from TMDB yet: TMDB did not answer: 503; tried again every 15 minutes until they are"},
-		{"unknown to TMDB", store.Progress{Kind: "series", InventoryAt: &read, InventoryErr: "TMDB does not know it (/tv/1)"}, "following",
-			"its episodes could not be read from TMDB: TMDB does not know it (/tv/1); read again on a later refresh"},
+		{"unknown to TMDB", store.Progress{Kind: "series", InventoryAt: &read, InventoryErr: "TMDB does not know it (/tv/1)",
+			InventoryRetryAt: day(7)}, "following",
+			"its episodes could not be read from TMDB: TMDB does not know it (/tv/1); read again on " + dateOf(day(7))},
 		{"no TMDB key", store.Progress{Kind: "movie", InventoryErr: noTMDB}, "pending", "its release dates cannot be read: " + noTMDB},
 		{"no episodes, ended", store.Progress{Kind: "series", InventoryAt: &read}, "following",
 			"TMDB lists no episodes of it, and says it does not run: it is read again weekly"},
@@ -1263,5 +1264,44 @@ func TestARequestedAnimeIsGrabbedFromTheMissingTabOnly(t *testing.T) {
 	}
 	if _, err := r.svc.GrabTarget(ctx, "series:990751:s01e002", "missing"); err != nil || len(r.gw.added()) != 1 {
 		t.Errorf("grab now: %v (adds %d)", err, len(r.gw.added()))
+	}
+}
+
+// A title TMDB does not know says when it is read again — a week on —, and
+// is, whatever its kind: a followed series, a followed movie, a request
+// awaiting approval, which no refresh reads otherwise. Not before.
+func TestATitleTMDBDoesNotKnowIsReadAgainInAWeek(t *testing.T) {
+	r := newFollowRig(t)
+	ctx := context.Background()
+	series, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990901, MediaType: "series", Title: "Nobody Knows"}, asAdmin("admin"))
+	movie, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990902, MediaType: "movie", Title: "Nobody Knows Either"}, asAdmin("admin"))
+	awaiting, _, _ := r.svc.Request(ctx, store.Wanted{TMDBID: 990903, MediaType: "series", Title: "Nobody Asked"}, Requester{Sub: "user"})
+	r.settle(t, false)
+	again := time.Now().Add(7 * 24 * time.Hour).UTC().Format("2006-01-02")
+	for _, w := range []store.Wanted{series, movie} {
+		if v := r.view(t, w.ID); !strings.Contains(v.Detail, "could not be read from TMDB: TMDB does not know it") ||
+			!strings.HasSuffix(v.Detail, "read again on "+again) {
+			t.Errorf("%s: %q", w.Title, v.Detail)
+		}
+	}
+	calls := len(r.tmdb.called())
+	if r.settle(t, true); len(r.tmdb.called()) != calls || r.svc.retryFollows(ctx) {
+		t.Errorf("read again before its week: %v", r.tmdb.called()[calls:])
+	}
+	sqlExec(t, `UPDATE titles SET inventory_retry_at = now() - interval '1 minute' WHERE tmdb_id IN (990901, 990902, 990903)`)
+	if !r.svc.retryFollows(ctx) {
+		t.Error("the request awaiting approval is not tried again a week on")
+	}
+	r.settle(t, true)
+	read := map[string]bool{}
+	for _, c := range r.tmdb.called()[calls:] {
+		read[c] = true
+	}
+	if !read["/tv/990901"] || !read["/movie/990902"] || !read["/tv/990903"] {
+		t.Errorf("a week on, read: %v", r.tmdb.called()[calls:])
+	}
+	if v := r.view(t, awaiting.ID); v.Detail != "waiting for an admin's approval: until then nothing of it is searched or grabbed · "+
+		"what TMDB says of it could not be read from TMDB: TMDB does not know it (/tv/990903); read again on "+again {
+		t.Errorf("awaiting: %q", v.Detail)
 	}
 }

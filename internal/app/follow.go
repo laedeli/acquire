@@ -344,7 +344,7 @@ func approvalState(approval string, p store.Progress, status, detail string) (st
 	}
 	known := ""
 	switch {
-	case p.InventoryErr != "" && p.InventoryAt == nil:
+	case p.InventoryErr != "" && (p.InventoryAt == nil || p.InventoryRetryAt != nil):
 		known = " · " + notRead("what TMDB says of it", p)
 	case p.InventoryAt == nil:
 		known = " · reading what TMDB says of it"
@@ -392,7 +392,7 @@ func requestState(p store.Progress, now time.Time, pol SearchSettings) (status, 
 		return movieState(p, now, pol)
 	}
 	switch {
-	case p.Episodes == 0 && p.InventoryErr != "":
+	case p.InventoryErr != "" && (p.Episodes == 0 || p.InventoryRetryAt != nil):
 		return "following", clip(notRead("its episodes", p), 300)
 	case p.InventoryAt == nil, p.Episodes == 0 && p.Seasons > 0 && !p.EpisodesRead:
 		return "following", "reading its episodes from TMDB"
@@ -531,8 +531,8 @@ func guessWords(t *store.Target) string {
 
 // notRead says why what TMDB says of a followed title could not be read, and
 // when it is read again: every 15 minutes while TMDB does not answer, once a
-// TMDB key is configured without one, on the refreshes for a title TMDB
-// does not know.
+// TMDB key is configured without one, a week on for a title TMDB does not
+// know.
 func notRead(what string, p store.Progress) string {
 	switch {
 	case p.InventoryErr == noTMDB:
@@ -540,6 +540,8 @@ func notRead(what string, p store.Progress) string {
 	case p.InventoryAt == nil:
 		return fmt.Sprintf("%s could not be read from TMDB yet: %s; tried again every %d minutes until they are",
 			what, p.InventoryErr, int(followRetry.Minutes()))
+	case p.InventoryRetryAt != nil:
+		return what + " could not be read from TMDB: " + p.InventoryErr + "; read again on " + p.InventoryRetryAt.UTC().Format("2006-01-02")
 	}
 	return what + " could not be read from TMDB: " + p.InventoryErr + "; read again on a later refresh"
 }

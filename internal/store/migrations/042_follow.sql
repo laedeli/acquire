@@ -59,6 +59,11 @@ ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_type text  NOT NULL DEFAULT '';
 -- once it is approved.
 ALTER TABLE titles ADD COLUMN IF NOT EXISTS tmdb_seasons int NOT NULL DEFAULT 0;
 
+-- titles: inventory_retry_at is when a title TMDB does not know — or answers
+-- for it with nothing readable — is read again, a week after: until then no
+-- refresh reads it (NULL: read as its kind is).
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS inventory_retry_at timestamptz;
+
 -- seasons and acquisition_targets: follow_monitored marks the ones a follow
 -- monitored that would not be monitored without it — a season of a series
 -- whose new seasons nobody monitored before, an episode of one. The follow's

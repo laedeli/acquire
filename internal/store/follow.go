@@ -651,7 +651,7 @@ func applyTitleRead(ctx context.Context, tx pgx.Tx, titleID string, tvdb int64, 
 		  year = CASE WHEN origin = $9 AND $7::int > 0 THEN $7::int ELSE year END,
 		  status = CASE WHEN origin = $9 THEN $8 ELSE status END,
 		  origin_country = $10,
-		  inventory_at = now(), inventory_error = '', updated_at = now()
+		  inventory_at = now(), inventory_error = '', inventory_retry_at = NULL, updated_at = now()
 		 WHERE id = $1`,
 		titleID, tvdb, strings.TrimSpace(imdb), tmdbStatus, strings.TrimSpace(name), SortTitle(name), year, status, OriginRequest,
 		nonNil(countries))
@@ -693,14 +693,29 @@ func replaceAliasesTx(ctx context.Context, tx pgx.Tx, titleID string, aliases []
 	return err
 }
 
+// InventoryUnknownAgain is how long a title TMDB does not know waits before
+// it is read again.
+const InventoryUnknownAgain = 7 * 24 * time.Hour
+
 // InventoryFailed records why a read of TMDB for a title failed. read is set
-// when the title itself was the fault — TMDB does not know it —: it counts as
-// read, and is due again only after its interval, not on the next run.
+// when the title itself was the fault — TMDB does not know it, or answers
+// nothing readable —: it counts as read, and is read again only
+// InventoryUnknownAgain later (inventory_retry_at), whatever its kind.
 func (s *Store) InventoryFailed(ctx context.Context, titleID, reason string, read bool) error {
 	_, err := s.pool.Exec(ctx, `
-		UPDATE titles SET inventory_error = $2, inventory_at = CASE WHEN $3 THEN now() ELSE inventory_at END, updated_at = now()
-		 WHERE id = $1`, titleID, clipText(reason), read)
+		UPDATE titles SET inventory_error = $2, inventory_at = CASE WHEN $3 THEN now() ELSE inventory_at END,
+		       inventory_retry_at = CASE WHEN $3 THEN now() + make_interval(secs => $4::float8) ELSE inventory_retry_at END,
+		       updated_at = now()
+		 WHERE id = $1`, titleID, clipText(reason), read, InventoryUnknownAgain.Seconds())
 	return err
+}
+
+// inventoryDueSQL is "a read of TMDB is due for the title t" for one read
+// every interval (the parameter named, in seconds): never read, read longer
+// ago than that — or, of a title TMDB did not know, its week is over.
+func inventoryDueSQL(every string) string {
+	return `(CASE WHEN t.inventory_retry_at IS NOT NULL THEN t.inventory_retry_at <= now()
+	              ELSE t.inventory_at IS NULL OR t.inventory_at < now() - make_interval(secs => ` + every + `::float8) END)`
 }
 
 // DueTitle is a title whose read of TMDB is due, and whether it runs.
@@ -736,8 +751,7 @@ func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Dura
 		  FROM titles t
 		  CROSS JOIN LATERAL (SELECT `+runningSQL+` AS running) r
 		 WHERE t.kind = 'series' AND t.monitored
-		   AND (t.inventory_at IS NULL
-		        OR t.inventory_at < now() - make_interval(secs => CASE WHEN r.running THEN $1::float8 ELSE $2::float8 END))
+		   AND `+inventoryDueSQL("CASE WHEN r.running THEN $1::float8 ELSE $2::float8 END")+`
 		   AND ($4 = '' OR ($4 = 'running') = (r.running AND t.inventory_at IS NOT NULL))
 		 ORDER BY (`+followedSQL+` AND t.inventory_at IS NULL) DESC, r.running DESC, t.inventory_at NULLS FIRST, t.id
 		 LIMIT $3`, running.Seconds(), ended.Seconds(), limit, which)
@@ -757,11 +771,14 @@ func (s *Store) SeriesInventoryDue(ctx context.Context, running, ended time.Dura
 }
 
 // RequestedNotRead are the titles of open requests — followed, or awaiting
-// an admin's approval — that TMDB could not be read for yet, out of reach or
-// failing: read again soon, not on the next refresh hours away.
+// an admin's approval — that TMDB could not be read for: out of reach or
+// failing, read again soon, not on the next refresh hours away; and one TMDB
+// did not know, once its week is over — no refresh reads one awaiting
+// approval.
 func (s *Store) RequestedNotRead(ctx context.Context) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `SELECT t.id FROM titles t
-		 WHERE t.inventory_at IS NULL AND t.inventory_error <> ''
+		 WHERE t.inventory_error <> ''
+		   AND (t.inventory_at IS NULL OR t.inventory_retry_at <= now())
 		   AND EXISTS (SELECT 1 FROM wanted_items w WHERE w.title_id = t.id AND w.approval <> 'declined')
 		 ORDER BY t.id`)
 	if err != nil {
@@ -793,7 +810,7 @@ func (s *Store) MovieInventoryDue(ctx context.Context, every time.Duration, limi
 		   AND (a.id IS NULL OR t.inventory_at IS NULL
 		        OR (a.state <> 'held' AND a.added_at IS NOT NULL
 		            AND (a.release_pending OR a.air_window_opens_at > now() OR a.release_kind = 'theatrical')))
-		   AND (t.inventory_at IS NULL OR t.inventory_at < now() - make_interval(secs => $1::float8))
+		   AND `+inventoryDueSQL("$1")+`
 		 ORDER BY t.inventory_at NULLS FIRST, t.id
 		 LIMIT $2`, every.Seconds(), limit)
 	if err != nil {
@@ -894,10 +911,12 @@ type Progress struct {
 	Seasons     int  `json:"seasons,omitempty"`
 	// EpisodesRead is set once the episodes of a series were read: not
 	// while a request awaits approval, nor until its first read after.
-	EpisodesRead  bool       `json:"episodesRead,omitempty"`
-	InventoryAt   *time.Time `json:"inventoryAt"`
-	InventoryErr  string     `json:"inventoryError,omitempty"`
-	HoldingsKnown bool       `json:"holdingsKnown"`
+	EpisodesRead bool       `json:"episodesRead,omitempty"`
+	InventoryAt  *time.Time `json:"inventoryAt"`
+	InventoryErr string     `json:"inventoryError,omitempty"`
+	// InventoryRetryAt is when a title TMDB did not know is read again.
+	InventoryRetryAt *time.Time `json:"inventoryRetryAt,omitempty"`
+	HoldingsKnown    bool       `json:"holdingsKnown"`
 	// Of a series' monitored episodes: all of them, the ones the library
 	// holds (and plays), on their way, missing, whose last grab failed, and
 	// not aired yet.
@@ -932,7 +951,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.kind, t.tmdb_status, `+runningSQL+`, `+handsOffSQL+`, t.origin = 'request', t.tmdb_seasons,
 		       EXISTS (SELECT 1 FROM seasons s WHERE s.title_id = t.id),
-		       t.inventory_at, t.inventory_error, t.holdings_at IS NOT NULL,
+		       t.inventory_at, t.inventory_error, t.inventory_retry_at, t.holdings_at IS NOT NULL,
 		       count(a.id) FILTER (WHERE a.monitored AND (a.tmdb_gone_at IS NULL OR a.state = 'held')),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held'),
 		       count(*) FILTER (WHERE a.monitored AND a.state = 'held' AND a.held_playable),
@@ -948,7 +967,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		     WHERE x.title_id = t.id AND x.kind = 'episode' AND x.monitored AND x.tmdb_gone_at IS NULL AND x.air_window_opens_at > now()
 		     ORDER BY x.air_window_opens_at, x.season_number, x.episode_number LIMIT 1) n ON true
 		 WHERE t.id = ANY($1)
-		 GROUP BY t.id, t.kind, t.tmdb_status, t.status, t.inventory_at, t.inventory_error, t.holdings_at,
+		 GROUP BY t.id, t.kind, t.tmdb_status, t.status, t.inventory_at, t.inventory_error, t.inventory_retry_at, t.holdings_at,
 		          n.season_number, n.episode_number, n.episode_title, n.air_window_opens_at`, nonNil(ids))
 	if err != nil {
 		return nil, err
@@ -960,7 +979,7 @@ func (s *Store) TitleProgress(ctx context.Context, ids []string) (map[string]Pro
 		var title *string
 		var at *time.Time
 		if err := rows.Scan(&p.TitleID, &p.Kind, &p.TMDBStatus, &p.Running, &p.HandsOff, &p.FromRequest, &p.Seasons, &p.EpisodesRead,
-			&p.InventoryAt, &p.InventoryErr, &p.HoldingsKnown,
+			&p.InventoryAt, &p.InventoryErr, &p.InventoryRetryAt, &p.HoldingsKnown,
 			&p.Episodes, &p.Held, &p.Playable, &p.OnTheWay, &p.Missing, &p.Failed, &p.Unaired,
 			&season, &episode, &title, &at); err != nil {
 			rows.Close()
