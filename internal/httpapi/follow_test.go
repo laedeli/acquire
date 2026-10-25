@@ -95,7 +95,8 @@ func TestRequestsFollowAndSayWhatGrabsOnItsOwn(t *testing.T) {
 	}
 
 	_, missing := call(t, h, http.MethodGet, "/api/missing", "")
-	if missing["autoGrab"] != false || missing["autoGrabNew"] != false || missing["newWithinDays"] != float64(14) || missing["airDelayHours"] != float64(30) {
+	if missing["autoGrab"] != false || missing["autoGrabNew"] != false || missing["newWithinDays"] != float64(14) || missing["airDelayHours"] != float64(30) ||
+		missing["airTimes"] != "tvmaze" || missing["airDelayAfterAirstampMinutes"] != float64(60) {
 		t.Errorf("GET /api/missing -> %v", missing)
 	}
 	_, doc := call(t, h, http.MethodGet, "/api/settings/search", "")

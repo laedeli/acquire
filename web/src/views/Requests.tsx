@@ -20,18 +20,35 @@ import { ago } from '../lib/format'
 /** A request that follows a series: grabbed episode by episode, never as a whole. */
 const followsSeries = (w: Wanted) => w.progress?.kind === 'series'
 
-/** What a request that follows its title says of what is grabbed on its own. */
-function onItsOwn(w: Wanted): string {
-  if (!w.progress || w.status === 'fulfilled' || w.approval === 'declined') return ''
-  if (w.approval === 'awaiting') return 'an admin approves or declines it in the requests tab'
-  if (w.progress.kind === 'series')
-    return w.autoGrab
-      ? 'new episodes are grabbed on their own after they air, as releases turn up'
-      : 'its episodes are grabbed from the missing tab — grabbing on its own is off in settings'
-  if (w.status === 'waiting' || w.status === 'pending')
+/**
+ * What a request that follows its title says of how it is grabbed: on its own
+ * as the server says (autoGrab: the search and grab settings, the request
+ * approved, a title whose releases acquire can tell, a movie dated to watch at
+ * home), else by whom and where — an admin, on this row once the movie is out,
+ * or in the missing tab. The row's buttons are an admin's, and there only while
+ * the movie is pending or failed.
+ */
+function onItsOwn(w: Wanted, admin: boolean): string {
+  const p = w.progress
+  if (!p || w.status === 'fulfilled' || w.approval === 'declined') return ''
+  if (w.approval === 'awaiting') return admin ? 'approve it, or decline it' : 'an admin approves or declines it'
+  if (p.kind === 'series') {
+    if (w.autoGrab) return 'new episodes are grabbed on their own after they air, as releases turn up'
+    const who = admin ? 'its episodes are grabbed from the missing tab' : 'an admin grabs its episodes in the missing tab'
+    return p.handsOff ? who : who + ' — grabbing on its own is off in settings'
+  }
+  const guessed = p.movie?.releaseKind === 'theatrical'
+  const here = admin ? 'grab it here or in the missing tab' : 'an admin grabs it'
+  if (w.status === 'waiting') {
+    if (guessed) return 'not grabbed on its own while TMDB dates it in cinemas only; once it is searched, ' + here
     return w.autoGrab
       ? 'grabbed on its own once it is out and a release turns up'
-      : 'grabbed from here or the missing tab — grabbing on its own is off in settings'
+      : 'once it is out, ' + here + ' — grabbing on its own is off in settings'
+  }
+  if (w.status === 'pending' || w.status === 'failed') {
+    if (guessed) return 'not grabbed on its own while TMDB dates it in cinemas only: ' + here
+    return w.autoGrab ? 'grabbed on its own once a release turns up' : here + ' — grabbing on its own is off in settings'
+  }
   return ''
 }
 
@@ -96,7 +113,7 @@ export function Requests({
       render: (w) => {
         const d = activeFor(w)
         const p = w.progress
-        const own = onItsOwn(w)
+        const own = onItsOwn(w, admin)
         return (
           <div>
             <Text variant="muted" as="div">

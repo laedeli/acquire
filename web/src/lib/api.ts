@@ -39,8 +39,16 @@ export interface RequestProgress {
   tmdbStatus?: string
   /** The series still runs: more episodes are to come. */
   running: boolean
+  /** No automatic grab takes anything of it: its releases name no season and episode acquire can tell (an anime, a daily show). */
+  handsOff?: boolean
+  /** A request created the title; how many seasons TMDB lists of a series; whether its episodes were read. */
+  fromRequest?: boolean
+  seasons?: number
+  episodesRead?: boolean
   inventoryAt: string | null
   inventoryError?: string
+  /** When a title TMDB did not know is read again. */
+  inventoryRetryAt?: string
   holdingsKnown: boolean
   /** Of a series' monitored episodes. */
   episodes: number
@@ -340,8 +348,12 @@ export interface SearchSettings {
   /** The new things are grabbed on their own: what aired in the last newWithinDays days, and what was requested. */
   autoGrabNew: boolean
   newWithinDays: number
-  /** How long an automatic grab waits after an air date (00:00 UTC of the day TMDB dates); 0: from the air date on. */
+  /** How long an automatic grab waits after an air date (00:00 UTC of the day TMDB dates) when the air time is not known; 0: from the air date on. */
   airDelayHours: number
+  /** Where the moment an episode airs comes from: TVmaze's public schedule, or off — the air date alone. */
+  airTimes: 'tvmaze' | 'off'
+  /** How long an automatic grab waits after the moment an episode airs, when it is known. */
+  airDelayAfterAirstampMinutes: number
   revision: number
   updatedAt?: string
 }
@@ -519,6 +531,8 @@ export function makeApi(base: string, token: string | undefined, onUnauthorized:
           autoGrabNew: s.autoGrabNew,
           newWithinDays: s.newWithinDays,
           airDelayHours: s.airDelayHours,
+          airTimes: s.airTimes,
+          airDelayAfterAirstampMinutes: s.airDelayAfterAirstampMinutes,
         }),
       }),
     requestSettings: () => call<RequestSettings>('settings/requests'),
@@ -603,8 +617,10 @@ export type MissingAnswer = {
   /** Whether the new things are grabbed on their own (search.autoGrabNew): aired in the last newWithinDays days, or requested. */
   autoGrabNew: boolean
   newWithinDays: number
-  /** How long an automatic grab waits after an air date (search.airDelayHours). */
+  /** How long an automatic grab waits after an air date (search.airDelayHours), and after the moment an episode airs when it is known (search.airTimes). */
   airDelayHours?: number
+  airTimes?: 'tvmaze' | 'off'
+  airDelayAfterAirstampMinutes?: number
 }
 
 // MissingRow is one thing we want and do not have, and what is under way for it.

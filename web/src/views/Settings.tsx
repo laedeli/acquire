@@ -118,7 +118,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="new episodes and requests"
           error={fields.autoGrabNew}
-          hint={`on: an episode that aired in the last ${newDays(draft)} days, the episodes of a series someone requested, and a requested movie once it is out are grabbed once the wait after the air date has passed and a release turns up — in a source's newest releases, or when the backlog sweep finds one; a request that awaits an admin's approval waits for it. off: they wait in the missing tab like the rest.`}
+          hint={`on: an episode that aired in the last ${newDays(draft)} days, the episodes of a series someone requested, and a requested movie once it is out to watch at home are grabbed as soon as a release turns up after the wait below — in a source's newest releases, or when the backlog sweep finds one. Never on their own: what a request awaiting an admin's approval asks for, a movie TMDB dates in cinemas only, a series whose releases name no season and episode (an anime, a daily show). off: they wait in the missing tab like the rest.`}
         >
           <Switch
             checked={draft.autoGrabNew}
@@ -136,7 +136,7 @@ function SearchAndGrab({ api }: { api: Api }) {
         <Field
           label="wait after the air date (hours)"
           error={fields.airDelayHours}
-          hint="TMDB dates the day an episode airs, not the hour: an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out —, so the broadcast has happened. A release published before the air date is taken for a fake and blocked for the episode. 0: from the air date on."
+          hint="TMDB dates the day an episode airs, not the hour: for an episode whose air time is not known, an automatic grab waits this long after 00:00 UTC of that day — and of the day a requested movie comes out to watch at home. A release published before the day began where the series comes from is taken for a fake and skipped; a person may still pick it. 0: from the air date on."
         >
           <Input
             type="number"
@@ -145,10 +145,37 @@ function SearchAndGrab({ api }: { api: Api }) {
           />
         </Field>
       </div>
+      <div className="acq__settings-row">
+        <Field
+          label="exact air times"
+          error={fields.airTimes}
+          hint="TVmaze: acquire reads the moment an episode airs from TVmaze's public schedule, asking by the series' TVDB or IMDb id and nothing else, again with every read of TMDB; an automatic grab then takes nothing published more than 30 minutes before it. Off: an episode is told by its air date alone."
+        >
+          <Select
+            value={draft.airTimes}
+            onChange={(e) => setDraft({ ...draft, airTimes: e.currentTarget.value as SearchSettings['airTimes'] })}
+            options={[
+              { label: "TVmaze's schedule", value: 'tvmaze' },
+              { label: 'off: the air date alone', value: 'off' },
+            ]}
+          />
+        </Field>
+        <Field
+          label="wait after it airs (minutes)"
+          error={fields.airDelayAfterAirstampMinutes}
+          hint="how long an automatic grab waits after the moment an episode airs, when its air time is known. 0: from then on."
+        >
+          <Input
+            type="number"
+            value={String(draft.airDelayAfterAirstampMinutes)}
+            onChange={(e) => setDraft({ ...draft, airDelayAfterAirstampMinutes: Number(e.currentTarget.value) || 0 })}
+          />
+        </Field>
+      </div>
       <Field
         label="everything missing"
         error={fields.autoGrab}
-        hint="on: the backlog sweep and the sources' newest releases grab the best release of whatever is missing, the older backlog too, within the floor and the downloads at once above — never a season pack for one episode, never a title whose holdings the catalog has not told. off: the sweep only searches, and the rest of the backlog is grabbed from the missing tab."
+        hint="on: the backlog sweep and the sources' newest releases grab the best release of whatever is missing, the older backlog too, within the floor and the downloads at once above — never a season pack for one episode, a title whose holdings the catalog has not told, a movie in cinemas only, or an anime or a daily show. off: the sweep only searches, and the rest of the backlog is grabbed from the missing tab."
       >
         <Switch
           checked={draft.autoGrab}
@@ -213,7 +240,7 @@ function Requests({ api }: { api: Api }) {
       {error && <Text variant="muted">{error}</Text>}
       <Field
         label="approve requests"
-        hint="on: anyone's request is approved at once, and what it asks for is grabbed as the search and grab settings say. off: a request from someone who is not an admin awaits an admin's approval in the requests tab — its title is followed meanwhile, nothing of it searched or grabbed on its own. An admin's own request is always approved at once; turning this on does not approve the requests already waiting."
+        hint="on: anyone's request is approved at once, and what it asks for is grabbed as the search and grab settings say. off: a request from someone who is not an admin awaits an admin's approval in the requests tab, and changes nothing until then — a title acquire tracks goes on as before, one it does not is only read from TMDB, nothing of it searched or grabbed. An admin's own request is always approved at once; turning this on does not approve the requests already waiting."
       >
         <Switch
           checked={draft.autoApprove}

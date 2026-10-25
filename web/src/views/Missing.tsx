@@ -149,8 +149,20 @@ function holdingsReason(reason: string | undefined, one = false): string {
 }
 
 /** What is grabbed on its own, as the search and grab settings say: the header's line. */
-function onItsOwn(p: Pick<MissingAnswer, 'autoGrab' | 'autoGrabNew' | 'newWithinDays' | 'airDelayHours'>): string {
-  const wait = p.airDelayHours ? `, ${formatCount(p.airDelayHours)} hours after their air date` : ''
+type Policy = Pick<MissingAnswer, 'autoGrab' | 'autoGrabNew' | 'newWithinDays' | 'airDelayHours' | 'airTimes' | 'airDelayAfterAirstampMinutes'>
+
+/** When an automatic grab takes an episode, as the settings have it: ", an hour after it airs (else 30 hours after its air date)". */
+function grabbedWhen(p: Policy): string {
+  const date = p.airDelayHours ? `${formatCount(p.airDelayHours)} hours after its air date` : 'from its air date on'
+  if (p.airTimes === 'off') return p.airDelayHours ? `, ${date}` : ''
+  const m = p.airDelayAfterAirstampMinutes ?? 0
+  const stamp =
+    m === 0 ? 'from the moment it airs' : m === 60 ? 'an hour after it airs' : m % 60 === 0 ? `${m / 60} hours after it airs` : `${m} minutes after it airs`
+  return `, ${stamp} (else ${date})`
+}
+
+function onItsOwn(p: Policy): string {
+  const wait = grabbedWhen(p)
   if (p.autoGrab) return `everything missing is grabbed on its own${wait}, within the limits in settings`
   if (p.autoGrabNew)
     return `episodes that aired in the last ${formatCount(p.newWithinDays || 14)} days and what was requested are grabbed on their own${wait}; the rest is grabbed from here`
@@ -171,7 +183,7 @@ export function Missing({ api, admin, tick }: { api: Api; admin: boolean; tick: 
   const [rows, setRows] = useState<MissingRow[]>([])
   const [counts, setCounts] = useState<Counts | null>(null)
   const [holdings, setHoldings] = useState<HoldingsSummary | null>(null)
-  const [policy, setPolicy] = useState<Pick<MissingAnswer, 'autoGrab' | 'autoGrabNew' | 'newWithinDays' | 'airDelayHours'> | null>(null)
+  const [policy, setPolicy] = useState<Policy | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState('')
   const [picking, setPicking] = useState<MissingRow | null>(null)
@@ -194,7 +206,8 @@ export function Missing({ api, admin, tick }: { api: Api; admin: boolean; tick: 
       const [m, c] = await Promise.all([api.missing(LIMIT), api.counts()])
       setRows(m.missing)
       setHoldings(m.holdings)
-      setPolicy({ autoGrab: m.autoGrab, autoGrabNew: !!m.autoGrabNew, newWithinDays: m.newWithinDays, airDelayHours: m.airDelayHours })
+      setPolicy({ autoGrab: m.autoGrab, autoGrabNew: !!m.autoGrabNew, newWithinDays: m.newWithinDays, airDelayHours: m.airDelayHours,
+        airTimes: m.airTimes, airDelayAfterAirstampMinutes: m.airDelayAfterAirstampMinutes })
       setCounts(c)
       setLoadError('')
       setLoadedAt(new Date().toISOString())

@@ -887,8 +887,9 @@ func (s *Server) calendar(w http.ResponseWriter, r *http.Request) {
 // everything currently failing is the least useful version of itself. It says
 // how many titles' holdings are unknown, and why, since those titles are left
 // out, and what grabs on its own: everything missing (search.autoGrab), or
-// the new things (search.autoGrabNew, aired in the last newWithinDays days),
-// airDelayHours after their air date.
+// the new things (search.autoGrabNew, aired in the last newWithinDays days) —
+// airDelayAfterAirstampMinutes after an episode airs when its air time is
+// known (airTimes), airDelayHours after its air date when not.
 func (s *Server) missing(w http.ResponseWriter, r *http.Request) {
 	out, err := s.st.Missing(r.Context(), intParam(r, "limit", 500, 1, 5000))
 	if err != nil {
@@ -902,7 +903,8 @@ func (s *Server) missing(w http.ResponseWriter, r *http.Request) {
 	}
 	pol := s.svc.GrabPolicy(r.Context())
 	writeJSON(w, 200, map[string]any{"missing": out, "holdings": holdings,
-		"autoGrab": pol.AutoGrab, "autoGrabNew": pol.AutoGrabNew, "newWithinDays": pol.NewWithinDays, "airDelayHours": pol.AirDelayHours})
+		"autoGrab": pol.AutoGrab, "autoGrabNew": pol.AutoGrabNew, "newWithinDays": pol.NewWithinDays, "airDelayHours": pol.AirDelayHours,
+		"airTimes": pol.AirTimes, "airDelayAfterAirstampMinutes": pol.AirDelayAfterAirstampMinutes})
 }
 
 func (s *Server) counts(w http.ResponseWriter, r *http.Request) {

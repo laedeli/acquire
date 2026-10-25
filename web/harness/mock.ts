@@ -176,6 +176,8 @@ export function mockApi(scenario: Scenario): Api {
         autoGrabNew: scenario === 'backlog',
         newWithinDays: 14,
         airDelayHours: 30,
+        airTimes: 'tvmaze',
+        airDelayAfterAirstampMinutes: 60,
       }
       return pause(answer, 120)
     },
@@ -458,7 +460,7 @@ export function mockSubtitlesApi(scenario: SubtitleScenario, chinese: SubtitleCh
     // the rest of the settings view, so it renders whole
     searchSettings: async () =>
       pause<SearchSettings>({ preferProtocol: 'usenet', storageFloorGb: 50, maxConcurrentGrabs: 3, autoGrab: false,
-        autoGrabNew: true, newWithinDays: 14, airDelayHours: 30, revision: 1 }),
+        autoGrabNew: true, newWithinDays: 14, airDelayHours: 30, airTimes: 'tvmaze', airDelayAfterAirstampMinutes: 60, revision: 1 }),
     requestSettings: async () => pause<RequestSettings>({ autoApprove: false, revision: 1 }),
     saveRequestSettings: async (s: RequestSettings) => pause({ ...s, revision: s.revision + 1 }),
     profiles: async () =>
