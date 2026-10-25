@@ -255,8 +255,8 @@ func TestTVmazeRefusingLeavesTheSeriesUnread(t *testing.T) {
 	run = r2.settle(t, false)
 	bad, _ := r2.svc.st.TitleByID(ctx, "series:990721")
 	good, _ := r2.svc.st.TitleByID(ctx, "series:990722")
-	if run.ScheduleError != "" || run.Scheduled != 1 || bad.ScheduleAt != nil || !strings.Contains(bad.ScheduleError, "cannot be read") ||
-		good.ScheduleAt == nil {
+	if run.ScheduleFailures != 1 || run.ScheduleStopped || run.Scheduled != 1 || bad.ScheduleAt != nil ||
+		!strings.Contains(bad.ScheduleError, "cannot be read") || good.ScheduleAt == nil {
 		t.Errorf("an answer that cannot be read: %+v; %+v; %+v", run, bad, good)
 	}
 }

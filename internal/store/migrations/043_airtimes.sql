@@ -6,7 +6,11 @@
 -- titles: schedule_version is the version of the rules a series' air times
 -- were read by (0: before these): a series read by an earlier one is read
 -- again first, and nothing of it is grabbed on its own until it is.
-ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_version int NOT NULL DEFAULT 0;
+-- schedule_down is set while the source's last answer for the series was no
+-- answer — out of reach, failing, limiting, refusing, unreadable —: it is
+-- read after the series not tried yet, and counted as failing.
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_version int     NOT NULL DEFAULT 0;
+ALTER TABLE titles ADD COLUMN IF NOT EXISTS schedule_down    boolean NOT NULL DEFAULT false;
 
 -- acquisition_targets: schedule_episode_id is the schedule source's id of the
 -- episode a read took for the target — the same episode on the next read,

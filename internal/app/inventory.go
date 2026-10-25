@@ -77,6 +77,10 @@ const (
 	// scheduleCalls bounds the calls to the schedule source one run makes:
 	// at TVmaze's pace, under 20 minutes of the run's 30.
 	scheduleCalls = 2000
+	// scheduleMisses is how many series in a row the schedule source fails
+	// for before a run asks it no more: one show it fails for does not keep
+	// the others from being read.
+	scheduleMisses = 3
 	// inventoryAtStart is how soon after acquire starts a scheduled run
 	// reads TMDB and the air times due — not hours later, when the schedule
 	// comes round: an upgrade's new rules are read at once.
@@ -102,13 +106,21 @@ type InventoryRun struct {
 	Left  bool   `json:"left"`
 	Error string `json:"error,omitempty"`
 	// Scheduled are the series whose air times were read, in ScheduleCalls
-	// calls to the schedule source; ScheduleError is why it stopped being
-	// asked this run, ScheduleLeft set when the run's calls to it were spent
-	// with air times still due.
-	Scheduled     int    `json:"scheduled"`
-	ScheduleCalls int    `json:"scheduleCalls"`
-	ScheduleError string `json:"scheduleError,omitempty"`
-	ScheduleLeft  bool   `json:"scheduleLeft,omitempty"`
+	// calls to the schedule source; ScheduleFailures the ones the source
+	// did not give them for — out of reach, failing, limiting, refusing,
+	// unreadable —, ScheduleError its last error; ScheduleStopped is set when
+	// the run stopped asking it, after scheduleMisses failures in a row, and
+	// ScheduleLeft when the run's calls to it were spent with air times still
+	// due.
+	Scheduled        int    `json:"scheduled"`
+	ScheduleCalls    int    `json:"scheduleCalls"`
+	ScheduleFailures int    `json:"scheduleFailures,omitempty"`
+	ScheduleError    string `json:"scheduleError,omitempty"`
+	ScheduleStopped  bool   `json:"scheduleStopped,omitempty"`
+	ScheduleLeft     bool   `json:"scheduleLeft,omitempty"`
+
+	// misses are the source's failures in a row, of different series.
+	misses int
 }
 
 // RequestInventory asks the worker to read TMDB: for the titles named first
@@ -237,7 +249,7 @@ func (s *Service) readSchedules(ctx context.Context, run *InventoryRun, failed b
 	}
 	for _, t := range due {
 		switch {
-		case ctx.Err() != nil, run.ScheduleError != "":
+		case ctx.Err() != nil, run.ScheduleStopped:
 			return
 		case run.ScheduleCalls+2 > scheduleCalls:
 			run.ScheduleLeft = true
@@ -296,8 +308,12 @@ func (s *Service) RefreshInventory(ctx context.Context, scheduled bool) (Invento
 				"%d removed, %d kept as they hold something; the air times of %d series read (%d call(s) to the schedule source)",
 				run.Titles, run.Followed, run.Calls, run.Failed, run.Added, run.AddedAired, run.Updated, run.Renumbered, run.Gone,
 				run.Removed, run.Kept, run.Scheduled, run.ScheduleCalls)
-			if run.ScheduleError != "" {
-				line += "; the schedule source stopped answering: " + run.ScheduleError
+			switch {
+			case run.ScheduleStopped:
+				line += fmt.Sprintf("; the schedule source failed for %d series in a row and was asked no more this run: %s",
+					scheduleMisses, run.ScheduleError)
+			case run.ScheduleFailures > 0:
+				line += fmt.Sprintf("; the schedule source failed for %d series, read again soon: %s", run.ScheduleFailures, run.ScheduleError)
 			}
 			if run.Left {
 				line += "; the run's budget is spent, what is still due is read on the next runs"
@@ -532,31 +548,37 @@ func (s *Service) readSchedule(ctx context.Context, titleID string, run *Invento
 // airs and how long it runs —, made into what each episode target is told by
 // (planSchedule). A show whose name is neither the series' nor one of its
 // aliases is another show behind the same id: none of its air times is
-// taken, and it is looked up again in a week. It reports false when the
-// source does not answer as it should — out of reach, failing, limiting,
-// refusing —: no other series would fare better this run. An answer that
-// cannot be read leaves the series unread, to be read again, and the run goes
-// on. Nothing fails of the series either way.
+// taken, and it is looked up again in a week. The source not answering as it
+// should — out of reach, failing, limiting, refusing, or answering what cannot
+// be read — leaves the series unread, to be read again; it reports false when
+// that is the scheduleMisses-th series in a row: no other series would fare
+// better this run. One show the source fails for does not keep the others
+// from being read. Nothing fails of the series either way.
 func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *InventoryRun) bool {
 	if t.TVDBID == 0 && t.IMDBID == "" {
 		_ = s.st.ScheduleFailed(ctx, t.ID, "no TVDB or IMDb id to look it up at TVmaze by; looked up again in a week", store.ScheduleUnknown)
 		return true
 	}
 	fail := func(err error, what string) bool {
-		switch {
-		case errors.Is(err, tvmaze.ErrNotFound):
+		if errors.Is(err, tvmaze.ErrNotFound) {
 			_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze does not know "+what+"; looked up again in a week", store.ScheduleUnknown)
-			return true
-		case errors.Is(err, tvmaze.ErrUnreadable):
-			log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
-			_ = s.st.ScheduleFailed(ctx, t.ID, err.Error()+"; read again on the next refresh", store.ScheduleDown)
-			return true
+			return answered(run)
 		}
-		// TVmaze not answering as it should (tvmaze.Unavailable): out of
-		// reach, failing, limiting, refusing.
+		// TVmaze not answering as it should (tvmaze.Unavailable) — out of
+		// reach, failing, limiting, refusing —, or answering what cannot be
+		// read: the series stays unread, to be read again.
+		reason := "TVmaze did not answer: " + err.Error()
+		if errors.Is(err, tvmaze.ErrUnreadable) {
+			reason = err.Error() + "; read again on the next refresh"
+		}
+		_ = s.st.ScheduleFailed(ctx, t.ID, reason, store.ScheduleDown)
+		run.ScheduleFailures++
 		run.ScheduleError = err.Error()
-		_ = s.st.ScheduleFailed(ctx, t.ID, "TVmaze did not answer: "+err.Error(), store.ScheduleDown)
-		return false
+		if run.misses++; run.misses >= scheduleMisses {
+			run.ScheduleStopped = true
+			return false
+		}
+		return true
 	}
 	id := t.ScheduleID
 	if id == 0 {
@@ -576,12 +598,12 @@ func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *Invent
 			t.Title, id, show.Name)
 		_ = s.st.ScheduleFailed(ctx, t.ID, fmt.Sprintf("TVmaze's show %d by its TVDB or IMDb id is %q, not this series: its air times are not taken; "+
 			"looked up again in a week", id, show.Name), store.ScheduleOtherShow)
-		return true
+		return answered(run)
 	}
 	targets, err := s.st.TitleTargets(ctx, t.ID)
 	if err != nil {
 		log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
-		return true
+		return answered(run)
 	}
 	rec := store.ScheduledShow{ID: id, Country: show.Country, Targets: planSchedule(t, show, targets, time.Now())}
 	switch show.Kind {
@@ -592,9 +614,16 @@ func (s *Service) readScheduleOf(ctx context.Context, t store.Title, run *Invent
 	}
 	if _, err := s.st.ApplySchedule(ctx, t.ID, rec); err != nil {
 		log.Printf("acquire inventory-refresh: the air times of %s: %v", t.Title, err)
-		return true
+		return answered(run)
 	}
 	run.Scheduled++
+	return answered(run)
+}
+
+// answered records that the schedule source answered for a series, which
+// ends a run of its failures; the run goes on asking it.
+func answered(run *InventoryRun) bool {
+	run.misses = 0
 	return true
 }
 

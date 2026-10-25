@@ -324,16 +324,26 @@ func (s *Service) AirTimesStatus(ctx context.Context) (AirTimesStatus, error) {
 type AirTimesMissing struct{ Status AirTimesStatus }
 
 func (e *AirTimesMissing) Error() string {
+	st := e.Status
 	why := ""
-	if e.Status.LastError != "" {
-		why = " (" + e.Status.LastError + ")"
+	if st.LastError != "" {
+		why = " (" + st.LastError + ")"
 	}
-	has, them := "have", "them"
-	if e.Status.Pending == 1 {
-		has, them = "has", "it"
+	never := st.Pending - st.Earlier
+	var what string
+	switch {
+	case st.Earlier == 0:
+		what = fmt.Sprintf("%d of the %d series that run %s no air times from TVmaze yet%s", never, st.Running, plural(never, "has", "have"), why)
+	case never == 0:
+		what = fmt.Sprintf("%d of the %d series that run %s read by an earlier version of acquire's rules, and %s read again%s",
+			st.Earlier, st.Running, plural(st.Earlier, "was", "were"), plural(st.Earlier, "is", "are"), why)
+	default:
+		what = fmt.Sprintf("%d of the %d series that run %s no air times from TVmaze yet, and %d %s read by an earlier version of "+
+			"acquire's rules and %s read again%s", never, st.Running, plural(never, "has", "have"), st.Earlier,
+			plural(st.Earlier, "was", "were"), plural(st.Earlier, "is", "are"), why)
 	}
-	return fmt.Sprintf("%d of the %d series that run %s no air times from TVmaze yet%s: nothing of %s is grabbed on its own until "+
-		"they are read, on the next refreshes — confirm to switch grabbing on its own on now", e.Status.Pending, e.Status.Running, has, why, them)
+	return what + fmt.Sprintf(": nothing of %s is grabbed on its own until %s read, on the next refreshes — confirm to switch "+
+		"grabbing on its own on now", plural(st.Pending, "it", "them"), plural(st.Pending, "it is", "they are"))
 }
 
 // PutSearchSettings is SaveSearchSettings as an admin writes the policy:

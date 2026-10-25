@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -90,7 +91,7 @@ func (s *Store) ApplySchedule(ctx context.Context, titleID string, show Schedule
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		UPDATE titles SET schedule_id = $2, schedule_at = now(), schedule_error = '', schedule_kind = $3, schedule_country = $4,
-		       schedule_version = $5, updated_at = now()
+		       schedule_version = $5, schedule_down = false, updated_at = now()
 		 WHERE id = $1`,
 		titleID, show.ID, show.Kind, show.Country, ScheduleVersion); err != nil {
 		return 0, err
@@ -171,7 +172,7 @@ func (s *Store) ScheduleFailed(ctx context.Context, titleID, reason string, how 
 		       schedule_kind = CASE WHEN $5 THEN '' ELSE schedule_kind END,
 		       schedule_country = CASE WHEN $5 THEN '' ELSE schedule_country END,
 		       schedule_version = CASE WHEN $3 THEN $6 ELSE schedule_version END,
-		       schedule_at = CASE WHEN $3 THEN now() ELSE schedule_at END, updated_at = now()
+		       schedule_at = CASE WHEN $3 THEN now() ELSE schedule_at END, schedule_down = NOT $3, updated_at = now()
 		 WHERE id = $1`, titleID, clipText(reason), read, read, other, ScheduleVersion); err != nil {
 		return err
 	}
@@ -212,24 +213,33 @@ type ScheduleEvery struct {
 	Running, Unknown, Other time.Duration
 }
 
+// movedHoldSQL is "an episode of the series t is held after TMDB moved it,
+// until the source is read again" (ScheduleMovedHold).
+var movedHoldSQL = `EXISTS (SELECT 1 FROM acquisition_targets x WHERE x.title_id = t.id AND x.schedule_hold = '` +
+	strings.ReplaceAll(ScheduleMovedHold, "'", "''") + `')`
+
 // SchedulesDue are the series whose air times are due to be read
 // (scheduleTrackedSQL): never read — or read by an earlier version of the
-// rules (ScheduleVersion) — first, and of them the ones with an episode near
-// its air date (nearAirSQL), then the ones that run, then the ones read
-// longest ago. failed narrows them to the series not read because the source
-// did not answer when it was last asked.
+// rules (ScheduleVersion) —, or with an episode held after TMDB moved it,
+// first; of them the ones the source has not failed for before the ones it
+// has (schedule_down), and the ones with an episode near its air date
+// (nearAirSQL) first; then the ones that run, then the ones read longest ago.
+// failed narrows them to the series to try again soon: not read because the
+// source did not answer when it was last asked, or with an episode held after
+// a move.
 func (s *Store) SchedulesDue(ctx context.Context, every ScheduleEvery, limit int, failed bool) ([]Title, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+titleCols+`
 		  FROM titles t
-		  CROSS JOIN LATERAL (SELECT `+runningSQL+` AS running) r
+		  CROSS JOIN LATERAL (SELECT `+runningSQL+` AS running, `+movedHoldSQL+` AS moved) r
 		 WHERE `+scheduleTrackedSQL+`
-		   AND (CASE WHEN NOT `+scheduleReadSQL+` THEN NOT $5 OR t.schedule_error <> ''
+		   AND (CASE WHEN r.moved THEN true
+		             WHEN NOT `+scheduleReadSQL+` THEN NOT $5 OR t.schedule_down OR t.schedule_error <> ''
 		             WHEN $5 THEN false
 		             WHEN t.schedule_id IS NULL THEN t.schedule_at < now() - make_interval(secs => $3::float8)
 		             WHEN r.running THEN t.schedule_at < now() - make_interval(secs => $2::float8)
 		             ELSE t.schedule_at < now() - make_interval(secs => $4::float8) END)
-		 ORDER BY `+scheduleReadSQL+`, `+nearAirSQL+` DESC, r.running DESC, t.schedule_at NULLS FIRST, t.id
+		 ORDER BY (`+scheduleReadSQL+` AND NOT r.moved), t.schedule_down, `+nearAirSQL+` DESC, r.running DESC, t.schedule_at NULLS FIRST, t.id
 		 LIMIT $1`, limit, every.Running.Seconds(), every.Unknown.Seconds(), every.Other.Seconds(), failed)
 	if err != nil {
 		return nil, err
@@ -251,31 +261,45 @@ func (s *Store) SchedulesDue(ctx context.Context, every ScheduleEvery, limit int
 // Read are read; Unknown are told by their air dates alone — the source does
 // not know them, they have no id to be asked by, or the source knows them
 // under another name; Pending are not read yet by these rules, and an
-// automatic grab takes nothing of them until they are. LastError is why the
-// source last failed to give a pending one's. Held are their episodes no
-// automatic grab takes until TMDB and the source agree, or it has an air time.
+// automatic grab takes nothing of them until they are — Earlier of them were
+// read by an earlier version of the rules, and are read again. LastError is
+// why the source last failed to give a pending one's. Of every series whose
+// air times matter, running or not: FailingEnded are the ones that do not
+// run whose last read the source did not answer (schedule_down); Held are
+// their episodes no automatic grab takes until TMDB and the source agree, or
+// it has an air time — HeldMoved of them after TMDB moved them, until the
+// source is read again.
 type AirTimes struct {
-	Running   int    `json:"running"`
-	Read      int    `json:"read"`
-	Unknown   int    `json:"unknown"`
-	Pending   int    `json:"pending"`
-	LastError string `json:"lastError,omitempty"`
-	Held      int    `json:"held"`
+	Running      int    `json:"running"`
+	Read         int    `json:"read"`
+	Unknown      int    `json:"unknown"`
+	Pending      int    `json:"pending"`
+	Earlier      int    `json:"earlier"`
+	LastError    string `json:"lastError,omitempty"`
+	FailingEnded int    `json:"failingEnded"`
+	Held         int    `json:"held"`
+	HeldMoved    int    `json:"heldMoved"`
 }
 
 // AirTimesOfRunning counts them.
 func (s *Store) AirTimesOfRunning(ctx context.Context) (AirTimes, error) {
 	var a AirTimes
 	err := s.pool.QueryRow(ctx, `
-		SELECT count(*),
-		       count(*) FILTER (WHERE `+scheduleReadSQL+` AND t.schedule_id IS NOT NULL),
-		       count(*) FILTER (WHERE `+scheduleReadSQL+` AND t.schedule_id IS NULL),
-		       count(*) FILTER (WHERE NOT `+scheduleReadSQL+`),
+		SELECT count(*) FILTER (WHERE r.running),
+		       count(*) FILTER (WHERE r.running AND `+scheduleReadSQL+` AND t.schedule_id IS NOT NULL),
+		       count(*) FILTER (WHERE r.running AND `+scheduleReadSQL+` AND t.schedule_id IS NULL),
+		       count(*) FILTER (WHERE r.running AND NOT `+scheduleReadSQL+`),
+		       count(*) FILTER (WHERE r.running AND NOT `+scheduleReadSQL+` AND t.schedule_at IS NOT NULL),
 		       COALESCE((array_agg(t.schedule_error ORDER BY t.updated_at DESC)
-		                   FILTER (WHERE NOT `+scheduleReadSQL+` AND t.schedule_error <> ''))[1], ''),
-		       COALESCE(sum((SELECT count(*) FROM acquisition_targets x WHERE x.title_id = t.id AND x.schedule_hold <> ''
-		                      AND x.monitored AND x.state <> 'held')), 0)
+		                   FILTER (WHERE r.running AND NOT `+scheduleReadSQL+` AND t.schedule_error <> ''))[1], ''),
+		       count(*) FILTER (WHERE NOT r.running AND t.schedule_down),
+		       COALESCE(sum(h.held), 0), COALESCE(sum(h.moved), 0)
 		  FROM titles t
-		 WHERE `+scheduleTrackedSQL+` AND `+runningSQL).Scan(&a.Running, &a.Read, &a.Unknown, &a.Pending, &a.LastError, &a.Held)
+		  CROSS JOIN LATERAL (SELECT `+runningSQL+` AS running) r
+		  CROSS JOIN LATERAL (SELECT count(*) AS held, count(*) FILTER (WHERE x.schedule_hold = $1) AS moved
+		                        FROM acquisition_targets x
+		                       WHERE x.title_id = t.id AND x.schedule_hold <> '' AND x.monitored AND x.state <> 'held') h
+		 WHERE `+scheduleTrackedSQL, ScheduleMovedHold).Scan(&a.Running, &a.Read, &a.Unknown, &a.Pending, &a.Earlier, &a.LastError,
+		&a.FailingEnded, &a.Held, &a.HeldMoved)
 	return a, err
 }

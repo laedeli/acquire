@@ -823,7 +823,7 @@ func TestGrabbingOnItsOwnWaitsForAirTimes(t *testing.T) {
 	_, err := r.svc.PutSearchSettings(ctx, on, 0, "admin", false)
 	var missing *AirTimesMissing
 	if !errors.As(err, &missing) || missing.Status.Pending != 1 ||
-		err.Error() != "1 of the 1 series that run has no air times from TVmaze yet: nothing of it is grabbed on its own until they are read, "+
+		err.Error() != "1 of the 1 series that run has no air times from TVmaze yet: nothing of it is grabbed on its own until it is read, "+
 			"on the next refreshes — confirm to switch grabbing on its own on now" {
 		t.Fatalf("switched on without air times: %v", err)
 	}
