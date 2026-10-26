@@ -453,3 +453,34 @@ func TestAGrabGivenUpEndsItsDownloadRow(t *testing.T) {
 		t.Errorf("a reservation under a cap of 1 with nothing in flight: %v", err)
 	}
 }
+
+// A grab is given up only while it is in flight: one imported, or failed,
+// since the caller read it is left as it is — its targets and its download
+// row too.
+func TestOnlyAGrabInFlightIsGivenUp(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 29, 1)
+	grabOn(t, s, "tg_done", id, eps[0], "nzbget", "1", 0)
+	if _, err := s.UpsertDownload(ctx, Download{Adapter: "nzbget", ClientJobID: "1", WantedID: "tg_done", State: "downloading"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HoldTarget(ctx, Hold{TargetID: eps[0], ItemID: "item-1", Source: "grab"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetTargetGrabState(ctx, "tg_done", GrabImported, "1 handed over"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.FreeTargetGrab(ctx, "tg_done", "given up"); !errors.Is(err, ErrNotInFlight) || n != 0 {
+		t.Fatalf("giving up an imported grab: %d %v", n, err)
+	}
+	if g, _ := s.GetTargetGrab(ctx, "tg_done"); g.State != GrabImported || g.Detail != "1 handed over" {
+		t.Errorf("the imported grab: %+v", g)
+	}
+	if st := stateOf(t, s, eps[0]); st.State != TargetHeld {
+		t.Errorf("its target: %+v", st)
+	}
+	if d, _ := s.GetDownload(ctx, "nzbget", "1"); d.State != "downloading" {
+		t.Errorf("its row: %+v", d)
+	}
+}

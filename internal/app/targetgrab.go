@@ -683,7 +683,10 @@ func (s *Service) cancelTargetGrab(ctx context.Context, adapter, jobID string) {
 		return
 	}
 	const why = "cancelled: its download was removed from the client; wanted again, that release blocked for it"
-	if _, err := s.st.FreeTargetGrab(ctx, g.ID, why); err != nil {
+	switch _, err := s.st.FreeTargetGrab(ctx, g.ID, why); {
+	case errors.Is(err, store.ErrNotInFlight):
+		return // imported or given up meanwhile
+	case err != nil:
 		log.Printf("acquire: give up the cancelled grab %s: %v", g.ID, err)
 		return
 	}
@@ -767,7 +770,10 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 			}
 		}
 		const why = "nothing was heard of its download for two days and the gateway does not know it: given up, wanted again"
-		if _, err := s.st.FreeTargetGrab(ctx, g.ID, why); err != nil {
+		switch _, err := s.st.FreeTargetGrab(ctx, g.ID, why); {
+		case errors.Is(err, store.ErrNotInFlight):
+			continue // imported or given up while the sweep ran: left as it is
+		case err != nil:
 			return freed, err
 		}
 		log.Printf("acquire: grab %s given up: %s", g, why)

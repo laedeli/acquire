@@ -368,26 +368,36 @@ func (s *Store) UnimportedTargetGrabs(ctx context.Context, quiet time.Duration, 
 	return out, rows.Err()
 }
 
+// ErrNotInFlight: a grab to give up is not in flight any more — done, or
+// given up already — and is left as it is.
+var ErrNotInFlight = errors.New("the grab is not in flight any more")
+
 // FreeTargetGrab fails a grab that will not finish — cancelled, or stale —
 // and frees its targets: those it reserved, and those in flight with it, go
 // back to wanted with the reason. It reports how many it freed. The grab's own
 // download row, if it still says the download runs, ends with it, saying why:
 // no event of it comes any more, and a row left running would hold a slot of
-// the downloads at once for good.
+// the downloads at once for good. Only a grab still in flight — pending,
+// grabbed or downloaded — is given up, whatever state the caller read it in:
+// one imported or failed meanwhile is left as it is (ErrNotInFlight).
 func (s *Store) FreeTargetGrab(ctx context.Context, id, reason string) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx,
-		`UPDATE target_grabs SET state = 'failed', detail = $2, updated_at = now() WHERE id = $1`, id, clipText(reason)); err != nil {
+	tag, err := tx.Exec(ctx, `UPDATE target_grabs SET state = 'failed', detail = $2, updated_at = now()
+		 WHERE id = $1 AND state IN ('pending','grabbed','downloaded')`, id, clipText(reason))
+	if err != nil {
 		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		return 0, ErrNotInFlight
 	}
 	if _, err := tx.Exec(ctx, endGrabDownloadSQL, id, clipText(reason)); err != nil {
 		return 0, err
 	}
-	tag, err := tx.Exec(ctx, `
+	tag, err = tx.Exec(ctx, `
 		UPDATE acquisition_targets
 		   SET state = CASE WHEN grab_id = $1 AND state IN ('grabbed','downloaded','waiting') THEN 'wanted' ELSE state END,
 		       detail = $2, reserved_by = '', updated_at = now()

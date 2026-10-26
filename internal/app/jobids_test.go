@@ -1273,3 +1273,24 @@ func TestTheNameCheck(t *testing.T) {
 		t.Error("an NZBGet job of a client acquire does not know any more is not checked")
 	}
 }
+
+// A stale grab that is imported while its client is asked about it is not
+// given up from the state it was read in: it stays imported.
+func TestTheStaleSweepGivesNothingUpThatMovedOnMeanwhile(t *testing.T) {
+	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB.h264-GRP")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "51")
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days'`)
+	r.gw.mu.Lock()
+	r.gw.onDescribe = func(string) {
+		appSQL(t, `UPDATE target_grabs SET state = 'imported', detail = '1 handed over' WHERE id = $1`, g.ID)
+	}
+	r.gw.mu.Unlock()
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 0 {
+		t.Fatalf("the sweep freed %d: %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported || got.Detail != "1 handed over" {
+		t.Errorf("the grab imported meanwhile: %+v", got)
+	}
+}
