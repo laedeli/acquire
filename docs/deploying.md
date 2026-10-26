@@ -613,6 +613,15 @@ of the other is imported for it, the grab is given up, and its episodes are
 wanted again — nothing blocked —, saying the client holds another download
 under that job id; the sweep grabs them again on its own.
 
+Once, at the upgrade: an NZBGet job handed over before 0.6.2 carries the name
+its source gave the NZB file. One named neither after its release nor as
+`Show Name S01E03` — a source that numbers its files, one that names them
+without `.nzb` (NZBGet then drops what follows the last dot), or a show
+renamed since the grab — reads as another download when its grab is settled
+this way: the grab is given up and its episodes are grabbed again, the
+finished download left in NZBGet. A download that finishes and is imported
+before the upgrade is not concerned.
+
 acquire 0.6.2 against an older gateway — one deployed on its own — imports
 nothing of what finished unseen, and its log says so on every run: give the
 gateway the image the chart pins.
