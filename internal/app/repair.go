@@ -212,6 +212,23 @@ func actsOn(job gateway.JobView) bool {
 	return job.State == "failed" || (job.State == "completed" && len(job.Files) > 0)
 }
 
+// runs reports whether a job's client works on it still: queued, or
+// downloading.
+func runs(job gateway.JobView) bool {
+	return job.State == "queued" || job.State == "downloading"
+}
+
+// runningEvent is the progress event a grab's download would have sent, from
+// what its client says of its job now.
+func runningEvent(g store.TargetGrab, job gateway.JobView) events.DownloadEvent {
+	return events.DownloadEvent{
+		Adapter: g.Adapter, ClientID: g.ClientJobID, WantedID: g.ID, Title: job.Title,
+		State: job.State, NativeState: job.NativeState, ProgressPct: job.ProgressPct, Downloaded: job.Downloaded,
+		SizeBytes: job.SizeBytes, SpeedBps: job.SpeedBps, EtaSec: job.EtaSec,
+		Seeders: job.Seeders, Leechers: job.Leechers, Health: job.Health,
+	}
+}
+
 // failUnseen hands a job its client says failed to the failed event's path,
 // as if the gateway had sent the event: its download row ended with the
 // client's word, and the grab, still handed over, failed by its release — the

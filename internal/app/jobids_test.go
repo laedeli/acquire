@@ -1321,3 +1321,46 @@ func TestTheRepairGivesNothingUpThatMovedOnMeanwhile(t *testing.T) {
 		t.Errorf("the grab imported meanwhile: %+v", got)
 	}
 }
+
+// A stale grab whose job its client works on still is not lost: the sweep
+// keeps it and refreshes its row from what the client says, so it is no
+// longer stale and its end is learned when it comes. A job under its id named
+// otherwise is another download's: the grab is given up, wanted again.
+func TestTheStaleSweepKeepsAGrabItsClientWorksOn(t *testing.T) {
+	const one, two = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E02.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, two)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	slow := r.grabOnJob(t, eps[0], "61")
+	other := r.grabOnJob(t, eps[1], "62")
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days'`)
+	running := func(job, name string) gateway.JobView {
+		v := completedView(job, name)
+		v.State, v.NativeState, v.ProgressPct, v.Downloaded, v.Files = "downloading", "DOWNLOADING", 40, 400, nil
+		return v
+	}
+	r.describes("61", running("61", one))
+	r.describes("62", running("62", "Some.Other.Download.2023.1080p.WEB.h264-GRP"))
+
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 0 {
+		t.Fatalf("the sweep freed %d: %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, slow.ID); got.State != store.GrabGrabbed {
+		t.Errorf("the grab still downloading: %+v", got)
+	}
+	if d, _ := r.svc.st.GetDownload(ctx, "nzbget", "61"); d.WantedID != slow.ID || d.State != "downloading" || d.ProgressPct != 40 {
+		t.Errorf("its row: %+v", d)
+	}
+	stale, _ := r.svc.st.StaleTargetGrabs(ctx, 48*time.Hour)
+	for _, g := range stale {
+		if g.ID == slow.ID {
+			t.Error("the grab still downloading is stale after the sweep")
+		}
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, other.ID); got.State != store.GrabFailed {
+		t.Errorf("the grab whose id holds another running download: %+v", got)
+	}
+	if st := target(t, r.svc, eps[1].ID); st.State != store.TargetWanted {
+		t.Errorf("its target: %+v", st)
+	}
+}

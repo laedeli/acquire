@@ -711,8 +711,9 @@ const staleGrabAge = 48 * time.Hour
 // two days and the gateway does not know, by the grab's id or by its client
 // job: a hand-over that died before its job was bound, a job its client lost,
 // events that never came. Their targets are wanted again. Before one is given
-// up, its client is asked what its job is: one that completed is imported,
-// not given up (finishedUnseen). A grab whose job id the client gave to a
+// up, its client is asked what its job is: one that completed is imported and
+// one that failed failed, not given up, and one the client works on still is
+// kept, its row refreshed (finishedUnseen). A grab whose job id the client gave to a
 // newer grab since is given up without asking: its download is gone, and the
 // job the id names is the newer grab's. A gateway that cannot be asked gives
 // nothing up: no grab is given up on a guess.
@@ -768,6 +769,9 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 				continue
 			case settled == unseenForeign:
 				continue // given up to the other download, its targets wanted again
+			case settled == unseenRunning:
+				log.Printf("acquire: stale grab %s: its client works on its download still; kept, its row refreshed", g)
+				continue
 			}
 		}
 		const why = "nothing was heard of its download for two days and the gateway does not know it: given up, wanted again"
@@ -801,16 +805,21 @@ const (
 	// nothing of it taken for the grab, which is given up, its targets
 	// wanted again (giveUpToAnother).
 	unseenForeign
+	// unseenRunning: its client works on its job still; kept, its row
+	// showing what the client says.
+	unseenRunning
 )
 
 // finishedUnseen asks a stale grab's client, through the gateway, what its
 // job is, and settles one that ended as its event would have (as RepairGrabs
-// does): a completed one imported, a failed one failed by its release. A job
-// the client does not know, one not finished or without files, and a gateway
-// older than the question are no reason to keep the grab; nor is a client the
-// gateway does not know that acquire no longer has, or has disabled — the
-// gateway is told no such client. A gateway or a client that cannot be asked
-// is: the error says why.
+// does): a completed one imported, a failed one failed by its release. One
+// its client works on still is not lost, only unseen: the grab is kept, and
+// its row shows what the client says now — no longer stale, its end learned
+// when it comes, through the repair or the next ask. A job the client does not
+// know, one completed without files, and a gateway older than the question are
+// no reason to keep the grab; nor is a client the gateway does not know that
+// acquire no longer has, or has disabled — the gateway is told no such
+// client. A gateway or a client that cannot be asked is: the error says why.
 func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (unseen, error) {
 	job, err := s.gw.Describe(ctx, g.Adapter, g.ClientJobID)
 	switch {
@@ -825,7 +834,7 @@ func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (unsee
 		return unseenNothing, err
 	case err != nil:
 		return unseenNothing, err
-	case actsOn(job) && !s.jobIsGrabs(ctx, g, jobName(job.Title, job.Files)):
+	case (actsOn(job) || runs(job)) && !s.jobIsGrabs(ctx, g, jobName(job.Title, job.Files)):
 		s.giveUpToAnother(ctx, g, jobName(job.Title, job.Files))
 		return unseenForeign, nil
 	case job.State == "failed":
@@ -834,6 +843,9 @@ func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (unsee
 			return unseenNothing, err
 		}
 		return unseenFailed, nil
+	case runs(job):
+		_ = s.saveDownload(ctx, runningEvent(g, job), job.State)
+		return unseenRunning, nil
 	case job.State != "completed" || len(job.Files) == 0:
 		return unseenNothing, nil
 	}
