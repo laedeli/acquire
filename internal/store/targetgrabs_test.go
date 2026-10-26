@@ -243,9 +243,12 @@ func TestATargetGrabHoldsItsTargets(t *testing.T) {
 		again.State != GrabFailed || stateOf(t, s, eps[0]).State != TargetWanted {
 		t.Errorf("binding a failed grab: %+v %v", again, err)
 	}
-	byJob, err := s.FindTargetGrabByJob(ctx, "", "101")
+	byJob, err := s.FindTargetGrabByJob(ctx, "nzbget", "101")
 	if err != nil || byJob.ID != "tg_6" {
 		t.Fatalf("by job: %+v %v", byJob, err)
+	}
+	if _, err := s.FindTargetGrabByJob(ctx, "", "101"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a job id without its client found %v", err)
 	}
 	files, _ := s.GrabFiles(ctx, "tg_6")
 	if len(files) != 2 || files[0].State != "expected" {
@@ -709,8 +712,8 @@ func TestReservationsUnderTheCap(t *testing.T) {
 	if _, err := s.ReserveTargetGrabWithin(ctx, TargetGrab{ID: "tg_cap_late", TitleID: other}, more[0], more, 2); err == nil {
 		t.Error("reserved while two grabs are on their way")
 	}
-	if _, err := s.pool.Exec(ctx, `INSERT INTO downloads (adapter, client_job_id, state, title)
-		SELECT adapter, client_job_id, 'completed', release_title FROM target_grabs`); err != nil {
+	if _, err := s.pool.Exec(ctx, `INSERT INTO downloads (adapter, client_job_id, wanted_id, state, title)
+		SELECT adapter, client_job_id, id, 'completed', release_title FROM target_grabs`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.ReserveTargetGrabWithin(ctx, TargetGrab{ID: "tg_cap_free", TitleID: other}, more[0], more, 2); err != nil {

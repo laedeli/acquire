@@ -179,6 +179,9 @@ type fakeGateway struct {
 	unknownOnce bool
 	// seq gives each add a job id of its own (101, 102, …) instead of 101.
 	seq bool
+	// ids, while any are left, are the job ids the adds get in turn: a client
+	// that numbers its jobs anew gives ids it gave before.
+	ids []string
 	// addStatus answers an add with that status (and addBody) and no job; addDrop takes the
 	// add and closes the connection without an answer; addHold, while set,
 	// holds the answer until it is closed.
@@ -238,7 +241,10 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 				g.mu.Lock()
 			}
 			job := "101"
-			if g.seq {
+			switch {
+			case len(g.ids) > 0:
+				job, g.ids = g.ids[0], g.ids[1:]
+			case g.seq:
 				job = strconv.Itoa(100 + len(g.adds))
 			}
 			w.WriteHeader(http.StatusAccepted)

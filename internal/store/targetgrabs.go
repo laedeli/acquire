@@ -137,6 +137,11 @@ const reserveLock = 4207001
 // flight, grabs handed over the gateway has not reported yet, and other
 // reservations being handed over —, counted and taken under one lock, so two
 // grabbers at once cannot both take the last slot.
+//
+// A grab handed over counts until a download row of its own shows: one that
+// names it (wanted_id), not any row of its client job. A client that gave the
+// job id again has the ended row of an earlier grab under it, which says
+// nothing of this one (see JobOwner).
 func (s *Store) ReserveTargetGrabWithin(ctx context.Context, g TargetGrab, anchor string, covered []string, max int) (TargetGrab, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -154,7 +159,8 @@ func (s *Store) ReserveTargetGrabWithin(ctx context.Context, g TargetGrab, ancho
 			         WHERE g.created_at > now() - interval '1 hour'
 			           AND (g.state = 'pending'
 			                OR (g.state = 'grabbed' AND NOT EXISTS (SELECT 1 FROM downloads d
-			                                                         WHERE d.adapter = g.adapter AND d.client_job_id = g.client_job_id))))`).
+			                                                         WHERE d.adapter = g.adapter AND d.client_job_id = g.client_job_id
+			                                                           AND d.wanted_id = g.id))))`).
 			Scan(&n); err != nil {
 			return TargetGrab{}, err
 		}
@@ -264,10 +270,15 @@ func (s *Store) BindTargetGrab(ctx context.Context, g TargetGrab, detail string)
 		bound.ID, bound.TargetIDs, clipText(detail)); err != nil {
 		return TargetGrab{}, err
 	}
+	// A target's row is keyed by its client job: one an earlier grab of the
+	// same target left on a job id the client gave again is this grab's now.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO grab_targets (adapter, client_job_id, target_id, grab_id, state)
 		SELECT $1, $2, t, $3, 'expected' FROM unnest($4::text[]) AS t
-		ON CONFLICT DO NOTHING`, bound.Adapter, bound.ClientJobID, bound.ID, bound.TargetIDs); err != nil {
+		ON CONFLICT (adapter, client_job_id, target_id) DO UPDATE
+		   SET grab_id = EXCLUDED.grab_id, state = 'expected', file_path = '', episode_end = NULL, item_id = '',
+		       detail = '', updated_at = now()
+		 WHERE grab_targets.grab_id <> EXCLUDED.grab_id`, bound.Adapter, bound.ClientJobID, bound.ID, bound.TargetIDs); err != nil {
 		return TargetGrab{}, err
 	}
 	return bound, tx.Commit(ctx)
@@ -284,12 +295,15 @@ func (s *Store) UnbindGrabTarget(ctx context.Context, grabID, targetID string) e
 
 // StaleTargetGrabs are the grabs that may be stuck: pending, grabbed or
 // downloaded, with no word of them for age — the grab's own row and its
-// download's last event alike — and no import working on them.
+// download's last event alike — and no import working on them. A download
+// row is the grab's only when it names it: another grab's on the same job id
+// is no word of this one.
 func (s *Store) StaleTargetGrabs(ctx context.Context, age time.Duration) ([]TargetGrab, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+prefixCols("g", targetGrabCols)+`
 		  FROM target_grabs g
 		  LEFT JOIN downloads d ON g.client_job_id <> '' AND d.adapter = g.adapter AND d.client_job_id = g.client_job_id
+		                       AND d.wanted_id = g.id
 		 WHERE g.state IN ('pending','grabbed','downloaded')
 		   AND GREATEST(g.updated_at, COALESCE(d.updated_at, g.updated_at)) < now() - make_interval(secs => $1)
 		   AND NOT EXISTS (SELECT 1 FROM imports i WHERE i.wanted_id = g.id AND i.state IN ('pending','imported'))
@@ -350,21 +364,78 @@ func (s *Store) GetTargetGrab(ctx context.Context, id string) (TargetGrab, error
 	return g, err
 }
 
-// FindTargetGrabByJob finds the target grab of a client job: what a restarted
-// gateway's events need, since it no longer knows the grab's id. adapter ""
-// matches any client.
-func (s *Store) FindTargetGrabByJob(ctx context.Context, adapter, jobID string) (TargetGrab, error) {
-	if jobID == "" {
-		return TargetGrab{}, ErrNotFound
+// ── client job ids given again ─────────────────────────────────────────────
+//
+// A client's job id is not unique for ever. NZBGet numbers its jobs from 1
+// again when it restarts with an empty history — and acquire empties it, by
+// releasing every download it imported —, so the id an earlier grab got is
+// handed to a later one. A job id names the job its client holds under it
+// now, which is the newest grab's handed to it: every older grab on the same
+// id is about a download that is gone. A job id means nothing without its
+// client either: two clients number their jobs on their own.
+
+// JobGrab is a grab handed to a client job: a target grab's id or a
+// request's, and when the grab was made.
+type JobGrab struct {
+	WantedID  string
+	CreatedAt time.Time
+}
+
+// JobOwner is the grab a client job belongs to now: the newest handed to
+// (adapter, jobID), a target grab or a request's grab. ErrNotFound when none
+// was.
+func (s *Store) JobOwner(ctx context.Context, adapter, jobID string) (JobGrab, error) {
+	if adapter == "" || jobID == "" {
+		return JobGrab{}, ErrNotFound
 	}
-	g, err := scanTargetGrab(s.pool.QueryRow(ctx, `
-		SELECT `+targetGrabCols+` FROM target_grabs
-		 WHERE client_job_id = $2 AND ($1 = '' OR adapter = $1)
-		 ORDER BY created_at DESC LIMIT 1`, adapter, jobID))
+	var g JobGrab
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, created_at FROM (
+		  SELECT id, created_at FROM target_grabs WHERE adapter = $1 AND client_job_id = $2
+		  UNION ALL
+		  SELECT wanted_id, created_at FROM grabs WHERE adapter = $1 AND client_job_id = $2
+		) j ORDER BY created_at DESC LIMIT 1`, adapter, jobID).Scan(&g.WantedID, &g.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return TargetGrab{}, ErrNotFound
+		return JobGrab{}, ErrNotFound
 	}
 	return g, err
+}
+
+// JobReused reports whether a grab newer than the target grab grabID — a
+// target grab or a request's grab — was handed to the same client job: the
+// client gave the id again once grabID's download was gone, so what the job
+// is now is not grabID's. A grab acquire does not know is not reused.
+func (s *Store) JobReused(ctx context.Context, adapter, jobID, grabID string) (bool, error) {
+	if adapter == "" || jobID == "" {
+		return false, nil
+	}
+	var reused bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+		  SELECT 1 FROM target_grabs me
+		   WHERE me.id = $3
+		     AND (EXISTS (SELECT 1 FROM target_grabs t
+		                   WHERE t.adapter = $1 AND t.client_job_id = $2 AND t.id <> me.id AND t.created_at > me.created_at)
+		          OR EXISTS (SELECT 1 FROM grabs r
+		                      WHERE r.adapter = $1 AND r.client_job_id = $2 AND r.created_at > me.created_at)))`,
+		adapter, jobID, grabID).Scan(&reused)
+	return reused, err
+}
+
+// FindTargetGrabByJob finds the target grab a client job belongs to now —
+// what a restarted gateway's events need, since it no longer knows the grab's
+// id: the newest grab handed to the job (JobOwner), when that is a target
+// grab. An older grab on a job id given again is not found, its download
+// being gone, and neither is one of another client with the same job id.
+func (s *Store) FindTargetGrabByJob(ctx context.Context, adapter, jobID string) (TargetGrab, error) {
+	owner, err := s.JobOwner(ctx, adapter, jobID)
+	if err != nil {
+		return TargetGrab{}, err
+	}
+	if !IsTargetGrab(owner.WantedID) {
+		return TargetGrab{}, ErrNotFound
+	}
+	return s.GetTargetGrab(ctx, owner.WantedID)
 }
 
 // SetTargetGrabState records where a grab is and why.
@@ -504,14 +575,16 @@ func (s *Store) DeferTargetGrabRequest(ctx context.Context, id string, wait time
 // downloads table does not show yet. The table follows the gateway's events,
 // which arrive after the hand-over, so counting it alone lets a run of grabs
 // overshoot the limit on downloads at once. A pending reservation is not
-// counted: it is the grab being admitted.
+// counted: it is the grab being admitted. Only a row that names the grab
+// shows its download: the ended row an earlier grab left on a job id the
+// client gave again does not.
 func (s *Store) GrabsInFlight(ctx context.Context) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM target_grabs g
 		 WHERE g.state = 'grabbed' AND g.created_at > now() - interval '1 hour'
 		   AND NOT EXISTS (SELECT 1 FROM downloads d
-		                    WHERE d.adapter = g.adapter AND d.client_job_id = g.client_job_id)`).Scan(&n)
+		                    WHERE d.adapter = g.adapter AND d.client_job_id = g.client_job_id AND d.wanted_id = g.id)`).Scan(&n)
 	return n, err
 }
 

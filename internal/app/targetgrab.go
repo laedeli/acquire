@@ -514,7 +514,8 @@ func (s *Service) targetGrabNext(ctx context.Context) bool {
 // ── the download's events ──────────────────────────────────────────────────
 
 // targetGrabOf finds the target grab a download event is about: by the id the
-// gateway echoes, else — a restarted gateway forgot it — by the client job.
+// gateway echoes, else — a restarted gateway forgot it — by the client job,
+// whose grab is the newest handed to it (store.FindTargetGrabByJob).
 func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (store.TargetGrab, bool) {
 	if s.st == nil {
 		return store.TargetGrab{}, false
@@ -534,8 +535,13 @@ func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (st
 // add's answer was lost — to the event's job, and reports whether the event
 // moves anything: a grab with a client (bound now, or before) that is not done
 // (imported) nor given up (failed). A repeated or late event for a grab that
-// is done or given up moves nothing.
+// is done or given up moves nothing, and neither does one of a grab whose job
+// id the client gave to a newer grab since: its download is gone, and the job
+// is the newer grab's (store.JobReused).
 func (s *Service) inFlightGrab(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) (store.TargetGrab, bool, error) {
+	if reused, err := s.st.JobReused(ctx, ev.Adapter, ev.ClientID, g.ID); err != nil || reused {
+		return g, false, err
+	}
 	if g.State == store.GrabPending {
 		g.Adapter, g.ClientJobID = ev.Adapter, ev.ClientID
 		bound, err := s.st.BindTargetGrab(ctx, g, "grabbed")

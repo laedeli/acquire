@@ -297,16 +297,17 @@ func (s *Store) SetItemID(ctx context.Context, id, itemID string) error {
 	return err
 }
 
-// FindWantedByClientJob resolves a wanted id from a gateway job id (download
-// events carry client_job_id, not the wanted id — grabs bridges them).
-func (s *Store) FindWantedByClientJob(ctx context.Context, clientJobID string) (string, error) {
-	var id string
-	err := s.pool.QueryRow(ctx,
-		`SELECT wanted_id FROM grabs WHERE client_job_id=$1 ORDER BY created_at DESC LIMIT 1`, clientJobID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+// FindWantedByClientJob resolves the wanted id a client job's events stand for
+// when they carry none — a job a restarted gateway adopted: the grab the job
+// belongs to now (JobOwner), a request's or a target grab's, whose id the
+// gateway echoes as the wanted id too. A job id counts only with its client:
+// another client may number a job the same.
+func (s *Store) FindWantedByClientJob(ctx context.Context, adapter, clientJobID string) (string, error) {
+	owner, err := s.JobOwner(ctx, adapter, clientJobID)
+	if err != nil {
+		return "", err
 	}
-	return id, err
+	return owner.WantedID, nil
 }
 
 func (s *Store) RecordGrab(ctx context.Context, wantedID, adapter, clientJobID, source string) error {
@@ -406,8 +407,28 @@ type Download struct {
 //     (completed additionally pins 100% / full bytes);
 //   - "unknown" (NULL) peer counts never overwrite a known value;
 //   - a terminal row is absorbing: a late progress message cannot resurrect it.
+//
+// Those rules are for one download. A client may give a job id again once it
+// forgot the download that had it (see JobOwner): an event that names another
+// wanted id than an ended row's is a new download on that id, and replaces
+// the row — its own title and telemetry, started now — instead of being
+// absorbed by it or merged into it. Which of two grabs on an id an event is
+// about is the caller's to tell (JobReused): the store takes an event naming
+// a wanted id as the job's.
 func (s *Store) UpsertDownload(ctx context.Context, d Download) (Download, error) {
 	terminal := d.State == "completed" || d.State == "failed"
+	// What a new row of a terminal event holds: what the merge pins on a row
+	// the progress stream filled.
+	if d.State == "completed" {
+		d.ProgressPct, d.BytesDone = 100, max(d.BytesDone, d.BytesTotal)
+	}
+	if terminal {
+		d.SpeedBps, d.EtaSec = 0, nil
+	}
+	// replaces is true when the event is a new download on the job's id: the
+	// row ended, and the event names another wanted id.
+	const replaces = `(downloads.state IN ('completed','failed','cancelled') AND $3 <> ''
+	                   AND downloads.wanted_id IS DISTINCT FROM $3)`
 	row := s.pool.QueryRow(ctx,
 		`INSERT INTO downloads (adapter, client_job_id, wanted_id, title, state, native_state,
 		                        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
@@ -416,28 +437,30 @@ func (s *Store) UpsertDownload(ctx context.Context, d Download) (Download, error
 		         CASE WHEN $16 THEN now() ELSE NULL END)
 		 ON CONFLICT (adapter, client_job_id) DO UPDATE SET
 		   wanted_id   = COALESCE(NULLIF(EXCLUDED.wanted_id,''), downloads.wanted_id),
-		   title       = CASE WHEN EXCLUDED.title <> '' THEN EXCLUDED.title ELSE downloads.title END,
+		   title       = CASE WHEN EXCLUDED.title <> '' OR `+replaces+` THEN EXCLUDED.title ELSE downloads.title END,
 		   state       = EXCLUDED.state,
-		   native_state= CASE WHEN EXCLUDED.native_state <> '' THEN EXCLUDED.native_state
+		   native_state= CASE WHEN EXCLUDED.native_state <> '' OR `+replaces+` THEN EXCLUDED.native_state
 		                      ELSE downloads.native_state END,
-		   progress_pct= CASE WHEN NOT $16 THEN EXCLUDED.progress_pct
+		   progress_pct= CASE WHEN NOT $16 OR `+replaces+` THEN EXCLUDED.progress_pct
 		                      WHEN EXCLUDED.state = 'completed' THEN 100
 		                      ELSE downloads.progress_pct END,
-		   bytes_done  = CASE WHEN NOT $16 THEN EXCLUDED.bytes_done
+		   bytes_done  = CASE WHEN NOT $16 OR `+replaces+` THEN EXCLUDED.bytes_done
 		                      WHEN EXCLUDED.state = 'completed'
 		                        THEN GREATEST(downloads.bytes_done, downloads.bytes_total, EXCLUDED.bytes_total)
 		                      ELSE downloads.bytes_done END,
-		   bytes_total = CASE WHEN EXCLUDED.bytes_total > 0 THEN EXCLUDED.bytes_total
+		   bytes_total = CASE WHEN EXCLUDED.bytes_total > 0 OR `+replaces+` THEN EXCLUDED.bytes_total
 		                      ELSE downloads.bytes_total END,
 		   speed_bps   = CASE WHEN $16 THEN 0 ELSE EXCLUDED.speed_bps END,
 		   eta_sec     = CASE WHEN $16 THEN NULL ELSE EXCLUDED.eta_sec END,
-		   seeders     = COALESCE(EXCLUDED.seeders, downloads.seeders),
-		   leechers    = COALESCE(EXCLUDED.leechers, downloads.leechers),
-		   health      = COALESCE(EXCLUDED.health, downloads.health),
-		   error       = CASE WHEN EXCLUDED.error <> '' THEN EXCLUDED.error ELSE downloads.error END,
+		   seeders     = CASE WHEN `+replaces+` THEN EXCLUDED.seeders ELSE COALESCE(EXCLUDED.seeders, downloads.seeders) END,
+		   leechers    = CASE WHEN `+replaces+` THEN EXCLUDED.leechers ELSE COALESCE(EXCLUDED.leechers, downloads.leechers) END,
+		   health      = CASE WHEN `+replaces+` THEN EXCLUDED.health ELSE COALESCE(EXCLUDED.health, downloads.health) END,
+		   error       = CASE WHEN EXCLUDED.error <> '' OR `+replaces+` THEN EXCLUDED.error ELSE downloads.error END,
+		   started_at  = CASE WHEN `+replaces+` THEN now() ELSE downloads.started_at END,
 		   updated_at  = now(),
-		   finished_at = COALESCE(downloads.finished_at, EXCLUDED.finished_at)
-		 WHERE downloads.state NOT IN ('completed','failed') OR $16
+		   finished_at = CASE WHEN `+replaces+` THEN EXCLUDED.finished_at
+		                      ELSE COALESCE(downloads.finished_at, EXCLUDED.finished_at) END
+		 WHERE downloads.state NOT IN ('completed','failed') OR $16 OR `+replaces+`
 		 RETURNING adapter, client_job_id, COALESCE(wanted_id,''), title, state, native_state,
 		           progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
 		           seeders, leechers, health, error, started_at, updated_at, finished_at`,

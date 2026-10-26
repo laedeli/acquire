@@ -347,12 +347,12 @@ func (s *Service) OnCompleted(ctx context.Context, ev events.DownloadEvent) erro
 	}
 	wantedID := ev.WantedID
 	if wantedID == "" {
-		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
+		if id, err := s.st.FindWantedByClientJob(ctx, ev.Adapter, ev.ClientID); err == nil {
 			wantedID = id
 		}
 	}
-	if wantedID == "" {
-		return nil // not one of ours
+	if wantedID == "" || store.IsTargetGrab(wantedID) {
+		return nil // not one of ours, or a target grab's that is gone
 	}
 	w, err := s.st.GetWanted(ctx, wantedID)
 	if err != nil {
@@ -451,11 +451,11 @@ func (s *Service) OnFailed(ctx context.Context, ev events.DownloadEvent) error {
 	}
 	wantedID := ev.WantedID
 	if wantedID == "" {
-		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
+		if id, err := s.st.FindWantedByClientJob(ctx, ev.Adapter, ev.ClientID); err == nil {
 			wantedID = id
 		}
 	}
-	if wantedID == "" {
+	if wantedID == "" || store.IsTargetGrab(wantedID) {
 		return nil
 	}
 	detail := ev.Error
@@ -500,16 +500,29 @@ func (s *Service) OnProgress(ctx context.Context, ev events.DownloadEvent) error
 }
 
 // saveDownload upserts one client job's telemetry and streams it to subscribers.
+//
+// An event names the grab it is about: the wanted id the gateway was given.
+// A client may give a job id again once it forgot the download that had it
+// (store.JobOwner), so the id alone does not say which download an event is
+// of. An event of a target grab whose job id a newer grab got since is about
+// a download that is gone: the row is the newer grab's, and the event is
+// dropped.
 func (s *Service) saveDownload(ctx context.Context, ev events.DownloadEvent, state string) error {
 	if ev.Adapter == "" || ev.ClientID == "" {
 		return nil
 	}
 	wantedID := ev.WantedID
-	if wantedID == "" {
-		// A job the gateway adopted after a restart has no wanted id; recover it
-		// from our own grab record.
-		if id, err := s.st.FindWantedByClientJob(ctx, ev.ClientID); err == nil {
+	switch {
+	case wantedID == "":
+		// A job the gateway adopted after a restart has no wanted id: it is the
+		// grab's the job belongs to now, the newest handed to it — a request's
+		// or a target grab's.
+		if id, err := s.st.FindWantedByClientJob(ctx, ev.Adapter, ev.ClientID); err == nil {
 			wantedID = id
+		}
+	case store.IsTargetGrab(wantedID):
+		if reused, err := s.st.JobReused(ctx, ev.Adapter, ev.ClientID, wantedID); err == nil && reused {
+			return nil
 		}
 	}
 	d := store.Download{
