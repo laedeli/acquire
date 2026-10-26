@@ -11,6 +11,7 @@ import (
 
 	"github.com/laedeli/acquire/internal/endpoint"
 	"github.com/laedeli/acquire/internal/events"
+	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/release"
 	"github.com/laedeli/acquire/internal/store"
 )
@@ -667,28 +668,40 @@ const staleGrabAge = 48 * time.Hour
 // SweepStaleGrabs gives up the grabs in flight that nothing was heard of for
 // two days and the gateway does not know, by the grab's id or by its client
 // job: a hand-over that died before its job was bound, a job its client lost,
-// events that never came. Their targets are wanted again. A gateway that
-// cannot be asked gives nothing up: no grab is given up on a guess.
+// events that never came. Their targets are wanted again. Before one is given
+// up, its client is asked what its job is: one that completed is imported,
+// not given up (finishedUnseen). A grab whose job id the client gave to a
+// newer grab since is given up without asking: its download is gone, and the
+// job the id names is the newer grab's. A gateway that cannot be asked gives
+// nothing up: no grab is given up on a guess.
 func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 	stale, err := s.st.StaleTargetGrabs(ctx, staleGrabAge)
 	if err != nil || len(stale) == 0 || !s.gw.Enabled() {
 		return 0, err
 	}
-	jobs, err := s.gw.List(ctx)
+	known, err := s.trackedJobs(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("stale grabs: the gateway cannot be asked which downloads it has: %w", err)
 	}
-	known := map[string]bool{}
-	for _, j := range jobs {
-		if j.WantedItemID != "" {
-			known[j.WantedItemID] = true
-		}
-		known[j.Adapter+"/"+j.ClientJobID] = true
-	}
 	freed := 0
 	for _, g := range stale {
-		if known[g.ID] || (g.ClientJobID != "" && known[g.Adapter+"/"+g.ClientJobID]) {
+		reused, err := s.st.JobReused(ctx, g.Adapter, g.ClientJobID, g.ID)
+		if err != nil {
+			return freed, err
+		}
+		if known[g.ID] || (g.ClientJobID != "" && !reused && known[g.Adapter+"/"+g.ClientJobID]) {
 			continue
+		}
+		if g.ClientJobID != "" && !reused {
+			imported, err := s.finishedUnseen(ctx, g)
+			if err != nil {
+				log.Printf("acquire: stale grab %s kept for now: what became of its job cannot be asked: %v", g, err)
+				continue
+			}
+			if imported {
+				log.Printf("acquire: stale grab %s: its download completed unseen; imported, not given up", g)
+				continue
+			}
 		}
 		const why = "nothing was heard of its download for two days and the gateway does not know it: given up, wanted again"
 		if _, err := s.st.FreeTargetGrab(ctx, g.ID, why); err != nil {
@@ -703,9 +716,42 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 	return freed, nil
 }
 
+// finishedUnseen asks a stale grab's client, through the gateway, what its
+// job is, imports a completed one as its completed event would have (as
+// RepairGrabs does), and reports whether it did. A job the client does not
+// know, one not completed or without files, and a gateway older than the
+// question are no reason to keep the grab; nor is a client the gateway does
+// not know that acquire no longer has, or has disabled — the gateway is told
+// no such client. A gateway or a client that cannot be asked is: the error
+// says why.
+func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (bool, error) {
+	job, err := s.gw.Describe(ctx, g.Adapter, g.ClientJobID)
+	switch {
+	case errors.Is(err, gateway.ErrJobNotFound), errors.Is(err, gateway.ErrNoDescribe):
+		return false, nil
+	case errors.Is(err, gateway.ErrUnknownClient):
+		// A restarted gateway is told acquire's enabled clients shortly.
+		c, cerr := s.st.GetDownloadClient(ctx, g.Adapter)
+		if errors.Is(cerr, store.ErrNotFound) || (cerr == nil && !c.Enabled) {
+			return false, nil
+		}
+		return false, err
+	case err != nil:
+		return false, err
+	case job.State != "completed" || len(job.Files) == 0:
+		return false, nil
+	}
+	if err := s.OnCompleted(ctx, completedEvent(g, job)); err != nil && !errors.Is(err, errImportWaits) {
+		return false, err
+	}
+	return true, nil
+}
+
 // RecoverGrabs is the grab-recovery schedule: targets their release failed
-// are wanted again once their wait ran out (store.RecoverFailedTargets), and
-// grabs stuck in flight are given up (SweepStaleGrabs).
+// are wanted again once their wait ran out (store.RecoverFailedTargets), the
+// grabs whose download finished unseen are imported (RepairGrabs), and grabs
+// stuck in flight are given up (SweepStaleGrabs) — after the repair, so that
+// a download that completed is imported rather than given up.
 func (s *Service) RecoverGrabs(ctx context.Context) error {
 	n, err := s.st.RecoverFailedTargets(ctx)
 	if err != nil {
@@ -715,8 +761,9 @@ func (s *Service) RecoverGrabs(ctx context.Context) error {
 		log.Printf("acquire grab-recovery: %d failed target(s) wanted again, their failed releases blocked", n)
 		s.notify()
 	}
+	_, rerr := s.RepairGrabs(ctx)
 	_, err = s.SweepStaleGrabs(ctx)
-	return err
+	return errors.Join(rerr, err)
 }
 
 // mapEventFiles is the event's files as acquire sees them.

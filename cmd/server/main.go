@@ -108,6 +108,11 @@ func main() {
 	// The consumer starts at the latest offset, so downloads that began while
 	// acquire was down would be invisible. Ask the gateway what is in flight.
 	go svc.Reconcile(ctx)
+	// And what became of the grabs whose download finished unseen — a
+	// completed event lost, or an import swallowed by another download's on
+	// a job id the client gave again: once shortly after the start, then on
+	// the grab-recovery schedule.
+	go svc.RepairAtStart(ctx)
 
 	// Kafka consumer (download.client.* + catalog.item.* → svc reactions).
 	if cons, err := events.NewConsumer(cfg.KafkaBrokers, cfg.KafkaCertDir, cfg.KafkaTopicPrefix, cfg.KafkaGroupID); err != nil {

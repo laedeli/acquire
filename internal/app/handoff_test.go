@@ -192,6 +192,13 @@ type fakeGateway struct {
 	// jobs is what GET /api/v1/downloads lists; cancels what was cancelled.
 	jobs    []gateway.Job
 	cancels []string
+	// described is how GET /api/v1/downloads/{client}/{id} describes a job,
+	// by "client/id"; a job it has no view of is one the client does not
+	// know. describeStatus answers every such call with that status instead.
+	// describes is what was asked.
+	described      map[string]gateway.JobView
+	describeStatus int
+	describes      []string
 	// down answers every request 503, as a gateway out of service.
 	down bool
 }
@@ -274,6 +281,20 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 				jobs = []gateway.Job{}
 			}
 			_ = json.NewEncoder(w).Encode(jobs)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/downloads/"):
+			key := strings.TrimPrefix(r.URL.Path, "/api/v1/downloads/")
+			g.describes = append(g.describes, key)
+			if g.describeStatus != 0 {
+				http.Error(w, `{"error":"answered `+strconv.Itoa(g.describeStatus)+`"}`, g.describeStatus)
+				return
+			}
+			v, ok := g.described[key]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":"the client does not know job ` + key + `","native_state":"not-found"}`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(v)
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/downloads/"):
 			g.cancels = append(g.cancels, strings.TrimPrefix(r.URL.Path, "/api/v1/downloads/"))
 			w.WriteHeader(http.StatusNoContent)

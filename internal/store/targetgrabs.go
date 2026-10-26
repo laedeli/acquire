@@ -323,6 +323,42 @@ func (s *Store) StaleTargetGrabs(ctx context.Context, age time.Duration) ([]Targ
 	return out, rows.Err()
 }
 
+// UnimportedTargetGrabs are the grabs whose download may have finished
+// without their import being queued: downloaded with no import of their own —
+// its completed event's import swallowed, or waiting, on a job id the client
+// gave again —, and handed over (grabbed) with no word of them for quiet, the
+// grab's own row and its download's alike — a completed event lost, or sent
+// while acquire was away. At most limit of them, in no set order, so that
+// grabs the caller cannot settle yet — a job still running, a client that
+// cannot be asked — do not keep the others from their turn. What their
+// clients say of their jobs is the caller's to ask.
+func (s *Store) UnimportedTargetGrabs(ctx context.Context, quiet time.Duration, limit int) ([]TargetGrab, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+prefixCols("g", targetGrabCols)+`
+		  FROM target_grabs g
+		  LEFT JOIN downloads d ON d.adapter = g.adapter AND d.client_job_id = g.client_job_id AND d.wanted_id = g.id
+		 WHERE g.client_job_id <> ''
+		   AND NOT EXISTS (SELECT 1 FROM imports i WHERE i.wanted_id = g.id)
+		   AND (g.state = 'downloaded'
+		        OR (g.state = 'grabbed'
+		            AND GREATEST(g.updated_at, COALESCE(d.updated_at, g.updated_at)) < now() - make_interval(secs => $1)))
+		 ORDER BY random()
+		 LIMIT $2`, quiet.Seconds(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TargetGrab
+	for rows.Next() {
+		g, err := scanTargetGrab(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // FreeTargetGrab fails a grab that will not finish — cancelled, or stale —
 // and frees its targets: those it reserved, and those in flight with it, go
 // back to wanted with the reason. It reports how many it freed.

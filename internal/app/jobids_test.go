@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/laedeli/acquire/internal/events"
+	"github.com/laedeli/acquire/internal/gateway"
 	"github.com/laedeli/acquire/internal/store"
 )
 
@@ -245,7 +248,9 @@ func TestAJobIDTheClientGivesAgain(t *testing.T) {
 
 // (v) B's download finishes while A's import on the same job id still runs:
 // A's import is not replaced, nor B's targets moved on as if B's were queued;
-// B is downloaded, saying it waits.
+// B is downloaded, saying it waits. The repair leaves it waiting while A's
+// import runs, and queues B's — with the files B's client reports — once
+// A's is done.
 func TestAnImportStillRunningOnTheJobIDIsNotReplaced(t *testing.T) {
 	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
 	r := newTargetRig(t, one, three)
@@ -273,6 +278,32 @@ func TestAnImportStillRunningOnTheJobIDIsNotReplaced(t *testing.T) {
 	if g.State != store.GrabDownloaded || st.State != store.TargetDownloaded || !strings.Contains(st.Detail, "not copied into the library yet") ||
 		strings.Contains(st.Detail, "copying into the library") {
 		t.Fatalf("B after its completed event: %+v / %+v", g, st)
+	}
+
+	r.describes("3", completedView("3", three))
+	if run, err := r.svc.RepairGrabs(ctx); err != nil || run.Found != 1 || run.Waiting != 1 || run.Queued != 0 {
+		t.Fatalf("the repair while A's import runs: %+v %v", run, err)
+	}
+	if im, _ := r.svc.st.GetImport(ctx, "nzbget", "3"); im.WantedID != a.ID || im.State != store.ImportPending {
+		t.Fatalf("A's import after the repair: %+v", im)
+	}
+	r.svc.importNext(ctx)
+	if im, _ := r.svc.st.GetImport(ctx, "nzbget", "3"); im.WantedID != a.ID || im.State != store.ImportDone {
+		t.Fatalf("A's import, handed over: %+v", im)
+	}
+	if run, err := r.svc.RepairGrabs(ctx); err != nil || run.Queued != 1 {
+		t.Fatalf("the repair once A's import is done: %+v %v", run, err)
+	}
+	im, _ := r.svc.st.GetImport(ctx, "nzbget", "3")
+	if im.WantedID != b.ID || im.State != store.ImportPending || len(im.Files) != 1 || im.Files[0] != "/downloads/"+three {
+		t.Fatalf("B's import: %+v", im)
+	}
+	if st := target(t, r.svc, eps[2].ID); st.State != store.TargetDownloaded || !strings.Contains(st.Detail, "handing it over") {
+		t.Fatalf("B's target once its import is queued: %+v", st)
+	}
+	r.svc.importNext(ctx)
+	if st := target(t, r.svc, eps[2].ID); st.State != store.TargetHeld || st.HeldItemID != "item-S01E03" {
+		t.Fatalf("B's target after its import: %+v", st)
 	}
 }
 
@@ -356,5 +387,313 @@ func TestARequestsDownloadOnABusyJobIDFails(t *testing.T) {
 	}
 	if im := rig.importOf(t, "nzbget", "42"); im.WantedID != "tg_earlier" || im.State != store.ImportPending {
 		t.Errorf("the earlier import: %+v", im)
+	}
+}
+
+// describes makes nzbget's job describe as v.
+func (r *targetRig) describes(job string, v gateway.JobView) {
+	r.gw.mu.Lock()
+	defer r.gw.mu.Unlock()
+	if r.gw.described == nil {
+		r.gw.described = map[string]gateway.JobView{}
+	}
+	r.gw.described["nzbget/"+job] = v
+}
+
+// completedView is nzbget's job as the gateway describes it once its download
+// completed into folder, as the client reports it.
+func completedView(job, folder string) gateway.JobView {
+	return gateway.JobView{
+		Job:   gateway.Job{Adapter: "nzbget", ClientJobID: job, Title: folder, State: "completed", NativeState: "SUCCESS/ALL", ProgressPct: 100},
+		Files: []string{"/downloads/" + folder},
+	}
+}
+
+// writeDownload puts a finished download's file in the client's folder.
+func (r *targetRig) writeDownload(t *testing.T, folder string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(r.downloads, folder), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.downloads, folder, folder+".mkv"), []byte(folder), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// (vi) What 0.6.1 left behind: B's completed event met A's done import on
+// the job id the client gave B, queued nothing, and moved B to downloaded all
+// the same — "copying into the library", for ever. The repair imports it with
+// the files B's client reports, and the job's row becomes B's.
+func TestTheRepairImportsADownloadedGrabWithoutAnImport(t *testing.T) {
+	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, three)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	a := r.grabOnJob(t, eps[0], "3")
+	r.finish(t, a, map[string]string{one + "/" + one + ".mkv": "one"}, one)
+	r.svc.importNext(ctx)
+	appSQL(t, `UPDATE target_grabs SET created_at = now() - interval '10 days' WHERE id = $1`, a.ID)
+	b := r.grabOnJob(t, eps[2], "3")
+	appSQL(t, `UPDATE target_grabs SET state = 'downloaded', detail = 'downloaded', updated_at = now() - interval '1 hour' WHERE id = $1`, b.ID)
+	appSQL(t, `UPDATE acquisition_targets SET state = 'downloaded', detail = 'downloaded; copying into the library' WHERE grab_id = $1`, b.ID)
+	r.writeDownload(t, three)
+	r.describes("3", completedView("3", three))
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 1 || run.Queued != 1 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	im, _ := r.svc.st.GetImport(ctx, "nzbget", "3")
+	if im.WantedID != b.ID || im.State != store.ImportPending || len(im.Files) != 1 || im.Files[0] != "/downloads/"+three {
+		t.Fatalf("B's import: %+v", im)
+	}
+	if d, _ := r.svc.st.GetDownload(ctx, "nzbget", "3"); d.WantedID != b.ID || d.Title != three || d.State != "completed" {
+		t.Errorf("the job's row: %+v", d)
+	}
+	if st := target(t, r.svc, eps[2].ID); st.State != store.TargetDownloaded || !strings.Contains(st.Detail, "handing it over") {
+		t.Errorf("B's target: %+v", st)
+	}
+	if !r.svc.importNext(ctx) {
+		t.Fatal("B's import was not due")
+	}
+	bodies := r.cat.bodies()
+	if len(bodies) != 2 || bodies[1]["path"] != filepath.Join(r.downloads, three, three+".mkv") {
+		t.Fatalf("hand-overs: %v", bodies)
+	}
+	if st := target(t, r.svc, eps[2].ID); st.State != store.TargetHeld {
+		t.Errorf("B's target after its import: %+v", st)
+	}
+	if run, _ := r.svc.RepairGrabs(ctx); run.Found != 0 {
+		t.Errorf("a second repair found %+v", run)
+	}
+}
+
+// A grab whose completed event was lost — handed over, no word of it for a
+// quarter of an hour, its job not tracked by the gateway — is imported as its
+// event would have; one the gateway tracks, and one heard of just now, are
+// not asked about.
+func TestTheRepairImportsAGrabWhoseCompletedEventWasLost(t *testing.T) {
+	const one, two, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E02.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, two, three)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	lost := r.grabOnJob(t, eps[0], "11")
+	running := r.grabOnJob(t, eps[1], "12")
+	r.grabOnJob(t, eps[2], "13")
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '20 minutes' WHERE id IN ($1, $2)`, lost.ID, running.ID)
+	r.gw.mu.Lock()
+	r.gw.jobs = []gateway.Job{{Adapter: "nzbget", ClientJobID: "12", WantedItemID: running.ID}}
+	r.gw.mu.Unlock()
+	for job, folder := range map[string]string{"11": one, "12": two, "13": three} {
+		r.writeDownload(t, folder)
+		r.describes(job, completedView(job, folder))
+	}
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 2 || run.Queued != 1 || run.Tracked != 1 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	r.gw.mu.Lock()
+	asked := append([]string(nil), r.gw.describes...)
+	r.gw.mu.Unlock()
+	if len(asked) != 1 || asked[0] != "nzbget/11" {
+		t.Errorf("asked about %v", asked)
+	}
+	if im, err := r.svc.st.GetImport(ctx, "nzbget", "11"); err != nil || im.WantedID != lost.ID || im.Files[0] != "/downloads/"+one {
+		t.Fatalf("the lost grab's import: %+v %v", im, err)
+	}
+	for i, want := range []string{store.TargetDownloaded, store.TargetGrabbed, store.TargetGrabbed} {
+		if st := target(t, r.svc, eps[i].ID); st.State != want {
+			t.Errorf("E%02d: %s, want %s", i+1, st.State, want)
+		}
+	}
+}
+
+// What the repair cannot tell it leaves as it is: a job the client does not
+// know (for the stale-grab sweep), a gateway or client that cannot be asked,
+// a gateway older than the question, a job not finished, one that ended with
+// nothing to import.
+func TestTheRepairLeavesWhatItCannotTell(t *testing.T) {
+	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB.h264-GRP")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "3")
+	appSQL(t, `UPDATE target_grabs SET state = 'downloaded' WHERE id = $1`, g.ID)
+	running := completedView("3", "Show.Name.S01E01.1080p.WEB.h264-GRP")
+	running.State, running.Files = "downloading", nil
+	failed := running
+	failed.State, failed.Message = "failed", "nzbget: FAILURE/HEALTH"
+	empty := completedView("3", "x")
+	empty.Files = nil
+	for name, c := range map[string]struct {
+		status int
+		view   *gateway.JobView
+		want   func(RepairRun) bool
+	}{
+		"unknown to the client": {0, nil, func(r RepairRun) bool { return r.Unknown == 1 }},
+		"a client out of reach": {502, nil, func(r RepairRun) bool { return r.Unasked == 1 }},
+		"an older gateway":      {405, nil, func(r RepairRun) bool { return r.Unasked == 1 }},
+		"not finished":          {0, &running, func(r RepairRun) bool { return r.Running == 1 }},
+		"failed":                {0, &failed, func(r RepairRun) bool { return r.Ended == 1 }},
+		"completed, no files":   {0, &empty, func(r RepairRun) bool { return r.Ended == 1 }},
+	} {
+		r.gw.mu.Lock()
+		r.gw.describeStatus, r.gw.described = c.status, nil
+		r.gw.mu.Unlock()
+		if c.view != nil {
+			r.describes("3", *c.view)
+		}
+		run, err := r.svc.RepairGrabs(ctx)
+		if err != nil || run.Found != 1 || run.Queued != 0 || !c.want(run) {
+			t.Errorf("%s: %+v %v", name, run, err)
+		}
+		if _, err := r.svc.st.GetImport(ctx, "nzbget", "3"); err == nil {
+			t.Fatalf("%s: an import was queued", name)
+		}
+		if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabDownloaded {
+			t.Fatalf("%s: the grab is %s", name, got.State)
+		}
+	}
+}
+
+// The repair never gives one grab the files of another: an older grab whose
+// job id the client gave to a newer one is not asked about — the job the id
+// names is the newer grab's, and so are its files —, and the stale-grab sweep
+// gives it up later without asking.
+func TestTheRepairNeverTakesTheNewerJobsFiles(t *testing.T) {
+	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, three)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	a := r.grabOnJob(t, eps[0], "3")
+	b := r.grabOnJob(t, eps[2], "3")
+	appSQL(t, `UPDATE target_grabs SET created_at = now() - interval '10 days' WHERE id = $1`, a.ID)
+	appSQL(t, `UPDATE target_grabs SET state = 'downloaded' WHERE id IN ($1, $2)`, a.ID, b.ID)
+	r.writeDownload(t, three)
+	r.describes("3", completedView("3", three))
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 2 || run.Reused != 1 || run.Queued != 1 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	if im, _ := r.svc.st.GetImport(ctx, "nzbget", "3"); im.WantedID != b.ID || im.Files[0] != "/downloads/"+three {
+		t.Fatalf("the job's import: %+v", im)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetGrabbed || st.GrabID != a.ID {
+		t.Errorf("A's target: %+v", st)
+	}
+
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days' WHERE id = $1`, a.ID)
+	r.gw.mu.Lock()
+	asked := len(r.gw.describes)
+	r.gw.mu.Unlock()
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 1 {
+		t.Fatalf("the stale-grab sweep freed %d: %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, a.ID); got.State != store.GrabFailed {
+		t.Errorf("A after the sweep: %+v", got)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetWanted {
+		t.Errorf("A's target after the sweep: %+v", st)
+	}
+	r.gw.mu.Lock()
+	defer r.gw.mu.Unlock()
+	if len(r.gw.describes) != asked {
+		t.Errorf("the sweep asked about A's job: %v", r.gw.describes[asked:])
+	}
+}
+
+// (vii) A grab nothing was heard of for two days whose download completed
+// unseen is imported by the stale-grab sweep, not given up; one whose client
+// does not know its job is given up as before.
+func TestAStaleGrabWhoseDownloadCompletedIsImported(t *testing.T) {
+	const one, two = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E02.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, two)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	done := r.grabOnJob(t, eps[0], "21")
+	lost := r.grabOnJob(t, eps[1], "22")
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days'`)
+	r.writeDownload(t, one)
+	r.describes("21", completedView("21", one))
+
+	freed, err := r.svc.SweepStaleGrabs(ctx)
+	if err != nil || freed != 1 {
+		t.Fatalf("the sweep freed %d: %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, done.ID); got.State != store.GrabDownloaded {
+		t.Fatalf("the grab whose download completed: %+v", got)
+	}
+	if im, err := r.svc.st.GetImport(ctx, "nzbget", "21"); err != nil || im.WantedID != done.ID || im.State != store.ImportPending ||
+		im.Files[0] != "/downloads/"+one {
+		t.Fatalf("its import: %+v %v", im, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, lost.ID); got.State != store.GrabFailed {
+		t.Errorf("the grab its client does not know: %+v", got)
+	}
+	r.svc.importNext(ctx)
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetHeld {
+		t.Errorf("the target of the download that completed: %+v", st)
+	}
+	if st := target(t, r.svc, eps[1].ID); st.State != store.TargetWanted || !strings.Contains(st.Detail, "given up") {
+		t.Errorf("the target of the one given up: %+v", st)
+	}
+}
+
+// One repair asks about at most repairBatch grabs; shortly after acquire
+// starts, it runs once by itself.
+func TestTheRepairIsBoundedAndRunsAfterTheStart(t *testing.T) {
+	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB.h264-GRP")
+	ctx := context.Background()
+	title, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	appSQL(t, `INSERT INTO target_grabs (id, title_id, target_ids, adapter, client_job_id, state, updated_at)
+		SELECT 'tg_stuck' || n, $1, ARRAY[$2], 'nzbget', (1000 + n)::text, 'downloaded', now() - make_interval(mins => n)
+		  FROM generate_series(1, $3::int) AS n`, title.ID, eps[0].ID, repairBatch+5)
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != repairBatch || run.Unknown != repairBatch {
+		t.Fatalf("one run: %+v %v", run, err)
+	}
+
+	appSQL(t, `DELETE FROM target_grabs WHERE id LIKE 'tg_stuck%' AND id <> 'tg_stuck1'`)
+	r.svc.repairStart = 10 * time.Millisecond
+	r.describes("1001", completedView("1001", "Show.Name.S01E01.1080p.WEB.h264-GRP"))
+	r.writeDownload(t, "Show.Name.S01E01.1080p.WEB.h264-GRP")
+	finished := make(chan struct{})
+	go func() {
+		r.svc.RepairAtStart(ctx)
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the repair after the start did not run")
+	}
+	if im, err := r.svc.st.GetImport(ctx, "nzbget", "1001"); err != nil || im.WantedID != "tg_stuck1" {
+		t.Fatalf("the repair after the start: %+v %v", im, err)
+	}
+}
+
+// A gateway that does not know a stale grab's client — restarted, and not
+// told its clients yet — gives nothing up while acquire has that client; one
+// acquire has disabled, and so does not tell the gateway of, is given up as
+// before.
+func TestAStaleGrabOfAClientTheGatewayDoesNotKnow(t *testing.T) {
+	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB.h264-GRP")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "31")
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days'`)
+	r.gw.mu.Lock()
+	r.gw.describeStatus = http.StatusNotFound
+	r.gw.mu.Unlock()
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 0 {
+		t.Fatalf("with the client in acquire: freed %d %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabGrabbed {
+		t.Fatalf("given up on a guess: %+v", got)
+	}
+	appSQL(t, `UPDATE download_clients SET enabled = false WHERE id = 'nzbget'`)
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 1 {
+		t.Fatalf("with the client disabled: freed %d %v", freed, err)
 	}
 }

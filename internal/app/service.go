@@ -103,6 +103,9 @@ type Service struct {
 	// inventoryStart is how soon after RunInventory starts a scheduled run
 	// is made (inventoryAtStart, which tests lower).
 	inventoryStart time.Duration
+	// repairStart is how soon after RepairAtStart is called the repair of
+	// grabs that finished unseen runs (repairAtStart, which tests lower).
+	repairStart time.Duration
 	// now is the clock what a request reads as, and the feeds' matches, are
 	// told by.
 	now func() time.Time
@@ -122,7 +125,7 @@ func New(cfg config.Config, st *store.Store, gw *gateway.Client, kc *katalog.Cli
 		importWake: make(chan struct{}, 1), freeSpace: freeSpaceAt,
 		grabWake: make(chan struct{}, 1), holdingsWake: make(chan struct{}, 1), holdingsIDs: map[string]bool{},
 		inventoryWake: make(chan struct{}, 1), inventoryIDs: map[string]bool{}, rssWake: make(chan struct{}, 1),
-		inventoryBudget: inventoryBudget, inventoryStart: inventoryAtStart, now: time.Now}
+		inventoryBudget: inventoryBudget, inventoryStart: inventoryAtStart, repairStart: repairAtStart, now: time.Now}
 	svc.subs = newSubtitleWork(opensubtitles.New(opensubtitles.Config{APIKey: cfg.OpenSubtitlesAPIKey,
 		Username: cfg.OpenSubtitlesUsername, Password: cfg.OpenSubtitlesPassword, UserAgent: userAgent(cfg.Version)}))
 	if st != nil {

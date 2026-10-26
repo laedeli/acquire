@@ -287,3 +287,54 @@ func TestAnImportOfAJobIDGivenAgain(t *testing.T) {
 		t.Fatalf("after B's import failed: %v %v", created, err)
 	}
 }
+
+// The grabs whose download may have finished unseen: downloaded without an
+// import of their own, and handed over with no word of them for a while —
+// the grab's own download row counts, another grab's on the same job id does
+// not —; at most as many as asked.
+func TestUnimportedTargetGrabs(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 26, 8)
+	grabOn(t, s, "tg_swallowed", id, eps[0], "nzbget", "1", 0) // downloaded, no import of its own
+	grabOn(t, s, "tg_importing", id, eps[1], "nzbget", "2", 0) // downloaded, its import queued
+	grabOn(t, s, "tg_quiet", id, eps[2], "nzbget", "3", 0)     // grabbed, no word for an hour
+	grabOn(t, s, "tg_fresh", id, eps[3], "nzbget", "4", 0)     // grabbed just now
+	grabOn(t, s, "tg_reporting", id, eps[4], "nzbget", "5", 0) // grabbed long ago, its download reporting
+	grabOn(t, s, "tg_other", id, eps[5], "nzbget", "6", 0)     // grabbed long ago, another grab's row fresh on its job
+	grabOn(t, s, "tg_done", id, eps[6], "nzbget", "7", 0)      // imported
+	if _, err := s.ReserveTargetGrab(ctx, TargetGrab{ID: "tg_pending", TitleID: id}, eps[7], eps[7:8]); err != nil {
+		t.Fatal(err)
+	}
+	for gid, state := range map[string]string{"tg_swallowed": GrabDownloaded, "tg_importing": GrabDownloaded, "tg_done": GrabImported} {
+		if err := s.SetTargetGrabState(ctx, gid, state, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.EnqueueImport(ctx, Import{Adapter: "nzbget", ClientJobID: "2", WantedID: "tg_importing"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE target_grabs SET updated_at = now() - interval '1 hour' WHERE id <> 'tg_fresh'`); err != nil {
+		t.Fatal(err)
+	}
+	for job, wanted := range map[string]string{"5": "tg_reporting", "6": "tg_newer"} {
+		if _, err := s.UpsertDownload(ctx, Download{Adapter: "nzbget", ClientJobID: job, WantedID: wanted, State: "downloading"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.UnimportedTargetGrabs(ctx, 15*time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, g := range got {
+		ids[g.ID] = true
+	}
+	if len(got) != 3 || !ids["tg_swallowed"] || !ids["tg_quiet"] || !ids["tg_other"] {
+		t.Fatalf("unimported = %v", ids)
+	}
+	if two, _ := s.UnimportedTargetGrabs(ctx, 15*time.Minute, 2); len(two) != 2 {
+		t.Errorf("at most 2: %d", len(two))
+	}
+}
