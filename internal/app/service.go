@@ -519,9 +519,15 @@ func (s *Service) saveDownload(ctx context.Context, ev events.DownloadEvent, sta
 	case wantedID == "":
 		// A job the gateway adopted after a restart has no wanted id: it is the
 		// grab's the job belongs to now, the newest handed to it — a request's
-		// or a target grab's.
+		// or a target grab's —, a target grab's only when the job is named
+		// after its release (jobIsGrabs).
 		if id, err := s.st.FindWantedByClientJob(ctx, ev.Adapter, ev.ClientID); err == nil {
 			wantedID = id
+		}
+		if store.IsTargetGrab(wantedID) {
+			if g, err := s.st.GetTargetGrab(ctx, wantedID); err != nil || !s.jobIsGrabs(ctx, g, jobName(ev.Title, ev.Files)) {
+				wantedID = ""
+			}
 		}
 	case store.IsTargetGrab(wantedID):
 		if reused, err := s.st.JobReused(ctx, ev.Adapter, ev.ClientID, wantedID); err == nil && reused {

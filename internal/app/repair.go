@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/laedeli/acquire/internal/events"
 	"github.com/laedeli/acquire/internal/gateway"
@@ -53,6 +55,7 @@ type RepairRun struct {
 	Ended   int // ended in their client with nothing to import or fail: completed without files, or failed after it completed
 	Unknown int // their client does not know the job: left to the stale-grab sweep
 	Reused  int // their job id names a newer grab's download: left to the stale-grab sweep
+	Foreign int // their client holds another download under their job id: left for a person
 	Tracked int // the gateway still tracks the job: its events will come
 	Unasked int // the gateway or the client could not be asked: tried on the next run
 }
@@ -72,6 +75,7 @@ func (r RepairRun) String() string {
 	add(r.Ended, "ended in their client with nothing to import")
 	add(r.Unknown, "unknown to their client")
 	add(r.Reused, "of a job id the client gave again")
+	add(r.Foreign, "whose job id holds another download in their client, left for a person")
 	add(r.Tracked, "still tracked by the gateway")
 	add(r.Unasked, "not asked: the gateway or the client did not answer")
 	return strings.Join(parts, ", ")
@@ -149,6 +153,12 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 		case err != nil:
 			run.Unasked++
 			continue
+		case actsOn(job) && !s.jobIsGrabs(ctx, g, jobName(job.Title, job.Files)):
+			// The client holds another download under the id than the one
+			// handed over for this grab.
+			s.leaveForAPerson(ctx, g, jobName(job.Title, job.Files))
+			run.Foreign++
+			continue
 		case job.State == "failed":
 			// No failed event comes of a job that failed while nothing was
 			// watching: its row would run on, holding a slot, and its release
@@ -190,7 +200,13 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 
 // handled counts the grabs a run has come to an answer for.
 func (r RepairRun) handled() int {
-	return r.Queued + r.Moved + r.Waiting + r.Failed + r.Running + r.Ended + r.Unknown + r.Reused + r.Tracked + r.Unasked
+	return r.Queued + r.Moved + r.Waiting + r.Failed + r.Running + r.Ended + r.Unknown + r.Reused + r.Foreign + r.Tracked + r.Unasked
+}
+
+// actsOn reports whether what a client says of a job is acted on for its
+// grab: a completed job's files imported, a failed job's failure failed.
+func actsOn(job gateway.JobView) bool {
+	return job.State == "failed" || (job.State == "completed" && len(job.Files) > 0)
 }
 
 // failUnseen hands a job its client says failed to the failed event's path,
@@ -258,6 +274,71 @@ func completedEvent(g store.TargetGrab, job gateway.JobView) events.DownloadEven
 		ev.SizeBytes = &size
 	}
 	return ev
+}
+
+// ── whose job a job id names ───────────────────────────────────────────────
+//
+// The newest grab acquire recorded on a job id (store.JobOwner) is the job
+// the client holds under it only when every hand-over was recorded. An add
+// whose answer was lost leaves its grab pending without a job id, and a job
+// someone added by hand has no grab at all: either can hold an id an older
+// grab had. Before what a client says of a job is taken as a grab's — its
+// files imported, its failure failed, its events attributed by the job id
+// alone —, the job's name is checked against the grab's release: NZBGet names
+// a job after the NZB acquire handed over, which is named after the release.
+
+// nameKey is a release name as the check compares it: in lower case,
+// letters and digits only — the NZB's name keeps a release's words but not
+// always its dots, dashes and plus signs (DD+5.1, DD5.1).
+func nameKey(name string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, name)
+}
+
+// jobName is what a client calls a job: its title, else the name of the first
+// folder or file it reports for it.
+func jobName(title string, files []string) string {
+	if t := strings.TrimSpace(title); t != "" {
+		return t
+	}
+	if len(files) > 0 {
+		return path.Base(path.Clean(files[0]))
+	}
+	return ""
+}
+
+// jobIsGrabs reports whether the job a client holds under a grab's job id —
+// named name — is the grab's download: named after the release the grab
+// handed over. A qBittorrent job's id is a tag the gateway makes for each add,
+// which no other job holds, so it is the grab's whatever its name.
+func (s *Service) jobIsGrabs(ctx context.Context, g store.TargetGrab, name string) bool {
+	if c, err := s.st.GetDownloadClient(ctx, g.Adapter); err == nil && c.Type == "qbittorrent" {
+		return true
+	}
+	key := nameKey(name)
+	return key != "" && key == nameKey(g.ReleaseTitle)
+}
+
+// leaveForAPerson records on a grab, and on its targets still in flight with
+// it, that its client holds another download under its job id than the
+// release it handed over: nothing of that job is imported or failed for the
+// grab, nor is the grab given up on a guess. The log says so too.
+func (s *Service) leaveForAPerson(ctx context.Context, g store.TargetGrab, name string) {
+	if name == "" {
+		name = "a download it gives no name"
+	}
+	why := clip(fmt.Sprintf("left for a person: %s holds another download under job %s (%s), not %s; nothing of it was imported or failed for this grab",
+		g.Adapter, g.ClientJobID, name, g.ReleaseTitle), 300)
+	_ = s.st.SetTargetGrabState(ctx, g.ID, g.State, why)
+	for _, state := range inFlight {
+		_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{state}, state, why)
+	}
+	log.Printf("acquire: grab %s: %s", g.ID, why)
+	s.notify()
 }
 
 // RepairAtStart runs the repair once, repairAtStart after it is called —

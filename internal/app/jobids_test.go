@@ -646,9 +646,9 @@ func TestTheRepairIsBoundedAndRunsAfterTheStart(t *testing.T) {
 	r := newTargetRig(t, "Show.Name.S01E01.1080p.WEB.h264-GRP")
 	ctx := context.Background()
 	title, eps := track(t, r.svc, 4711, "Show Name", 1, true)
-	appSQL(t, `INSERT INTO target_grabs (id, title_id, target_ids, adapter, client_job_id, state, updated_at)
-		SELECT 'tg_stuck' || n, $1, ARRAY[$2], 'nzbget', (1000 + n)::text, 'downloaded', now() - make_interval(mins => n)
-		  FROM generate_series(1, $3::int) AS n`, title.ID, eps[0].ID, repairBatch+5)
+	appSQL(t, `INSERT INTO target_grabs (id, title_id, target_ids, adapter, client_job_id, state, updated_at, release_title)
+		SELECT 'tg_stuck' || n, $1, ARRAY[$2], 'nzbget', (1000 + n)::text, 'downloaded', now() - make_interval(mins => n), $4
+		  FROM generate_series(1, $3::int) AS n`, title.ID, eps[0].ID, repairBatch+5, "Show.Name.S01E01.1080p.WEB.h264-GRP")
 	run, err := r.svc.RepairGrabs(ctx)
 	if err != nil || run.Found != repairBatch || run.Unknown != repairBatch {
 		t.Fatalf("one run: %+v %v", run, err)
@@ -818,5 +818,173 @@ func TestTheStaleSweepEndsWhatItGivesUp(t *testing.T) {
 	}
 	if n, _ := r.svc.st.ActiveDownloads(ctx); n != 0 {
 		t.Errorf("downloads at once after the sweep = %d, want 0", n)
+	}
+}
+
+// The name check takes a job for its grab's however the NZB's name spells
+// the release's dots, dashes and plus signs, and in any case; another
+// release, a name that says less, and no name at all are not the grab's. A
+// qBittorrent job is the grab's whatever its name: its id is a tag made for
+// that one add.
+func TestAJobIsTheGrabsByItsName(t *testing.T) {
+	r := newTargetRig(t)
+	ctx := context.Background()
+	for _, rel := range []string{
+		"Show.Name.S02E01.1080p.WEB.DD+5.1.H.264-GRP",
+		"Show.Name.S02E02.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP",
+		"Show.Name.2024.S01E05.2160p.WEB-DL.DD+5.1.Atmos.H.265-GRP",
+		"Show.Name.S02E03.720p.HDTV.x264-GRP",
+		"Show.Name.S10E04.1080p.WEB.h264-GRP[ab]",
+	} {
+		g := store.TargetGrab{ID: "tg_x", Adapter: "nzbget", ClientJobID: "7", ReleaseTitle: rel}
+		for _, name := range []string{
+			rel, strings.ToLower(rel), strings.ReplaceAll(rel, ".", " "), strings.ReplaceAll(rel, "+", ""), strings.ReplaceAll(rel, ".", "_"),
+			jobName("", []string{"/downloads/complete/acquire/" + rel}), jobName("", []string{"/downloads/complete/acquire/" + rel + "/"}),
+		} {
+			if !r.svc.jobIsGrabs(ctx, g, name) {
+				t.Errorf("%q is not taken for %s", name, rel)
+			}
+		}
+	}
+	g := store.TargetGrab{ID: "tg_x", Adapter: "nzbget", ClientJobID: "7", ReleaseTitle: "Show.Name.S02E01.1080p.WEB.DD+5.1.H.264-GRP"}
+	for _, name := range []string{
+		"Show.Name.S02E02.1080p.WEB.DD+5.1.H.264-GRP", "Show.Name.S02E01.1080p.WEB.DD+5.1.H.264-OTHER", "Show Name S02E01", "",
+	} {
+		if r.svc.jobIsGrabs(ctx, g, name) {
+			t.Errorf("%q is taken for %s", name, g.ReleaseTitle)
+		}
+	}
+	if _, err := r.svc.CreateClient(ctx, ClientInput{Type: "qbittorrent", BaseURL: "http://torrents:8080", Auth: "none",
+		RemotePath: "/downloads", LocalPath: r.downloads}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if qb := (store.TargetGrab{ID: "tg_q", Adapter: "qbittorrent", ClientJobID: "dlg-1", ReleaseTitle: "Show.Name.S02E01.1080p.WEB.h264-GRP"}); !r.svc.jobIsGrabs(ctx, qb, "[GRP] Show Name - 01 (1080p)") {
+		t.Error("a qBittorrent job is not taken for its grab's")
+	}
+}
+
+// What a client restart left: five downloads on nzbget's jobs 1 to 5,
+// imported and released ten days ago, and five grabs since on the same ids,
+// downloaded with no import of their own — their releases named with things
+// like DD+5.1, their folders the releases' names. The repair queues the five
+// imports.
+func TestTheRepairQueuesTheFiveTheRestartLeftStuck(t *testing.T) {
+	releases := []string{
+		"Show.Name.S01E01.1080p.WEB.DD+5.1.H.264-GRP",
+		"Show.Name.S01E02.1080p.AMZN.WEB-DL.DDP5.1.H.264-GRP",
+		"Show.Name.S01E03.1080p.WEB-DL.DD+5.1.Atmos.H.264-GRP",
+		"Show.Name.S01E04.1080p.WEB.DD+2.0.H.264-GRP",
+		"Show.Name.S01E05.1080p.WEB.DD+5.1.H.264-GRP",
+	}
+	r := newTargetRig(t, releases...)
+	ctx := context.Background()
+	other, old := track(t, r.svc, 4712, "Other Show", 5, true)
+	for i, ep := range old {
+		endedGrab(t, r.svc, fmt.Sprintf("tg_old%d", i+1), other.ID, ep.ID, strconv.Itoa(i+1),
+			fmt.Sprintf("Other.Show.S01E%02d.1080p.WEB.h264-GRP", i+1))
+	}
+	_, eps := track(t, r.svc, 4711, "Show Name", 5, true)
+	var stuck []store.TargetGrab
+	for i, ep := range eps {
+		g := r.grabOnJob(t, ep, strconv.Itoa(i+1))
+		if g.ReleaseTitle != releases[i] {
+			t.Fatalf("grabbed %q for E%02d", g.ReleaseTitle, i+1)
+		}
+		appSQL(t, `UPDATE target_grabs SET state = 'downloaded', detail = 'downloaded' WHERE id = $1`, g.ID)
+		appSQL(t, `UPDATE acquisition_targets SET state = 'downloaded', detail = 'downloaded; copying into the library' WHERE grab_id = $1`, g.ID)
+		view := completedView(strconv.Itoa(i+1), releases[i])
+		view.Files = []string{"/downloads/complete/acquire/" + releases[i]}
+		r.describes(strconv.Itoa(i+1), view)
+		stuck = append(stuck, g)
+	}
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 5 || run.Queued != 5 || run.Foreign != 0 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	for i, g := range stuck {
+		im, err := r.svc.st.GetImport(ctx, "nzbget", strconv.Itoa(i+1))
+		if err != nil || im.WantedID != g.ID || im.State != store.ImportPending || im.Files[0] != "/downloads/complete/acquire/"+releases[i] {
+			t.Errorf("job %d's import: %+v %v", i+1, im, err)
+		}
+	}
+}
+
+// Grab A is downloaded with no import on nzbget's job 7; A's record went and
+// NZBGet restarted; B's add got id 7, but its answer was lost, so acquire
+// recorded no job for B. Job 7 is B's, named after B's release: the repair
+// imports nothing of it for A, B's completed event — the gateway adopted B's
+// job and names no grab — is not taken for A's, and the stale-grab sweep
+// gives A up for nothing either. A is left for a person, saying why.
+func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
+	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, three)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	a := r.grabOnJob(t, eps[0], "7")
+	appSQL(t, `UPDATE target_grabs SET state = 'downloaded', created_at = now() - interval '10 days' WHERE id = $1`, a.ID)
+	appSQL(t, `UPDATE acquisition_targets SET state = 'downloaded' WHERE grab_id = $1`, a.ID)
+	r.gw.mu.Lock()
+	r.gw.addDrop = true
+	r.gw.mu.Unlock()
+	_, _ = r.svc.GrabTarget(ctx, eps[2].ID, "missing")
+	if target(t, r.svc, eps[2].ID).ReservedBy == "" {
+		t.Fatal("B is not pending")
+	}
+	r.writeDownload(t, three)
+	r.describes("7", completedView("7", three))
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 1 || run.Foreign != 1 || run.Queued != 0 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
+		t.Fatal("B's job was queued for A")
+	}
+	got, _ := r.svc.st.GetTargetGrab(ctx, a.ID)
+	if got.State != store.GrabDownloaded || !strings.Contains(got.Detail, "left for a person") ||
+		!strings.Contains(got.Detail, "nzbget holds another download under job 7 ("+three+")") {
+		t.Fatalf("A after the repair: %+v", got)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetDownloaded || !strings.Contains(st.Detail, "left for a person") {
+		t.Errorf("A's target: %+v", st)
+	}
+
+	if err := r.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "7", Files: []string{"/downloads/" + three}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
+		t.Fatal("B's completed event was taken for A's")
+	}
+
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days' WHERE id = $1`, a.ID)
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 0 {
+		t.Fatalf("the stale-grab sweep freed %d: %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, a.ID); got.State != store.GrabDownloaded || !strings.Contains(got.Detail, "left for a person") {
+		t.Errorf("A after the sweep: %+v", got)
+	}
+	if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
+		t.Error("the sweep queued B's job for A")
+	}
+}
+
+// An adopted job's completed event names no grab: it is taken for the grab
+// its job id names when the job is named after that grab's release.
+func TestAnAdoptedJobsCompletedEventIsItsGrabsByName(t *testing.T) {
+	const one = "Show.Name.S01E01.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "8")
+	r.writeDownload(t, one)
+	if err := r.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "8", Files: []string{"/downloads/" + one}}); err != nil {
+		t.Fatal(err)
+	}
+	if im, err := r.svc.st.GetImport(ctx, "nzbget", "8"); err != nil || im.WantedID != g.ID {
+		t.Fatalf("the adopted job's import: %+v %v", im, err)
+	}
+	if d, _ := r.svc.st.GetDownload(ctx, "nzbget", "8"); d.WantedID != g.ID || d.State != "completed" {
+		t.Errorf("the job's row: %+v", d)
 	}
 }

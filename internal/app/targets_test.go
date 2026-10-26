@@ -330,7 +330,10 @@ func TestAFailedDownloadFailsItsTargetsAndBlocksTheRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.svc.OnFailed(ctx, events.DownloadEvent{Adapter: g.Adapter, ClientID: g.ClientJobID, Error: "par repair failed"}); err != nil {
+	// As the gateway sends an adopted job's: no grab named, the job's name —
+	// the NZB's — given.
+	if err := r.svc.OnFailed(ctx, events.DownloadEvent{Adapter: g.Adapter, ClientID: g.ClientJobID,
+		Title: "Show.Name.S01E01.1080p.WEB-DL.x265-G", Error: "par repair failed"}); err != nil {
 		t.Fatal(err)
 	}
 	st := target(t, r.svc, eps[0].ID)

@@ -516,7 +516,9 @@ func (s *Service) targetGrabNext(ctx context.Context) bool {
 
 // targetGrabOf finds the target grab a download event is about: by the id the
 // gateway echoes, else — a restarted gateway forgot it — by the client job,
-// whose grab is the newest handed to it (store.FindTargetGrabByJob).
+// whose grab is the newest handed to it (store.FindTargetGrabByJob) when the
+// job is named after that grab's release (jobIsGrabs). One that is not is
+// another download under the id, and the grab is left for a person.
 func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (store.TargetGrab, bool) {
 	if s.st == nil {
 		return store.TargetGrab{}, false
@@ -527,7 +529,14 @@ func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (st
 	}
 	if ev.WantedID == "" {
 		g, err := s.st.FindTargetGrabByJob(ctx, ev.Adapter, ev.ClientID)
-		return g, err == nil
+		if err != nil {
+			return store.TargetGrab{}, false
+		}
+		if name := jobName(ev.Title, ev.Files); !s.jobIsGrabs(ctx, g, name) {
+			s.leaveForAPerson(ctx, g, name)
+			return store.TargetGrab{}, false
+		}
+		return g, true
 	}
 	return store.TargetGrab{}, false
 }
@@ -733,6 +742,8 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 			case settled == unseenFailed:
 				log.Printf("acquire: stale grab %s: its download failed unseen; failed as its event would have, its release blocked", g)
 				continue
+			case settled == unseenForeign:
+				continue // left for a person, saying why
 			}
 		}
 		const why = "nothing was heard of its download for two days and the gateway does not know it: given up, wanted again"
@@ -759,6 +770,9 @@ const (
 	// unseenFailed: its download failed; failed as its failed event would
 	// have, its release blocked.
 	unseenFailed
+	// unseenForeign: its client holds another download under its job id;
+	// nothing of it taken for the grab, which is left for a person.
+	unseenForeign
 )
 
 // finishedUnseen asks a stale grab's client, through the gateway, what its
@@ -783,6 +797,9 @@ func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (unsee
 		return unseenNothing, err
 	case err != nil:
 		return unseenNothing, err
+	case actsOn(job) && !s.jobIsGrabs(ctx, g, jobName(job.Title, job.Files)):
+		s.leaveForAPerson(ctx, g, jobName(job.Title, job.Files))
+		return unseenForeign, nil
 	case job.State == "failed":
 		failed, err := s.failUnseen(ctx, g, job)
 		if err != nil || !failed {
