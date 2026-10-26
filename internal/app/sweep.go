@@ -120,6 +120,12 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 	grabbing := pol.GrabsAnything()
 	var found, empty, failed, grabbed int
 	var stopped, halted string
+	// capped: grabbing stopped at downloads at once, which frees itself as
+	// downloads end. A refusal that lasts until someone acts — no client, the
+	// storage floor, no room — leaves only the target that met it due on the
+	// next sweep: searching the rest again every sweep would spend the
+	// sources' allowance on grabs that cannot happen.
+	capped := false
 	for _, t := range due {
 		if ctx.Err() != nil {
 			break
@@ -148,16 +154,18 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 			continue
 		}
 		if !grabbing {
-			// Grabbing stopped earlier in this run: what the policy takes is
-			// found again on the next sweep, as the target that stopped it
-			// is, not in twelve hours.
-			s.foundButWaiting(ctx, t, stopped)
+			// Grabbing stopped earlier in this run. At the cap, what the
+			// policy takes is found again on the next sweep, as the target
+			// that met the cap is, not in twelve hours.
+			if capped {
+				s.foundButWaiting(ctx, t, stopped)
+			}
 			continue
 		}
 		if full, why := s.slotsFull(ctx); full {
 			// Nothing more starts this run. What was found is found again on
 			// the next sweep rather than in twelve hours.
-			grabbing, stopped = false, why
+			grabbing, stopped, capped = false, why, true
 			s.foundButWaiting(ctx, t, why)
 			continue
 		}
@@ -170,7 +178,7 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 		case errors.As(err, &capErr), errors.As(err, &r):
 			// No slot, no room, no client: none of the rest would fare
 			// better this run.
-			grabbing, stopped = false, err.Error()
+			grabbing, stopped, capped = false, err.Error(), errors.As(err, &capErr)
 			s.foundButWaiting(ctx, t, err.Error())
 		default:
 			s.targetGrabFailed(ctx, t, err)

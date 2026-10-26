@@ -627,13 +627,18 @@ nothing of what finished unseen, and its log says so on every run: give the
 gateway the image the chart pins.
 
 **To 0.6.3.** Nothing to set, and no migration. Once **downloads at once**
-stopped a sweep's grabs, only the target that met the cap was searched again
-on the next sweep; every later one the sweep found and would have grabbed
-waited twelve hours, as a find that is not grabbed on its own does. Each of
-them is now searched again on the next sweep. What the sweep finds and does
-not grab on its own — the old backlog, with only the new things grabbed —
-still waits twelve hours. Targets a 0.6.2 sweep left waiting come round at
-the time it set.
+stopped a sweep's grabs, only the target that met the cap was due again half
+an hour after its search; every later one the sweep found and would have
+grabbed waited twelve hours, as a find that is not grabbed on its own does.
+Each of them is now due again half an hour after its search too, so a sweep
+after the downloads end takes it. This holds for the cap alone, which frees
+itself as downloads end: after a refusal that lasts until someone acts — no
+client, the storage floor, no room on the downloads volume — only the target
+that met it is due again in half an hour, and the rest keep their twelve
+hours, so the sources are not asked every sweep for grabs that cannot happen.
+What the sweep finds and does not grab on its own — the old backlog, with only
+the new things grabbed — still waits twelve hours. Targets a 0.6.2 sweep left
+waiting come round at the time it set.
 
 ### Moving an existing deployment to the chart
 

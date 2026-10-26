@@ -163,12 +163,13 @@ func TestEveryFindAfterTheCapWaitsForTheNextSweep(t *testing.T) {
 func TestTheOldBacklogAfterTheCapKeepsItsWait(t *testing.T) {
 	r := newTargetRig(t,
 		"Show.Name.S01E01.1080p.WEB-DL.x265-G", "Show.Name.S01E02.1080p.WEB-DL.x265-G",
-		"Show.Name.S01E03.1080p.WEB-DL.x265-G")
+		"Show.Name.S01E03.1080p.WEB-DL.x265-G", "Show.Name.S01E04.1080p.WEB-DL.x265-G")
 	ctx := context.Background()
-	_, eps := track(t, r.svc, 4713, "Show Name", 3, true)
+	_, eps := track(t, r.svc, 4713, "Show Name", 4, true)
 	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-300), 0)
-	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(-3), 0)
-	_ = r.svc.st.SetAirWindow(ctx, eps[2].ID, day(-3), 0)
+	for _, e := range eps[1:] {
+		_ = r.svc.st.SetAirWindow(ctx, e.ID, day(-3), 0)
+	}
 	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 1, AutoGrabNew: true}, 0, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -189,12 +190,45 @@ func TestTheOldBacklogAfterTheCapKeepsItsWait(t *testing.T) {
 			t.Errorf("a new episode after the cap: %+v", st)
 		}
 	}
-	if grabbed != 1 || waiting != 1 {
+	if grabbed != 1 || waiting != 2 {
 		t.Errorf("new episodes: %d grabbed, %d waiting for the next sweep", grabbed, waiting)
 	}
 	old := target(t, r.svc, eps[0].ID)
 	if old.State != store.TargetWanted || old.SearchOutcome != store.SearchFound || old.NextSearchAt == nil ||
 		time.Until(*old.NextSearchAt) < 11*time.Hour {
 		t.Errorf("the old backlog keeps its twelve hours: %+v", old)
+	}
+}
+
+// A refusal that lasts until someone acts — here the storage floor — leaves
+// only the target that met it due on the next sweep; every later find keeps
+// its twelve hours, so the sources are not asked every sweep for grabs that
+// cannot happen.
+func TestALastingRefusalKeepsTheLaterFindsAtTwelveHours(t *testing.T) {
+	r := newTargetRig(t,
+		"Show.Name.S01E01.1080p.WEB-DL.x265-G", "Show.Name.S01E02.1080p.WEB-DL.x265-G",
+		"Show.Name.S01E03.1080p.WEB-DL.x265-G", "Show.Name.S01E04.1080p.WEB-DL.x265-G")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4714, "Show Name", 4, true)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 10, AutoGrab: true, StorageFloorGB: 2000}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if adds := r.gw.added(); len(adds) != 0 {
+		t.Fatalf("grabbed %d below the floor", len(adds))
+	}
+	first := target(t, r.svc, eps[0].ID)
+	if first.State != store.TargetWanted || !strings.Contains(first.SearchDetail, "found; not grabbed yet: refusing grab:") ||
+		first.NextSearchAt == nil || time.Until(*first.NextSearchAt) > time.Hour {
+		t.Errorf("the target that met the refusal waits for the next sweep: %+v", first)
+	}
+	for _, e := range eps[1:] {
+		st := target(t, r.svc, e.ID)
+		if st.State != store.TargetWanted || st.SearchOutcome != store.SearchFound || st.NextSearchAt == nil ||
+			time.Until(*st.NextSearchAt) < 11*time.Hour {
+			t.Errorf("%s keeps its twelve hours: %+v", e.ID, st)
+		}
 	}
 }
