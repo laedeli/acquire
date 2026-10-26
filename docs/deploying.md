@@ -290,7 +290,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.1/acquire-0.6.1.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.2/acquire-0.6.2.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -548,6 +548,54 @@ upgrade adds is due at once — the clock runs it on its next tick, within ten
 seconds, and every interval after —, one already there keeps its time:
 0.6.1 adds none, so its first run of `inventory-refresh` is the one two
 minutes after the start, and the schedule's own runs come round as before.
+
+**To 0.6.2.** Nothing to set, and no migration. The chart runs a newer
+download gateway with it, one that describes a job its client has finished
+(`GET /api/v1/downloads/{client}/{id}`, see
+[the gateway's API](./download-gateway.md#http-api)).
+
+NZBGet numbers its downloads from 1 again when it restarts with an empty
+history — and acquire empties it, by releasing every download it imported.
+acquire took a client's job id as one download's for ever, so a new download
+that got the id of an old one was taken for the old one:
+
+- its progress went to the old download's row, and the downloads tab showed
+  the old release's title;
+- it did not count against **downloads at once**, so one sweep could start
+  more downloads than the cap allows — eight under a cap of three, in the case
+  that showed it;
+- its completed event found the old download's finished import and queued
+  nothing, yet moved its episodes on to "downloaded; copying into the
+  library", where they stayed: nothing copied them, the stale-grab sweep did
+  not see them, and restarting the gateway does not bring the event back.
+  Their files are still in the client's complete folder, and NZBGet still
+  lists them in its history.
+
+A download is now known by the grab it was handed over for, and a job id
+names the newest grab handed to it. A new download on an id takes over the
+old one's row and counts against the cap until a row of its own shows, so the
+cap holds; the old download's finished import gives way to the new one's, and
+the old download's late events change nothing. NZBGet's record of a download
+is released only while the record under its id is that download, told by its
+folder. qBittorrent's job ids — a new tag for every add — do not repeat.
+
+The episodes left "downloaded; copying into the library" by a client restart
+are imported by the first grab-recovery run after the upgrade, two minutes
+after acquire starts. It asks the client, through the gateway, what became of
+every grab that is downloaded without an import of its own, or that was handed
+over and gave no word for a quarter of an hour while the gateway no longer
+tracks its job, and imports one that completed from the files the client
+reports — at most 25 a run, again on every hourly `grab-recovery`, with one
+line in the log (`acquire grab-recovery: … grab(s) whose download may have
+finished unseen: …`). A grab whose job the client no longer knows is left to
+the stale-grab sweep, which now asks the client too before it gives a grab
+up: a download that completed unseen is imported instead. The downloads a
+sweep started past the cap are not undone; they finish and are imported like
+any other.
+
+acquire 0.6.2 against an older gateway — one deployed on its own — imports
+nothing of what finished unseen, and its log says so on every run: give the
+gateway the image the chart pins.
 
 ### Moving an existing deployment to the chart
 

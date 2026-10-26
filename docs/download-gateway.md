@@ -124,6 +124,7 @@ NZB download right after its copy (see
 | `GET` | `/api/v1/clients/status` | per-client health and throughput (`id`, `type`, `reachable`, speeds, detail) |
 | `POST` | `/api/v1/downloads` | add a download → `202 {adapter, client, client_job_id}` |
 | `GET` | `/api/v1/downloads` | tracked in-flight jobs with their last snapshot |
+| `GET` | `/api/v1/downloads/{client}/{id}` | one job as its client describes it now, a finished one too: the list's fields, `files` once it completed, `message` |
 | `DELETE` | `/api/v1/downloads/{client}/{id}` | remove a job from its client |
 | `POST` | `/api/v1/downloads/{client}/{id}/pause` · `/resume` | pause or resume, where the type supports it |
 | `GET` | `/api/v1/config/types` | the adapter types a client can be created from |
@@ -134,6 +135,16 @@ NZB download right after its copy (see
 An add body is capped (a 50 MiB NZB fits); an unknown client is `404`, a client
 removed while it still has jobs is `409`, a client error is `502`. Secrets are
 write-only: `GET /api/v1/config/clients` reports `secretSet`.
+
+The gateway forgets a job once it ends, and after a restart adopts only the
+jobs still running, so a completed event lost is not sent again. acquire asks
+`GET /api/v1/downloads/{client}/{id}` what became of a grab whose download
+finished unseen, and imports a completed one from the files it names (see
+[when a grab fails](./acquire.md#when-a-grab-fails)). A job the client does
+not know is `404` with `"native_state": "not-found"`; an unknown client is a
+`404` without it. A job id is the client's own and may be given again — NZBGet
+numbers its downloads from 1 once it restarts with an empty history —, so
+acquire keys what it keeps by the grab it handed over, not by the id alone.
 
 ### Authentication
 

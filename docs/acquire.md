@@ -277,8 +277,29 @@ waiting for the catalog stops, its copy deleted. A grab in flight that
 **nothing is heard of for two days** — no event of its download, no import
 working on it — and that the gateway does not know, by the grab's id or by its
 client job, is given up and its targets are wanted again: a hand-over that died
-before its job was bound, a job its client lost. A gateway that cannot be asked
-gives nothing up.
+before its job was bound, a job its client lost. Before it is given up, its
+client is asked through the gateway what its job is: one that completed is
+imported instead. A gateway that cannot be asked gives nothing up.
+
+**A download that finished unseen** — its completed event lost, or sent while
+acquire was away — is imported all the same. The grab recovery asks the client
+what became of every grab that is downloaded without an import of its own, or
+that was handed over and gave no word for a quarter of an hour while the
+gateway no longer tracks its job, and imports one that completed from the
+files the client reports, as its completed event would have: at most 25 a
+run, with one line in the log. A job the client does not know is left to the
+stale-grab sweep.
+
+**A job id given again.** A client may give a new download the job id of one
+it forgot: NZBGet numbers its downloads from 1 again when it restarts with an
+empty history, which releasing every imported download leaves it. A job id
+names the newest grab handed to it, on that client. A new download on an id
+takes over the old one's row in the downloads tab, counts against the
+downloads at once until a row of its own shows, and its import takes over the
+old one's once that is done; one still running is not replaced, and the new
+download waits, downloaded and saying so, until the grab recovery queues its
+import. An older grab's late events on the id move nothing, and the job the id
+names now — its files too — is never taken for the older grab's.
 
 The download's events move only targets that are still the grab's and in the
 state the event expects: a completed event moves grabbed targets to downloaded,
@@ -286,8 +307,10 @@ a failed one fails grabbed targets. One for a grab that is done or given up —
 a repeat, a late event — moves nothing, so a failed target stays failed for its
 recovery.
 
-The `grab-recovery` schedule, hourly, does both: it makes the failed targets
-whose wait ran out wanted again, and gives up the stale grabs.
+The `grab-recovery` schedule, hourly, does all three: it makes the failed
+targets whose wait ran out wanted again, imports what finished unseen, and
+gives up the stale grabs. What finished unseen is looked for once two minutes
+after acquire starts, too.
 
 ### From download to catalog
 
@@ -851,7 +874,7 @@ changed — its interval, or switched off — is left as it is.
 | `rss-sync` | 15 minutes | reads every source's newest releases, matches them to what is wanted and grabs what the policy allows ([the newest releases](#the-sources-newest-releases)) — nothing while nothing could be grabbed; in a worker of its own |
 | `inventory-refresh` | 6 hours | reads TMDB for what runs, what ended (weekly) and the requested movies that wait (daily), at most 300 calls a run, a third kept for the series that ended or were never read ([TMDB, read again](#tmdb-read-again)), and then, outside that budget, the air times still due of every series an automatic grab may take at TVmaze, at most 2,000 calls a run ([exact air times](#exact-air-times)); in a worker of its own, which also reads every follow at once, every 15 minutes a request whose title TMDB could not be read for yet and a series whose air times TVmaze did not give, and makes a run two minutes after acquire starts |
 | `holdings-reconcile` | 6 hours | asks the catalog what the library holds ([what the library holds](#what-the-library-holds)); in a worker of its own |
-| `grab-recovery` | 1 hour | makes failed targets wanted again once their wait ran out, and gives up stale grabs ([when a grab fails](#when-a-grab-fails)) |
+| `grab-recovery` | 1 hour | makes failed targets wanted again once their wait ran out, imports the grabs whose download finished unseen, and gives up stale grabs ([when a grab fails](#when-a-grab-fails)) |
 | `subtitles-sweep` | 15 minutes | a pass of the [subtitles](#subtitles) worker |
 | `outbox-audit` | 6 hours | logs how many events wait in the outbox |
 
@@ -1286,8 +1309,9 @@ one per TMDB id and kind of title (`wanted_follow_uq`).
 release that won (`release_title`, `indexer`, `indexer_id`, `release_guid`,
 `protocol`, `size_bytes`, `seeders`, `reason`) and the full link sealed in
 `source_ct`; PK `(wanted_id, adapter, client_job_id)`. Terminal events
-normally map back via the `wanted_item_id` the gateway echoes; this table is the
-fallback when a restarted gateway no longer knows it.
+normally map back via the `wanted_item_id` the gateway echoes; this table and
+`target_grabs` are the fallback when a restarted gateway no longer knows it —
+the newest grab handed to the client job is the one.
 
 **`indexers`** and **`indexer_usage`** — the search sources (API key sealed,
 cached caps, health) and what each spent per UTC day. **`rss_cursors`** — what
@@ -1301,7 +1325,9 @@ releases in their clients — every target grab's download, copied or not: the
 files as the client reported them, the state (`pending`, `imported`, `done`,
 `failed`), attempts, the last detail, the copy handed over and when to look
 again. A target grab's download waiting for the catalog stays `pending`; one
-the library did not get all of is `failed`, kept in its client.
+the library did not get all of is `failed`, kept in its client. A finished
+import gives way to a new download's on the same job id; one still running is
+not replaced.
 
 **`download_clients`** — the download clients (secret sealed), with a generation
 from one sequence that is the revision pushed to the gateway, and whether the
@@ -1384,7 +1410,8 @@ the client's native state, bytes, speed, ETA, seeders/health, timestamps. This i
 a *projection* of the clients' state, so `wanted_id` is a soft reference — a
 download whose request was deleted simply loses the link. Terminal rows keep the
 telemetry the progress stream accumulated, and are never resurrected by a late
-progress message.
+progress message. An event that names another grab than an ended row's is a
+new download the client gave that job id: it replaces the row.
 
 ## Configuration
 

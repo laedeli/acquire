@@ -7,7 +7,7 @@ description: >-
   qBittorrent and NZBGet.
 type: application
 # Bump for every change that should reach installs: a version is published once.
-version: 0.6.1
+version: 0.6.2
 # The chart workflow replaces appVersion with the git sha it publishes from
 # (helm package --app-version <sha>). The image workflow pushes acquire under
 # that same sha, so a published chart runs exactly the code it was cut from.
