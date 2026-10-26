@@ -295,6 +295,75 @@ func (c *Client) List(ctx context.Context) ([]Job, error) {
 	return out, nil
 }
 
+// JobView is one client job as its client describes it now: the list's
+// fields, the files of a completed job (absolute paths, as the client reports
+// them) and the client's message. WantedItemID is set only while the gateway
+// tracks the job.
+type JobView struct {
+	Job
+	Files   []string `json:"files"`
+	Message string   `json:"message"`
+}
+
+// ErrJobNotFound means the gateway asked the client, and the client does not
+// know the job: it never had it, or no longer does — removed, or gone from its
+// history. A client that cannot be asked is another error.
+var ErrJobNotFound = errors.New("the download client does not know this job")
+
+// ErrNoDescribe means the gateway predates describing one job.
+var ErrNoDescribe = errors.New("the download gateway cannot describe a job")
+
+// Describe asks what a client job is now, as its client describes it — a
+// finished one too, which the gateway no longer tracks. What a call that
+// describes nothing says: ErrJobNotFound (the client does not know the job),
+// ErrUnknownClient (the gateway does not know the client: it restarted and
+// has not been told its clients yet), ErrNoDescribe (an older gateway), or
+// any other error when the gateway or the client cannot be asked.
+func (c *Client) Describe(ctx context.Context, adapter, clientJobID string) (JobView, error) {
+	if !c.Enabled() {
+		return JobView{}, fmt.Errorf("download gateway not configured")
+	}
+	path := "/api/v1/downloads/" + url.PathEscape(adapter) + "/" + url.PathEscape(clientJobID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return JobView{}, err
+	}
+	c.authorize(ctx, req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return JobView{}, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var out JobView
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&out); err != nil {
+			return JobView{}, fmt.Errorf("gateway %s: %w", path, err)
+		}
+		return out, nil
+	case http.StatusNotFound:
+		// The gateway says which it does not know: a job of a client it runs
+		// carries its native state, "not-found". A 404 that is no answer of
+		// the call at all is a gateway without it.
+		var body struct {
+			Error       string `json:"error"`
+			NativeState string `json:"native_state"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<10)).Decode(&body); err != nil {
+			return JobView{}, ErrNoDescribe
+		}
+		if body.NativeState == "not-found" {
+			return JobView{}, fmt.Errorf("%w: %s", ErrJobNotFound, body.Error)
+		}
+		return JobView{}, fmt.Errorf("%w: %s", ErrUnknownClient, body.Error)
+	case http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		// Before the call, the path took DELETE alone.
+		return JobView{}, ErrNoDescribe
+	}
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	return JobView{}, fmt.Errorf("gateway %s %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+}
+
 // ClientsStatus reports per-client health and speed.
 func (c *Client) ClientsStatus(ctx context.Context) ([]ClientStatus, error) {
 	var out []ClientStatus

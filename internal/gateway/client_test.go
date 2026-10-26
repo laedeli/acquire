@@ -168,6 +168,56 @@ func TestAddAllowsLargePayloadsMoreTime(t *testing.T) {
 	}
 }
 
+// A job is described as the gateway answers it; a job the client does not
+// know, a client the gateway does not know, a gateway without the call and
+// one that cannot be asked each say so in a way of their own.
+func TestDescribeSaysWhatItKnowsOfAJob(t *testing.T) {
+	answer := func(code int, body string) *Client {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/api/v1/downloads/usenet/3" {
+				http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+				return
+			}
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(body))
+		}))
+		t.Cleanup(srv.Close)
+		return New(srv.URL, nil)
+	}
+	ctx := context.Background()
+
+	v, err := answer(200, `{"adapter":"usenet","client_job_id":"3","title":"Show.Name.S01E03.1080p.WEB.h264-GRP","state":"completed",
+		"native_state":"SUCCESS/ALL","progress_pct":100,"files":["/downloads/complete/acquire/Show.Name.S01E03.1080p.WEB.h264-GRP"]}`).
+		Describe(ctx, "usenet", "3")
+	if err != nil || v.State != "completed" || v.ClientJobID != "3" || v.WantedItemID != "" || len(v.Files) != 1 ||
+		v.Files[0] != "/downloads/complete/acquire/Show.Name.S01E03.1080p.WEB.h264-GRP" {
+		t.Fatalf("a completed job: %+v %v", v, err)
+	}
+	if _, err := answer(404, `{"error":"usenet does not know job 3","native_state":"not-found"}`).Describe(ctx, "usenet", "3"); !errors.Is(err, ErrJobNotFound) {
+		t.Errorf("a job the client does not know: %v", err)
+	}
+	if _, err := answer(404, `{"error":"no such client"}`).Describe(ctx, "usenet", "3"); !errors.Is(err, ErrUnknownClient) || errors.Is(err, ErrJobNotFound) {
+		t.Errorf("a client the gateway does not know: %v", err)
+	}
+	if _, err := answer(405, ``).Describe(ctx, "usenet", "3"); !errors.Is(err, ErrNoDescribe) {
+		t.Errorf("a gateway without the call: %v", err)
+	}
+	if _, err := answer(404, "404 page not found\n").Describe(ctx, "usenet", "3"); !errors.Is(err, ErrNoDescribe) {
+		t.Errorf("a gateway with no such path: %v", err)
+	}
+	for _, code := range []int{502, 503} {
+		_, err := answer(code, `{"error":"nzbget listgroups: HTTP 500"}`).Describe(ctx, "usenet", "3")
+		if err == nil || errors.Is(err, ErrJobNotFound) || errors.Is(err, ErrUnknownClient) || errors.Is(err, ErrNoDescribe) {
+			t.Errorf("%d: %v, want an error of its own", code, err)
+		}
+	}
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	if _, err := New(gone.URL, nil).Describe(ctx, "usenet", "3"); err == nil || errors.Is(err, ErrJobNotFound) {
+		t.Errorf("a gateway that is not there: %v", err)
+	}
+}
+
 func TestAddReportsBusyGateway(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "5")
