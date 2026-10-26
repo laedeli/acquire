@@ -281,14 +281,29 @@ before its job was bound, a job its client lost. Before it is given up, its
 client is asked through the gateway what its job is: one that completed is
 imported instead. A gateway that cannot be asked gives nothing up.
 
-**A download that finished unseen** — its completed event lost, or sent while
-acquire was away — is imported all the same. The grab recovery asks the client
-what became of every grab that is downloaded without an import of its own, or
-that was handed over and gave no word for a quarter of an hour while the
-gateway no longer tracks its job, and imports one that completed from the
-files the client reports, as its completed event would have: at most 25 a
+**A download that ended unseen** — its event lost, or sent while acquire was
+away — is settled all the same. The grab recovery asks the client what became
+of every grab that is downloaded without an import of its own, or that was
+handed over and gave no word for a quarter of an hour while the gateway no
+longer tracks its job, and settles one that ended as its event would have:
+one that completed is imported from the files the client reports, one that
+failed fails by its release, which is blocked for its targets — at most 25 a
 run, with one line in the log. A job the client does not know is left to the
-stale-grab sweep.
+stale-grab sweep, which asks too, at most 25 a run; a client that does not
+answer is not asked again in the run. A grab given up ends its download row,
+and a row still running for a grab that ended does not count against the
+downloads at once.
+
+**A job named otherwise.** What a client says of a job is taken for a grab's
+only when the job is named after the grab's release — NZBGet names a job after
+the NZB acquire handed over —, compared in lower case, letters and digits
+only; a qBittorrent job's id is a tag made for its one add, so it is its
+grab's whatever its name. A job named otherwise is another download under the
+id: one whose add's answer was lost, or one added by hand. Nothing of it is
+imported for the grab, which fails, left for a person: its targets fail too,
+not by their release — nothing blocked, nothing tried again on its own —,
+saying the client holds another download under that job id, for someone to
+grab again from the missing tab.
 
 **A job id given again.** A client may give a new download the job id of one
 it forgot: NZBGet numbers its downloads from 1 again when it restarts with an

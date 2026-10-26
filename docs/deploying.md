@@ -580,18 +580,33 @@ is released only while the record under its id is that download, told by its
 folder. qBittorrent's job ids — a new tag for every add — do not repeat.
 
 The episodes left "downloaded; copying into the library" by a client restart
-are imported by the first grab-recovery run after the upgrade, two minutes
-after acquire starts. It asks the client, through the gateway, what became of
-every grab that is downloaded without an import of its own, or that was handed
-over and gave no word for a quarter of an hour while the gateway no longer
-tracks its job, and imports one that completed from the files the client
-reports — at most 25 a run, again on every hourly `grab-recovery`, with one
-line in the log (`acquire grab-recovery: … grab(s) whose download may have
-finished unseen: …`). A grab whose job the client no longer knows is left to
-the stale-grab sweep, which now asks the client too before it gives a grab
-up: a download that completed unseen is imported instead. The downloads a
-sweep started past the cap are not undone; they finish and are imported like
-any other.
+are imported once the new gateway is up: usually by the grab-recovery run
+two minutes after acquire starts, at the latest by the next hourly
+`grab-recovery` run — the run asks the client, through the gateway, so it
+needs the gateway the chart pins. It asks about every grab that is downloaded
+without an import of its own, or that was handed over and gave no word for a
+quarter of an hour while the gateway no longer tracks its job, and settles
+one that ended as its event would have: one that completed is imported from
+the files the client reports, one that failed fails, its release blocked — at
+most 25 a run, with one line in the log (`acquire grab-recovery: … grab(s)
+whose download may have finished unseen: …`). A grab whose job the client no
+longer knows is left to the stale-grab sweep, which now asks the client too
+before it gives a grab up — at most 25 a run, a client that does not answer
+not asked again in the run —, and imports or fails what ended instead. A grab
+it gives up ends its download row, and a row still running for a grab that
+ended counts against the cap no more. The downloads a sweep started past the
+cap are not undone; they finish and are imported like any other.
+
+What a client says of a job is taken for a grab's only when the job is named
+after the grab's release, as NZBGet names a job after the NZB acquire handed
+over — compared in lower case, letters and digits only, so `DD+5.1` and
+`DD5.1` are the same. A job under the id that is named otherwise is another
+download — one whose add's answer was lost, or one added by hand —: nothing of
+it is imported for the grab, which fails, left for a person. Its episodes fail
+too, not by their release — nothing is blocked, nothing is tried again on its
+own —, and the missing tab says the client holds another download under that
+job id: grab them again there, or bring the files in by hand and **ask the
+catalog now**.
 
 acquire 0.6.2 against an older gateway — one deployed on its own — imports
 nothing of what finished unseen, and its log says so on every run: give the
