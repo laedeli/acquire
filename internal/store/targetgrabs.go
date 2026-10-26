@@ -384,10 +384,7 @@ func (s *Store) FreeTargetGrab(ctx context.Context, id, reason string) (int64, e
 		`UPDATE target_grabs SET state = 'failed', detail = $2, updated_at = now() WHERE id = $1`, id, clipText(reason)); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE downloads SET state = 'failed', error = $2, speed_bps = 0, eta_sec = NULL,
-		       finished_at = COALESCE(finished_at, now()), updated_at = now()
-		 WHERE wanted_id = $1 AND state NOT IN ('completed','failed','cancelled')`, id, clipText(reason)); err != nil {
+	if _, err := tx.Exec(ctx, endGrabDownloadSQL, id, clipText(reason)); err != nil {
 		return 0, err
 	}
 	tag, err := tx.Exec(ctx, `
@@ -399,6 +396,21 @@ func (s *Store) FreeTargetGrab(ctx context.Context, id, reason string) (int64, e
 		return 0, err
 	}
 	return tag.RowsAffected(), tx.Commit(ctx)
+}
+
+// endGrabDownloadSQL ends a grab's own download row that still says the
+// download runs ($1 the grab, $2 why): no event of it comes any more.
+const endGrabDownloadSQL = `
+	UPDATE downloads SET state = 'failed', error = $2, speed_bps = 0, eta_sec = NULL,
+	       finished_at = COALESCE(finished_at, now()), updated_at = now()
+	 WHERE wanted_id = $1 AND state NOT IN ('completed','failed','cancelled')`
+
+// EndGrabDownload ends a target grab's own download row that still says the
+// download runs, with the reason: what a grab acquire stops waiting for asks
+// of its row, which no event ends any more.
+func (s *Store) EndGrabDownload(ctx context.Context, grabID, reason string) error {
+	_, err := s.pool.Exec(ctx, endGrabDownloadSQL, grabID, clipText(reason))
+	return err
 }
 
 func prefixCols(alias, cols string) string {

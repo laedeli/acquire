@@ -55,7 +55,7 @@ type RepairRun struct {
 	Ended   int // ended in their client with nothing to import or fail: completed without files, or failed after it completed
 	Unknown int // their client does not know the job: left to the stale-grab sweep
 	Reused  int // their job id names a newer grab's download: left to the stale-grab sweep
-	Foreign int // their client holds another download under their job id: left for a person
+	Foreign int // their client holds another download under their job id: failed, left for a person
 	Tracked int // the gateway still tracks the job: its events will come
 	Unasked int // the gateway or the client could not be asked: tried on the next run
 }
@@ -326,20 +326,26 @@ func (s *Service) jobIsGrabs(ctx context.Context, g store.TargetGrab, name strin
 	return key != "" && key == nameKey(g.ReleaseTitle)
 }
 
-// leaveForAPerson records on a grab, and on its targets still in flight with
-// it, that its client holds another download under its job id than the
-// release it handed over: nothing of that job is imported or failed for the
-// grab, nor is the grab given up on a guess. The log says so too.
+// leaveForAPerson stops waiting for a grab whose client holds another
+// download under its job id than the release it handed over: nothing of that
+// job is imported or failed by its release for the grab. The grab fails, and
+// its targets still in flight with it fail too — not by their release, so
+// nothing is blocked and nothing is tried again on its own — saying that
+// their client holds another download under the id and that they were left
+// for a person, who grabs them again from the missing tab or brings the files
+// in by hand. The grab's own download row ends with it; the log says so too.
 func (s *Service) leaveForAPerson(ctx context.Context, g store.TargetGrab, name string) {
+	if g.State != store.GrabPending && g.State != store.GrabGrabbed && g.State != store.GrabDownloaded {
+		return // done or given up already: another download's word changes nothing of it
+	}
 	if name == "" {
 		name = "a download it gives no name"
 	}
-	why := clip(fmt.Sprintf("left for a person: %s holds another download under job %s (%s), not %s; nothing of it was imported or failed for this grab",
+	why := clip(fmt.Sprintf("left for a person: %s holds another download under job %s (%s), not %s; nothing of it was imported for this grab",
 		g.Adapter, g.ClientJobID, name, g.ReleaseTitle), 300)
-	_ = s.st.SetTargetGrabState(ctx, g.ID, g.State, why)
-	for _, state := range inFlight {
-		_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{state}, state, why)
-	}
+	_ = s.st.SetTargetGrabState(ctx, g.ID, store.GrabFailed, why)
+	_, _ = s.st.FailGrabTargets(ctx, g.ID, g.TargetIDs, inFlight, why, false)
+	_ = s.st.EndGrabDownload(ctx, g.ID, why)
 	log.Printf("acquire: grab %s: %s", g.ID, why)
 	s.notify()
 }

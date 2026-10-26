@@ -791,7 +791,8 @@ const (
 	// have, its release blocked.
 	unseenFailed
 	// unseenForeign: its client holds another download under its job id;
-	// nothing of it taken for the grab, which is left for a person.
+	// nothing of it taken for the grab, which failed, left for a person
+	// (leaveForAPerson).
 	unseenForeign
 )
 

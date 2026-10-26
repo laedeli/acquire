@@ -913,61 +913,81 @@ func TestTheRepairQueuesTheFiveTheRestartLeftStuck(t *testing.T) {
 
 // Grab A is downloaded with no import on nzbget's job 7; A's record went and
 // NZBGet restarted; B's add got id 7, but its answer was lost, so acquire
-// recorded no job for B. Job 7 is B's, named after B's release: the repair
-// imports nothing of it for A, B's completed event — the gateway adopted B's
-// job and names no grab — is not taken for A's, and the stale-grab sweep
-// gives A up for nothing either. A is left for a person, saying why.
+// recorded no job for B. Job 7 is B's, named after B's release. The repair,
+// B's completed event — the gateway adopted B's job and names no grab — and
+// the stale-grab sweep each take nothing of it for A: A fails, left for a
+// person, its target failed not by its release — nothing blocked, nothing
+// tried again on its own —, its detail saying why.
 func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
 	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
-	r := newTargetRig(t, one, three)
-	ctx := context.Background()
-	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
-	a := r.grabOnJob(t, eps[0], "7")
-	appSQL(t, `UPDATE target_grabs SET state = 'downloaded', created_at = now() - interval '10 days' WHERE id = $1`, a.ID)
-	appSQL(t, `UPDATE acquisition_targets SET state = 'downloaded' WHERE grab_id = $1`, a.ID)
-	r.gw.mu.Lock()
-	r.gw.addDrop = true
-	r.gw.mu.Unlock()
-	_, _ = r.svc.GrabTarget(ctx, eps[2].ID, "missing")
-	if target(t, r.svc, eps[2].ID).ReservedBy == "" {
-		t.Fatal("B is not pending")
+	setup := func(t *testing.T) (*targetRig, store.TargetGrab, []store.Target) {
+		t.Helper()
+		r := newTargetRig(t, one, three)
+		_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+		a := r.grabOnJob(t, eps[0], "7")
+		appSQL(t, `UPDATE target_grabs SET state = 'downloaded', created_at = now() - interval '10 days' WHERE id = $1`, a.ID)
+		appSQL(t, `UPDATE acquisition_targets SET state = 'downloaded' WHERE grab_id = $1`, a.ID)
+		r.gw.mu.Lock()
+		r.gw.addDrop = true
+		r.gw.mu.Unlock()
+		_, _ = r.svc.GrabTarget(context.Background(), eps[2].ID, "missing")
+		if target(t, r.svc, eps[2].ID).ReservedBy == "" {
+			t.Fatal("B is not pending")
+		}
+		r.writeDownload(t, three)
+		r.describes("7", completedView("7", three))
+		return r, a, eps
 	}
-	r.writeDownload(t, three)
-	r.describes("7", completedView("7", three))
+	leftForAPerson := func(t *testing.T, r *targetRig, a store.TargetGrab, eps []store.Target) {
+		t.Helper()
+		ctx := context.Background()
+		if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
+			t.Fatal("B's job was queued for A")
+		}
+		got, _ := r.svc.st.GetTargetGrab(ctx, a.ID)
+		if got.State != store.GrabFailed || !strings.Contains(got.Detail, "left for a person") ||
+			!strings.Contains(got.Detail, "nzbget holds another download under job 7 ("+three+")") {
+			t.Fatalf("A: %+v", got)
+		}
+		st := target(t, r.svc, eps[0].ID)
+		if st.State != store.TargetFailed || !strings.Contains(st.Detail, "left for a person") || st.RetryAt != nil || st.GrabFailures != 0 {
+			t.Errorf("A's target: %+v", st)
+		}
+		if blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID); len(blocked) != 0 {
+			t.Errorf("A's release was blocked: %v", blocked)
+		}
+	}
 
-	run, err := r.svc.RepairGrabs(ctx)
-	if err != nil || run.Found != 1 || run.Foreign != 1 || run.Queued != 0 {
-		t.Fatalf("the repair: %+v %v", run, err)
-	}
-	if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
-		t.Fatal("B's job was queued for A")
-	}
-	got, _ := r.svc.st.GetTargetGrab(ctx, a.ID)
-	if got.State != store.GrabDownloaded || !strings.Contains(got.Detail, "left for a person") ||
-		!strings.Contains(got.Detail, "nzbget holds another download under job 7 ("+three+")") {
-		t.Fatalf("A after the repair: %+v", got)
-	}
-	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetDownloaded || !strings.Contains(st.Detail, "left for a person") {
-		t.Errorf("A's target: %+v", st)
-	}
-
-	if err := r.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "7", Files: []string{"/downloads/" + three}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
-		t.Fatal("B's completed event was taken for A's")
-	}
-
-	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days' WHERE id = $1`, a.ID)
-	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 0 {
-		t.Fatalf("the stale-grab sweep freed %d: %v", freed, err)
-	}
-	if got, _ := r.svc.st.GetTargetGrab(ctx, a.ID); got.State != store.GrabDownloaded || !strings.Contains(got.Detail, "left for a person") {
-		t.Errorf("A after the sweep: %+v", got)
-	}
-	if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
-		t.Error("the sweep queued B's job for A")
-	}
+	t.Run("the repair", func(t *testing.T) {
+		r, a, eps := setup(t)
+		run, err := r.svc.RepairGrabs(context.Background())
+		if err != nil || run.Found != 1 || run.Foreign != 1 || run.Queued != 0 {
+			t.Fatalf("the repair: %+v %v", run, err)
+		}
+		leftForAPerson(t, r, a, eps)
+		if run, _ := r.svc.RepairGrabs(context.Background()); run.Found != 0 {
+			t.Errorf("A is looked at again: %+v", run)
+		}
+	})
+	t.Run("the adopted job's completed event", func(t *testing.T) {
+		r, a, eps := setup(t)
+		if err := r.svc.OnCompleted(context.Background(), events.DownloadEvent{Adapter: "nzbget", ClientID: "7",
+			Files: []string{"/downloads/" + three}}); err != nil {
+			t.Fatal(err)
+		}
+		leftForAPerson(t, r, a, eps)
+		if d, _ := r.svc.st.GetDownload(context.Background(), "nzbget", "7"); d.WantedID == a.ID {
+			t.Errorf("B's row was taken for A's: %+v", d)
+		}
+	})
+	t.Run("the stale-grab sweep", func(t *testing.T) {
+		r, a, eps := setup(t)
+		appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days' WHERE id = $1`, a.ID)
+		if freed, err := r.svc.SweepStaleGrabs(context.Background()); err != nil || freed != 0 {
+			t.Fatalf("the stale-grab sweep freed %d: %v", freed, err)
+		}
+		leftForAPerson(t, r, a, eps)
+	})
 }
 
 // An adopted job's completed event names no grab: it is taken for the grab
@@ -1089,5 +1109,29 @@ func TestAnOlderGrabsLateEventsWhileInFlightMoveNothing(t *testing.T) {
 	}
 	if got, _ := r.svc.st.GetTargetGrab(ctx, b.ID); got.State != store.GrabGrabbed {
 		t.Errorf("the newer grab: %+v", got)
+	}
+}
+
+// A grab that is done is not failed by another download's event on its job
+// id: the event is not its, and it stays as it was.
+func TestAnotherDownloadsEventLeavesADoneGrabAlone(t *testing.T) {
+	const one, two = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E02.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "9")
+	r.finish(t, g, map[string]string{one + "/" + one + ".mkv": "one"}, one)
+	r.svc.importNext(ctx)
+	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported {
+		t.Fatalf("the grab: %+v", got)
+	}
+	if err := r.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "9", Files: []string{"/downloads/" + two}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported || strings.Contains(got.Detail, "left for a person") {
+		t.Errorf("the done grab after another download's event: %+v", got)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetHeld {
+		t.Errorf("its target: %+v", st)
 	}
 }
