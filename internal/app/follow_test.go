@@ -1056,7 +1056,9 @@ func TestRequestState(t *testing.T) {
 	now := time.Now()
 	read := now.Add(-time.Hour)
 	next := &store.NextEpisode{Season: 1, Episode: 10, AirDate: *day(5)}
-	soon, past := day(20), day(-1)
+	// past is two days ago: out yesterday, the 30-hour delay would still run
+	// until 06:00 UTC today.
+	soon, past := day(20), day(-2)
 	for _, tc := range []struct {
 		name           string
 		p              store.Progress

@@ -280,11 +280,13 @@ func TestTheFeedsSkipWhatWasPublishedBeforeTheAirDate(t *testing.T) {
 	r := newFollowRig(t)
 	ctx := context.Background()
 	_, eps := track(t, r.svc, 990711, "Show Name", 2, true)
-	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-1), 0)
+	// E01 aired two days ago, so its 30-hour delay is over at any hour of
+	// today; yesterday's would still run until 06:00 UTC.
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-2), 0)
 	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(0), 0)
 	fake := "Show.Name.S01E01.1080p.WEB.h264-FAKE"
 	feedSrc := newFeedSource(t, true,
-		tv(fake, day(-1).Add(-6*time.Hour)),
+		tv(fake, day(-2).Add(-6*time.Hour)),
 		tv("Show.Name.S01E02.1080p.WEB.h264-GRP", *day(0)))
 	addFeed(t, r.svc, "feed", feedSrc)
 	if d := r.svc.envSearchSettings(); d.AirDelayHours != 30 || d.AirTimes != AirTimesTVmaze || d.AirDelayAfterAirstampMinutes != 60 {
