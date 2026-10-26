@@ -339,19 +339,28 @@ type Grab struct {
 	SourceKID   string `json:"-"`
 }
 
-// GrabAAD is the secretbox binding for a grab's sealed source link.
+// GrabAAD is the secretbox binding for a grab's sealed source link. The
+// request's id is part of it, so grabs of two requests on one job id a client
+// gave again are never bound alike.
 func GrabAAD(wantedID, adapter, clientJobID string) (table, id, field string) {
 	return "grabs", wantedID + ":" + adapter + ":" + clientJobID, "source"
 }
 
-// RecordGrabRelease stores the grab together with the chosen release.
+// RecordGrabRelease stores the grab together with the chosen release. A
+// request handed to the same client job again — a job id the client gave
+// again — is a new hand-over: the row is that one's, made now, so the job is
+// the request's again (JobOwner).
 func (s *Store) RecordGrabRelease(ctx context.Context, g Grab) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO grabs (wanted_id, adapter, client_job_id, source,
 		                    release_title, indexer, protocol, size_bytes, seeders, reason,
 		                    indexer_id, release_guid, source_ct, source_kid)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-		 ON CONFLICT DO NOTHING`,
+		 ON CONFLICT (wanted_id, adapter, client_job_id) DO UPDATE
+		    SET source = EXCLUDED.source, release_title = EXCLUDED.release_title, indexer = EXCLUDED.indexer,
+		        protocol = EXCLUDED.protocol, size_bytes = EXCLUDED.size_bytes, seeders = EXCLUDED.seeders,
+		        reason = EXCLUDED.reason, indexer_id = EXCLUDED.indexer_id, release_guid = EXCLUDED.release_guid,
+		        source_ct = EXCLUDED.source_ct, source_kid = EXCLUDED.source_kid, created_at = now()`,
 		g.WantedID, g.Adapter, g.ClientJobID, g.Source,
 		g.ReleaseTitle, g.Indexer, g.Protocol, g.SizeBytes, g.Seeders, g.Reason,
 		g.IndexerID, g.ReleaseGUID, g.SourceCT, g.SourceKID)
@@ -562,7 +571,8 @@ func (s *Store) DeleteProfile(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetDownload returns one client job's row.
+// GetDownload returns one client job's row: the newest download's under that
+// id, as UpsertDownload keeps it.
 func (s *Store) GetDownload(ctx context.Context, adapter, clientJobID string) (Download, error) {
 	var d Download
 	err := s.pool.QueryRow(ctx,
@@ -627,7 +637,9 @@ func (s *Store) ActiveDownloadFor(ctx context.Context, wantedID string) (Downloa
 	return d, err
 }
 
-// DeleteDownload drops a job row (used when a download is cancelled).
+// DeleteDownload drops a job row (used when a download is cancelled). The row
+// under the id is the newest download's, the one the client holds under it
+// now: the one cancelled.
 func (s *Store) DeleteDownload(ctx context.Context, adapter, clientJobID string) error {
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM downloads WHERE adapter=$1 AND client_job_id=$2`, adapter, clientJobID)

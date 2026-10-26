@@ -505,7 +505,9 @@ type GrabFile struct {
 	Detail                                 string
 }
 
-// RecordGrabFile records it on the grab's grab_targets row (010).
+// RecordGrabFile records it on the grab's grab_targets row (010). The row is
+// keyed by the client job: one an earlier grab left on a job id the client
+// gave again becomes the grab's whose import writes it.
 func (s *Store) RecordGrabFile(ctx context.Context, f GrabFile) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO grab_targets (adapter, client_job_id, target_id, grab_id, state, file_path, episode_end, item_id, detail)

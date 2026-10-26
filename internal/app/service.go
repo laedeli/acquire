@@ -560,7 +560,9 @@ func (s *Service) ClientsStatus(ctx context.Context) ([]gateway.ClientStatus, er
 	return s.gw.ClientsStatus(ctx)
 }
 
-// ControlDownload cancels, pauses or resumes a client job.
+// ControlDownload cancels, pauses or resumes a client job: the job the client
+// holds under the id now, whose download the job's row is (store.JobOwner),
+// and whose grab a cancel gives up.
 func (s *Service) ControlDownload(ctx context.Context, adapter, jobID, action string) error {
 	switch action {
 	case "pause":

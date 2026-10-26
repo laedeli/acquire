@@ -338,3 +338,34 @@ func TestUnimportedTargetGrabs(t *testing.T) {
 		t.Errorf("at most 2: %d", len(two))
 	}
 }
+
+// A request handed to a job id it had before — the client gave the id to a
+// target grab meanwhile, then to the request again — owns the job again: its
+// grab row is the new hand-over's.
+func TestARequestHandedToAJobIDAgainOwnsIt(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 27, 1)
+	if err := s.CreateWanted(ctx, Wanted{ID: "w_1", Title: "Film", MediaType: "movie"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordGrabRelease(ctx, Grab{WantedID: "w_1", Adapter: "nzbget", ClientJobID: "3", ReleaseTitle: "Film.2020.720p"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE grabs SET created_at = now() - interval '20 days'`); err != nil {
+		t.Fatal(err)
+	}
+	grabOn(t, s, "tg_between", id, eps[0], "nzbget", "3", 10*24*time.Hour)
+	if w, _ := s.FindWantedByClientJob(ctx, "nzbget", "3"); w != "tg_between" {
+		t.Fatalf("the job's grab before the request's second hand-over: %q", w)
+	}
+	if err := s.RecordGrabRelease(ctx, Grab{WantedID: "w_1", Adapter: "nzbget", ClientJobID: "3", ReleaseTitle: "Film.2020.1080p"}); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := s.FindWantedByClientJob(ctx, "nzbget", "3"); w != "w_1" {
+		t.Errorf("the job's grab after the request's second hand-over: %q", w)
+	}
+	if g, err := s.LatestGrab(ctx, "w_1"); err != nil || g.ReleaseTitle != "Film.2020.1080p" || time.Since(g.CreatedAt) > time.Minute {
+		t.Errorf("the request's latest grab: %+v %v", g, err)
+	}
+}

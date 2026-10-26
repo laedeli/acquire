@@ -183,6 +183,8 @@ func (s *Service) runTargetImport(ctx context.Context, im store.Import) {
 		pack = release.ParseCoverage(g.ReleaseTitle).Pack()
 	}
 
+	// The grab's id first: two downloads a client gave one job id never share
+	// a folder.
 	dir := filepath.Join(s.cfg.ArrivalsRoot, "acquire", safeName(g.ID), safeName(im.Adapter+"-"+im.ClientJobID))
 	used := map[string]bool{}
 	var pass importPass

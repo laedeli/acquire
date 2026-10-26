@@ -237,6 +237,8 @@ func (s *Service) runImport(ctx context.Context, im store.Import) {
 		return
 	}
 
+	// The request's id first: two downloads a client gave one job id never
+	// share a folder.
 	dir := filepath.Join(s.cfg.ArrivalsRoot, "acquire", safeName(im.WantedID), safeName(im.Adapter+"-"+im.ClientJobID))
 	dst := filepath.Join(dir, filepath.Base(video))
 	// A copy made by an attempt whose hand-over failed is still good: check it
