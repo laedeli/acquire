@@ -532,7 +532,7 @@ func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (st
 		if err != nil {
 			return store.TargetGrab{}, false
 		}
-		if name := jobName(ev.Title, ev.Files); !s.jobIsGrabs(ctx, g, name) {
+		if name := jobName(ev.Title, ev.Files); !s.jobIsGrabsOf(ctx, g, name, ev.ClientType) {
 			s.leaveForAPerson(ctx, g, name)
 			return store.TargetGrab{}, false
 		}

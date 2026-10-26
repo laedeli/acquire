@@ -525,7 +525,7 @@ func (s *Service) saveDownload(ctx context.Context, ev events.DownloadEvent, sta
 			wantedID = id
 		}
 		if store.IsTargetGrab(wantedID) {
-			if g, err := s.st.GetTargetGrab(ctx, wantedID); err != nil || !s.jobIsGrabs(ctx, g, jobName(ev.Title, ev.Files)) {
+			if g, err := s.st.GetTargetGrab(ctx, wantedID); err != nil || !s.jobIsGrabsOf(ctx, g, jobName(ev.Title, ev.Files), ev.ClientType) {
 				wantedID = ""
 			}
 		}

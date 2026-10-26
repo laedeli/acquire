@@ -287,12 +287,16 @@ func completedEvent(g store.TargetGrab, job gateway.JobView) events.DownloadEven
 // someone added by hand has no grab at all: either can hold an id an older
 // grab had. Before what a client says of a job is taken as a grab's — its
 // files imported, its failure failed, its events attributed by the job id
-// alone —, the job's name is checked against the grab's release: NZBGet names
-// a job after the NZB acquire handed over, which is named after the release.
+// alone —, the job's name is checked against the names acquire could have
+// handed the grab's NZB over under: NZBGet names a job after its NZB.
+//
+// Only NZBGet gives a job id again. The check is for its jobs alone, and for
+// a grab with a release to tell it by: one whose link was handed over by hand
+// names nothing.
 
-// nameKey is a release name as the check compares it: in lower case,
-// letters and digits only — the NZB's name keeps a release's words but not
-// always its dots, dashes and plus signs (DD+5.1, DD5.1).
+// nameKey is a name as the check compares it: in lower case, letters and
+// digits only — the NZB's name keeps a release's words but not always its
+// dots, dashes and plus signs (DD+5.1, DD5.1).
 func nameKey(name string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
@@ -300,6 +304,35 @@ func nameKey(name string) string {
 		}
 		return -1
 	}, name)
+}
+
+// handedOverAs are the names acquire could have handed a grab's NZB over
+// under, cleaned and cut as an NZB's name is (sanitizeFileName): its
+// release's, every target grab's since releasePayloadName and what a source
+// mostly called the file before; and its label's — the title and what it
+// covers, "Show Name S01E03" — which an NZB the source named nothing was
+// handed over under before releasePayloadName (payloadName).
+func (s *Service) handedOverAs(ctx context.Context, g store.TargetGrab) []string {
+	names := []string{sanitizeFileName(g.ReleaseTitle)}
+	if title, err := s.st.TitleByID(ctx, g.TitleID); err == nil {
+		if label := strings.TrimSpace(title.Title + " " + g.Covers); label != "" {
+			names = append(names, payloadBase(label))
+		}
+	}
+	return names
+}
+
+// givesIDsAgain reports whether the client a grab was handed to may give a
+// job id to another job later: NZBGet, which numbers its jobs anew once it
+// restarts with an empty history. It is told by the client's type as acquire
+// stores it, else as the gateway's event names it (typ). Other clients' ids
+// are made for one job — qBittorrent's, a tag for each add —, and a client
+// acquire no longer has cannot be asked about anyway.
+func (s *Service) givesIDsAgain(ctx context.Context, adapter, typ string) bool {
+	if c, err := s.st.GetDownloadClient(ctx, adapter); err == nil {
+		return c.Type == "nzbget"
+	}
+	return typ == "nzbget"
 }
 
 // jobName is what a client calls a job: its title, else the name of the first
@@ -315,15 +348,30 @@ func jobName(title string, files []string) string {
 }
 
 // jobIsGrabs reports whether the job a client holds under a grab's job id —
-// named name — is the grab's download: named after the release the grab
-// handed over. A qBittorrent job's id is a tag the gateway makes for each add,
-// which no other job holds, so it is the grab's whatever its name.
+// named name — is the grab's download: named as acquire handed the grab's NZB
+// over (handedOverAs), the name cut as an NZB's name is. A job of a client
+// that does not give ids again, and of a grab with no release, is the grab's
+// whatever its name.
 func (s *Service) jobIsGrabs(ctx context.Context, g store.TargetGrab, name string) bool {
-	if c, err := s.st.GetDownloadClient(ctx, g.Adapter); err == nil && c.Type == "qbittorrent" {
+	return s.jobIsGrabsOf(ctx, g, name, "")
+}
+
+// jobIsGrabsOf is jobIsGrabs for a job of a client the gateway's event names
+// the type of (typ).
+func (s *Service) jobIsGrabsOf(ctx context.Context, g store.TargetGrab, name, typ string) bool {
+	if strings.TrimSpace(g.ReleaseTitle) == "" || !s.givesIDsAgain(ctx, g.Adapter, typ) {
 		return true
 	}
-	key := nameKey(name)
-	return key != "" && key == nameKey(g.ReleaseTitle)
+	key := nameKey(sanitizeFileName(name))
+	if key == "" {
+		return false
+	}
+	for _, handed := range s.handedOverAs(ctx, g) {
+		if key == nameKey(handed) {
+			return true
+		}
+	}
+	return false
 }
 
 // leaveForAPerson stops waiting for a grab whose client holds another

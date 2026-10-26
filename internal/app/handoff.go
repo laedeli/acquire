@@ -115,6 +115,11 @@ func (s *Service) handOff(ctx context.Context, h handoff) (handedOff, error) {
 			kind = "http" // not a release file: a hoster link, handed over as is
 		default:
 			payload, payloadName, kind = f.Body, f.Name, f.Kind
+			if kind == "usenet" && store.IsTargetGrab(h.WantedID) {
+				if name := releasePayloadName(h.ReleaseTitle); name != "" {
+					payloadName = name
+				}
+			}
 		}
 		if kind != protocol {
 			protocol, routed = kind, false
@@ -433,11 +438,31 @@ func payloadName(resp *http.Response, link, title, kind string) string {
 	if name == "" {
 		name = title
 	}
-	name = sanitizeFileName(strings.TrimSuffix(name, path.Ext(name)))
+	name = payloadBase(name)
 	if name == "" {
 		name = "release"
 	}
 	return name + ext
+}
+
+// payloadBase is what payloadName keeps of a name for the file: without what
+// looks like its extension, cleaned and cut (sanitizeFileName).
+func payloadBase(name string) string {
+	return sanitizeFileName(strings.TrimSuffix(name, path.Ext(name)))
+}
+
+// releasePayloadName is the file name a target grab's NZB is handed over
+// under, whatever the source calls the file: its release's, cleaned and cut
+// as payloadName cleans and cuts a name, but whole — a release's name is no
+// file name with an extension. NZBGet names the job after the NZB, and that
+// name is how acquire tells the grab's job from another under the same id
+// (jobIsGrabs). "" for a release with no name left.
+func releasePayloadName(release string) string {
+	name := sanitizeFileName(release)
+	if name == "" {
+		return ""
+	}
+	return name + ".nzb"
 }
 
 func sanitizeFileName(s string) string {

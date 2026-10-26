@@ -43,6 +43,9 @@ type fakeSource struct {
 	gone map[string]bool
 	// pubs are the publication times it names, by release name.
 	pubs map[string]time.Time
+	// disposition, when set, is the Content-Disposition a release file is
+	// served with; without it the file has no name of its own.
+	disposition string
 }
 
 func newFakeSource(t *testing.T, protocol, key string, titles ...string) *fakeSource {
@@ -72,7 +75,7 @@ func (f *fakeSource) offer(titles ...string) {
 
 func (f *fakeSource) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
-	mode, delay, titles, gone, pubs := f.mode, f.delay, f.titles, f.gone, f.pubs
+	mode, delay, titles, gone, pubs, disposition := f.mode, f.delay, f.titles, f.gone, f.pubs, f.disposition
 	q := r.URL.Query()
 	f.queries = append(f.queries, q.Get("t"))
 	f.mu.Unlock()
@@ -104,6 +107,9 @@ func (f *fakeSource) serve(w http.ResponseWriter, r *http.Request) {
 		if gone[q.Get("id")] {
 			http.NotFound(w, r)
 			return
+		}
+		if disposition != "" {
+			w.Header().Set("Content-Disposition", disposition)
 		}
 		if f.protocol == "torrent" {
 			_, _ = w.Write([]byte(sampleTorrent))

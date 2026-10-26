@@ -1135,3 +1135,141 @@ func TestAnotherDownloadsEventLeavesADoneGrabAlone(t *testing.T) {
 		t.Errorf("its target: %+v", st)
 	}
 }
+
+// handedNZB is the name of the NZB the last add handed over, without its
+// extension: the name NZBGet gives the job.
+func (r *targetRig) handedNZB(t *testing.T) string {
+	t.Helper()
+	adds := r.gw.added()
+	if len(adds) == 0 {
+		t.Fatal("no add")
+	}
+	name, _ := adds[len(adds)-1]["payload_name"].(string)
+	return strings.TrimSuffix(name, ".nzb")
+}
+
+// A target grab's NZB is handed over under its release's name whatever the
+// source calls the file — nothing, or a name of its own —, cut at 200 bytes
+// as any NZB's name is; NZBGet names the job after it. A request's NZB keeps
+// the source's name.
+func TestATargetGrabsNZBIsNamedAfterItsRelease(t *testing.T) {
+	const rel = "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	long := "Show.Name.S01E04." + strings.Repeat("Extended.Cut.", 16) + "1080p.WEB.h264-GRP"
+	r := newTargetRig(t, rel, long)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 4, true)
+	r.grabOnJob(t, eps[2], "7")
+	if got := r.handedNZB(t); got != rel {
+		t.Errorf("from a source that names the file nothing, the NZB is %q", got)
+	}
+	r.src.mu.Lock()
+	r.src.disposition = `attachment; filename="98765.nzb"`
+	r.src.mu.Unlock()
+	r.grabOnJob(t, eps[3], "8")
+	if got := r.handedNZB(t); got != sanitizeFileName(long) || len(got) != 200 {
+		t.Errorf("from a source that names the file its own way, a release of %d bytes: %q", len(long), got)
+	}
+	w, _, err := r.svc.Request(ctx, store.Wanted{Title: "Film", Year: 2020, MediaType: "movie"}, asAdmin("user"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.Grab(ctx, w.ID, r.src.srv.URL+"/api?t=get&id=n0&apikey=K", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.handedNZB(t); got != "98765" {
+		t.Errorf("a request's NZB is %q, want the source's name", got)
+	}
+}
+
+// A grab's own NZBGet job is its, named after the release — as acquire hands
+// an NZB over now — or after the grab's label, "Show Name S01E03" — as an NZB
+// the source named nothing was handed over before —: an adopted job's
+// completed event imports it, the repair imports it, and an adopted job's
+// failed event fails it by its release.
+func TestAGrabsOwnJobIsItsByEitherName(t *testing.T) {
+	const rel = "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	setup := func(t *testing.T) (*targetRig, store.TargetGrab, store.Target) {
+		t.Helper()
+		r := newTargetRig(t, rel)
+		_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+		return r, r.grabOnJob(t, eps[2], "7"), eps[2]
+	}
+	for _, named := range []string{rel, "Show Name S01E03"} {
+		t.Run(named+", the adopted job's completed event", func(t *testing.T) {
+			r, g, _ := setup(t)
+			r.writeDownload(t, named)
+			if err := r.svc.OnCompleted(context.Background(), events.DownloadEvent{Adapter: "nzbget", ClientType: "nzbget", ClientID: "7",
+				Files: []string{"/downloads/" + named}}); err != nil {
+				t.Fatal(err)
+			}
+			if im, err := r.svc.st.GetImport(context.Background(), "nzbget", "7"); err != nil || im.WantedID != g.ID {
+				t.Fatalf("the import: %+v %v", im, err)
+			}
+		})
+		t.Run(named+", the repair", func(t *testing.T) {
+			r, g, _ := setup(t)
+			r.writeDownload(t, named)
+			appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '20 minutes'`)
+			r.describes("7", completedView("7", named))
+			if run, err := r.svc.RepairGrabs(context.Background()); err != nil || run.Queued != 1 {
+				t.Fatalf("the repair: %+v %v", run, err)
+			}
+			if im, err := r.svc.st.GetImport(context.Background(), "nzbget", "7"); err != nil || im.WantedID != g.ID {
+				t.Fatalf("the import: %+v %v", im, err)
+			}
+		})
+		t.Run(named+", the adopted job's failed event", func(t *testing.T) {
+			r, _, ep := setup(t)
+			if err := r.svc.OnFailed(context.Background(), events.DownloadEvent{Adapter: "nzbget", ClientType: "nzbget", ClientID: "7",
+				Title: named, Error: "nzbget: FAILURE/HEALTH"}); err != nil {
+				t.Fatal(err)
+			}
+			st := target(t, r.svc, ep.ID)
+			if st.State != store.TargetFailed || st.RetryAt == nil || st.GrabFailures != 1 {
+				t.Fatalf("the target: %+v", st)
+			}
+			if blocked, _ := r.svc.st.BlockedFor(context.Background(), ep.ID); blocked[rel] == "" {
+				t.Errorf("the release is not blocked: %v", blocked)
+			}
+		})
+	}
+}
+
+// The check compares names as an NZB's name is cut, at 200 bytes, on both
+// sides; it does not look at a grab with no release — a link handed over by
+// hand —, nor at a job of a client that gives no id again — qBittorrent's,
+// a tag made for one add —; a client acquire no longer has is told by the
+// type the gateway's event names.
+func TestTheNameCheck(t *testing.T) {
+	r := newTargetRig(t)
+	ctx := context.Background()
+	long := "Show.Name.S01E03." + strings.Repeat("Extended.Cut.", 16) + "1080p.WEB.h264-GRP"
+	g := store.TargetGrab{ID: "tg_x", Adapter: "nzbget", ClientJobID: "7", ReleaseTitle: long}
+	cut := sanitizeFileName(long)
+	for _, name := range []string{cut, jobName("", []string{"/downloads/complete/acquire/" + cut}), long} {
+		if !r.svc.jobIsGrabs(ctx, g, name) {
+			t.Errorf("%q (%d bytes) is not taken for the release of %d bytes", name, len(name), len(long))
+		}
+	}
+	if r.svc.jobIsGrabs(ctx, g, "Show.Name.S01E03.1080p.WEB.h264-OTHER") {
+		t.Error("another release is taken for the grab's")
+	}
+	if !r.svc.jobIsGrabs(ctx, store.TargetGrab{ID: "tg_m", Adapter: "nzbget", ClientJobID: "7"}, "Film.2020.1080p.WEB.h264-GRP") {
+		t.Error("a grab with no release is checked")
+	}
+	if _, err := r.svc.CreateClient(ctx, ClientInput{Type: "qbittorrent", BaseURL: "http://torrents:8080", Auth: "none",
+		RemotePath: "/downloads", LocalPath: r.downloads}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	torrent := store.TargetGrab{ID: "tg_q", Adapter: "qbittorrent", ClientJobID: "dlg-1", ReleaseTitle: long}
+	if !r.svc.jobIsGrabs(ctx, torrent, "[GRP] Show Name - 03 (1080p)") {
+		t.Error("a qBittorrent job is checked")
+	}
+	gone := store.TargetGrab{ID: "tg_g", Adapter: "usenet-old", ClientJobID: "7", ReleaseTitle: long}
+	if !r.svc.jobIsGrabsOf(ctx, gone, "Other.Release.1080p.WEB.h264-GRP", "") {
+		t.Error("a job of a client acquire does not know, of no type, is checked")
+	}
+	if r.svc.jobIsGrabsOf(ctx, gone, "Other.Release.1080p.WEB.h264-GRP", "nzbget") {
+		t.Error("an NZBGet job of a client acquire does not know any more is not checked")
+	}
+}
