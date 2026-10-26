@@ -54,7 +54,8 @@ func endedGrab(t *testing.T, svc *Service, gid, titleID, targetID, job, release 
 	}
 	appSQL(t, `UPDATE imports SET state = 'done', detail = 'released' WHERE wanted_id = $1`, gid)
 	appSQL(t, `UPDATE target_grabs SET created_at = now() - interval '10 days', updated_at = now() - interval '10 days' WHERE id = $1`, gid)
-	appSQL(t, `UPDATE downloads SET started_at = now() - interval '10 days', updated_at = now() - interval '10 days'
+	appSQL(t, `UPDATE downloads SET started_at = now() - interval '10 days', updated_at = now() - interval '10 days',
+	                   finished_at = now() - interval '10 days'
 	            WHERE wanted_id = $1`, gid)
 }
 

@@ -421,9 +421,10 @@ type Download struct {
 // forgot the download that had it (see JobOwner): an event that names another
 // wanted id than an ended row's is a new download on that id, and replaces
 // the row — its own title and telemetry, started now — instead of being
-// absorbed by it or merged into it. Which of two grabs on an id an event is
-// about is the caller's to tell (JobReused): the store takes an event naming
-// a wanted id as the job's.
+// absorbed by it or merged into it. Only a grab made after the row ended can
+// be that new download: a late event of an older grab — or of a grab acquire
+// does not know — is absorbed, and never brings an ended row back to running.
+// A row that names no grab (NULL) is another's than any grab an event names.
 func (s *Store) UpsertDownload(ctx context.Context, d Download) (Download, error) {
 	terminal := d.State == "completed" || d.State == "failed"
 	// What a new row of a terminal event holds: what the merge pins on a row
@@ -435,11 +436,18 @@ func (s *Store) UpsertDownload(ctx context.Context, d Download) (Download, error
 		d.SpeedBps, d.EtaSec = 0, nil
 	}
 	// replaces is true when the event is a new download on the job's id: the
-	// row ended, and the event names another wanted id.
+	// row ended, and the event names another wanted id, of a grab made after
+	// the row ended (named: when the grab the event names was made).
 	const replaces = `(downloads.state IN ('completed','failed','cancelled') AND $3 <> ''
-	                   AND downloads.wanted_id IS DISTINCT FROM $3)`
+	                   AND downloads.wanted_id IS DISTINCT FROM $3
+	                   AND (SELECT at FROM named) > COALESCE(downloads.finished_at, downloads.updated_at))`
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO downloads (adapter, client_job_id, wanted_id, title, state, native_state,
+		`WITH named AS (
+		   SELECT max(created_at) AS at FROM (
+		     SELECT created_at FROM target_grabs WHERE id = $3
+		     UNION ALL
+		     SELECT created_at FROM grabs WHERE wanted_id = $3 AND adapter = $1 AND client_job_id = $2) made)
+		 INSERT INTO downloads (adapter, client_job_id, wanted_id, title, state, native_state,
 		                        progress_pct, bytes_done, bytes_total, speed_bps, eta_sec,
 		                        seeders, leechers, health, error, updated_at, finished_at)
 		 VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,now(),

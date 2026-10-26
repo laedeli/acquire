@@ -100,9 +100,19 @@ func TestANewDownloadOnAJobIDGivenAgainReplacesTheEndedRow(t *testing.T) {
 		}
 		return got
 	}
+	// made records a grab as made now: after the rows that ended before it.
+	made := func(ids ...string) {
+		t.Helper()
+		for _, id := range ids {
+			if _, err := s.pool.Exec(ctx, `INSERT INTO target_grabs (id, title_id) VALUES ($1, 'series:21')`, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	health, seeders := int32(1000), int32(7)
 	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
 
+	made("tg_a")
 	up(Download{WantedID: "tg_a", Title: one, State: "downloading", ProgressPct: 40, BytesDone: 400, BytesTotal: 1000,
 		SpeedBps: 50, Health: &health})
 	a := up(Download{WantedID: "tg_a", State: "completed"})
@@ -116,7 +126,11 @@ func TestANewDownloadOnAJobIDGivenAgainReplacesTheEndedRow(t *testing.T) {
 	if blank := up(Download{State: "downloading"}); blank.State != "completed" || blank.WantedID != "tg_a" {
 		t.Fatalf("an event naming no wanted id is a new download: %+v", blank)
 	}
+	if unknown := up(Download{WantedID: "tg_unknown", State: "downloading"}); unknown.State != "completed" || unknown.WantedID != "tg_a" {
+		t.Fatalf("an event of a grab acquire does not know took the ended row: %+v", unknown)
+	}
 
+	made("tg_b")
 	b := up(Download{WantedID: "tg_b", Title: three, State: "queued"})
 	if b.WantedID != "tg_b" || b.Title != three || b.State != "queued" || b.ProgressPct != 0 || b.BytesDone != 0 ||
 		b.BytesTotal != 0 || b.Health != nil || b.FinishedAt != nil || !b.StartedAt.After(a.StartedAt) {
@@ -131,9 +145,16 @@ func TestANewDownloadOnAJobIDGivenAgainReplacesTheEndedRow(t *testing.T) {
 	if b.Title != three || b.ProgressPct != 100 || b.BytesDone != 1000 || b.FinishedAt == nil {
 		t.Fatalf("B completed: %+v", b)
 	}
+	// A's late event, A made before B's row ended: absorbed, B's row ended.
+	if late := up(Download{WantedID: "tg_a", Title: one, State: "downloading", ProgressPct: 5}); late.WantedID != "tg_b" ||
+		late.State != "completed" || late.Title != three {
+		t.Fatalf("an older grab's late event brought the ended row back: %+v", late)
+	}
 
 	// A failed download's row is replaced too, by a completed event alike.
+	made("tg_c")
 	up(Download{WantedID: "tg_c", Title: "x", State: "failed", Error: "par repair failed"})
+	made("tg_d")
 	d := up(Download{WantedID: "tg_d", State: "completed", BytesTotal: 500})
 	if d.WantedID != "tg_d" || d.Error != "" || d.Title != "" || d.ProgressPct != 100 || d.BytesDone != 500 || d.FinishedAt == nil {
 		t.Fatalf("a completed download on a failed row: %+v", d)
@@ -142,6 +163,18 @@ func TestANewDownloadOnAJobIDGivenAgainReplacesTheEndedRow(t *testing.T) {
 	n, err := s.UpsertDownload(ctx, Download{Adapter: "nzbget", ClientJobID: "4", WantedID: "tg_e", State: "completed", BytesTotal: 800})
 	if err != nil || n.ProgressPct != 100 || n.BytesDone != 800 || n.FinishedAt == nil {
 		t.Fatalf("a new job's completed event: %+v %v", n, err)
+	}
+
+	// An ended row that names no grab — an adopted job's, before acquire told
+	// whose it was — is another's than any grab an event names.
+	if _, err := s.pool.Exec(ctx, `INSERT INTO downloads (adapter, client_job_id, title, state, finished_at, updated_at)
+		VALUES ('nzbget', '5', 'Some.Other.Download', 'completed', now() - interval '1 day', now() - interval '1 day')`); err != nil {
+		t.Fatal(err)
+	}
+	made("tg_f")
+	f, err := s.UpsertDownload(ctx, Download{Adapter: "nzbget", ClientJobID: "5", WantedID: "tg_f", Title: three, State: "downloading"})
+	if err != nil || f.WantedID != "tg_f" || f.State != "downloading" || f.Title != three {
+		t.Fatalf("a new grab's event on an ended row that names no grab: %+v %v", f, err)
 	}
 }
 
