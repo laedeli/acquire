@@ -289,21 +289,26 @@ longer tracks its job, and settles one that ended as its event would have:
 one that completed is imported from the files the client reports, one that
 failed fails by its release, which is blocked for its targets — at most 25 a
 run, with one line in the log. A job the client does not know is left to the
-stale-grab sweep, which asks too, at most 25 a run; a client that does not
+stale-grab sweep, which asks too, at most 25 a run, and keeps a grab whose
+client works on its job still, its row refreshed; a client that does not
 answer is not asked again in the run. A grab given up ends its download row,
 and a row still running for a grab that ended does not count against the
 downloads at once.
 
-**A job named otherwise.** What a client says of a job is taken for a grab's
-only when the job is named after the grab's release — NZBGet names a job after
-the NZB acquire handed over —, compared in lower case, letters and digits
-only; a qBittorrent job's id is a tag made for its one add, so it is its
-grab's whatever its name. A job named otherwise is another download under the
-id: one whose add's answer was lost, or one added by hand. Nothing of it is
-imported for the grab, which fails, left for a person: its targets fail too,
-not by their release — nothing blocked, nothing tried again on its own —,
-saying the client holds another download under that job id, for someone to
-grab again from the missing tab.
+**A job named otherwise.** A target grab's NZB is handed over under its
+release's name, and NZBGet names the job after its NZB. What NZBGet says of a
+job is taken for a grab's only when the job carries a name acquire could have
+handed the grab's NZB over under — its release's, or, for one handed over
+before acquire named NZBs so and that the source named nothing, the episode's
+(`Show Name S01E03`) —, compared in lower case, letters and digits only, and
+cut at 200 bytes as an NZB's name is. A grab with no release, a link handed
+over by hand, is not checked, nor is another client's job: only NZBGet gives a
+job id again, and a qBittorrent job's id is a tag made for its one add. A job
+named otherwise is another download under the id — one whose add's answer was
+lost, or one added by hand —, and the grab's own download is gone: nothing of
+the other is imported for it, the grab is given up, and its targets are
+wanted again, nothing blocked, saying the client holds another download under
+that job id.
 
 **A job id given again.** A client may give a new download the job id of one
 it forgot: NZBGet numbers its downloads from 1 again when it restarts with an

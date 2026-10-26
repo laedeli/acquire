@@ -141,8 +141,9 @@ jobs still running, so an event lost is not sent again. acquire asks
 `GET /api/v1/downloads/{client}/{id}` what became of a grab whose download
 ended unseen, and settles it as its event would have: a completed one
 imported from the files it names, a failed one failed (see
-[when a grab fails](./acquire.md#when-a-grab-fails)) — when the job is named
-after the grab's release, as NZBGet names a job after the NZB it was handed.
+[when a grab fails](./acquire.md#when-a-grab-fails)) — of an NZBGet job,
+only when it is named as acquire handed the grab's NZB over, NZBGet naming a
+job after its NZB.
 A job the client does not know is `404` with `"native_state": "not-found"`;
 an unknown client is a `404` without it. A job id is the client's own and may
 be given again — NZBGet numbers its downloads from 1 once it restarts with an

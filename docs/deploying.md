@@ -592,21 +592,26 @@ most 25 a run, with one line in the log (`acquire grab-recovery: … grab(s)
 whose download may have finished unseen: …`). A grab whose job the client no
 longer knows is left to the stale-grab sweep, which now asks the client too
 before it gives a grab up — at most 25 a run, a client that does not answer
-not asked again in the run —, and imports or fails what ended instead. A grab
+not asked again in the run —: it imports or fails what ended instead, and
+keeps a grab whose client works on its job still, its row refreshed. A grab
 it gives up ends its download row, and a row still running for a grab that
 ended counts against the cap no more. The downloads a sweep started past the
 cap are not undone; they finish and are imported like any other.
 
-What a client says of a job is taken for a grab's only when the job is named
-after the grab's release, as NZBGet names a job after the NZB acquire handed
-over — compared in lower case, letters and digits only, so `DD+5.1` and
-`DD5.1` are the same. A job under the id that is named otherwise is another
-download — one whose add's answer was lost, or one added by hand —: nothing of
-it is imported for the grab, which fails, left for a person. Its episodes fail
-too, not by their release — nothing is blocked, nothing is tried again on its
-own —, and the missing tab says the client holds another download under that
-job id: grab them again there, or bring the files in by hand and **ask the
-catalog now**.
+An NZB is now handed to NZBGet under its release's name, whatever the source
+calls the file, and NZBGet names the job after it. Of an NZBGet job, what the
+client says is taken for a grab's only when the job carries a name acquire
+could have handed that grab's NZB over under: its release's, or — for an NZB
+handed over before 0.6.2 that the source named nothing — the episode's, as
+`Show Name S01E03`; compared in lower case, letters and digits only, so
+`DD+5.1` and `DD5.1` are the same, and cut at 200 bytes as an NZB's name is.
+A grab with no release to tell it by — a link handed over by hand — is not
+checked, nor is another client's job: only NZBGet gives a job id again. A
+job under the id named otherwise is another download — one whose add's answer
+was lost, or one added by hand —, and the grab's own download is gone: nothing
+of the other is imported for it, the grab is given up, and its episodes are
+wanted again — nothing blocked —, saying the client holds another download
+under that job id; the sweep grabs them again on its own.
 
 acquire 0.6.2 against an older gateway — one deployed on its own — imports
 nothing of what finished unseen, and its log says so on every run: give the

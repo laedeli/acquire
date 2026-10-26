@@ -194,7 +194,7 @@ downloadGateway:
     # repository's shas, not this one's, and the appVersion fallback does not
     # apply to it. Pinned to a gateway commit this acquire speaks with; bump it
     # together with the chart version.
-    tag: 6f51b0fd52103bae23f2e963301b927d706044ff
+    tag: da8e3df4d2a0051a3672f49e72c8e6d73320fac6
     pullPolicy: ""
   # How often the gateway polls its download clients for job state.
   pollInterval: 5s

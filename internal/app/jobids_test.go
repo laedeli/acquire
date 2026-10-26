@@ -1132,7 +1132,7 @@ func TestAnotherDownloadsEventLeavesADoneGrabAlone(t *testing.T) {
 	if err := r.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "9", Files: []string{"/downloads/" + two}}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported || strings.Contains(got.Detail, "left for a person") {
+	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported || strings.Contains(got.Detail, "holds another download") {
 		t.Errorf("the done grab after another download's event: %+v", got)
 	}
 	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetHeld {
