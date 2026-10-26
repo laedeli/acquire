@@ -138,13 +138,20 @@ func (s *Service) sweep(ctx context.Context, what string, due []store.Target) er
 			continue
 		}
 		found++
-		if !grabbing {
+		if !pol.GrabsAnything() {
 			continue
 		}
 		title, ok := s.autoGrabAllowed(ctx, t)
 		if !ok || !pol.Grabs(title, t, time.Now()) {
 			// The old backlog, with only the new things grabbed on their own:
 			// found, and left for the missing tab.
+			continue
+		}
+		if !grabbing {
+			// Grabbing stopped earlier in this run: what the policy takes is
+			// found again on the next sweep, as the target that stopped it
+			// is, not in twelve hours.
+			s.foundButWaiting(ctx, t, stopped)
 			continue
 		}
 		if full, why := s.slotsFull(ctx); full {

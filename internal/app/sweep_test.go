@@ -129,3 +129,72 @@ func TestAutoGrabIsGated(t *testing.T) {
 		t.Error("autoGrabAllowed refused a wanted target of known holdings")
 	}
 }
+
+// Once the cap stops a sweep's grabs, every later target the policy would
+// take is found again on the next sweep, not only the one that met the cap:
+// before, the third find of a run waited twelve hours.
+func TestEveryFindAfterTheCapWaitsForTheNextSweep(t *testing.T) {
+	r := newTargetRig(t,
+		"Show.Name.S01E01.1080p.WEB-DL.x265-G", "Show.Name.S01E02.1080p.WEB-DL.x265-G",
+		"Show.Name.S01E03.1080p.WEB-DL.x265-G", "Show.Name.S01E04.1080p.WEB-DL.x265-G")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4712, "Show Name", 4, true)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 1, AutoGrab: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if adds := r.gw.added(); len(adds) != 1 {
+		t.Fatalf("grabbed %d with a cap of one", len(adds))
+	}
+	for _, e := range eps[1:] {
+		st := target(t, r.svc, e.ID)
+		if st.State != store.TargetWanted || !strings.Contains(st.SearchDetail, "found; not grabbed yet: 1 download(s) already in flight (cap 1)") ||
+			st.NextSearchAt == nil || time.Until(*st.NextSearchAt) > time.Hour {
+			t.Errorf("%s waits for the next sweep: %+v", e.ID, st)
+		}
+	}
+}
+
+// With only the new things grabbed on their own, the old backlog a stopped
+// sweep finds keeps its twelve hours: it is not grabbed on its own, so
+// searching it every sweep would spend the sources' allowance for nothing.
+func TestTheOldBacklogAfterTheCapKeepsItsWait(t *testing.T) {
+	r := newTargetRig(t,
+		"Show.Name.S01E01.1080p.WEB-DL.x265-G", "Show.Name.S01E02.1080p.WEB-DL.x265-G",
+		"Show.Name.S01E03.1080p.WEB-DL.x265-G")
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4713, "Show Name", 3, true)
+	_ = r.svc.st.SetAirWindow(ctx, eps[0].ID, day(-300), 0)
+	_ = r.svc.st.SetAirWindow(ctx, eps[1].ID, day(-3), 0)
+	_ = r.svc.st.SetAirWindow(ctx, eps[2].ID, day(-3), 0)
+	if _, err := r.svc.SaveSearchSettings(ctx, SearchSettings{PreferProtocol: "usenet", MaxConcurrentGrabs: 1, AutoGrabNew: true}, 0, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.SweepBacklog(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if adds := r.gw.added(); len(adds) != 1 {
+		t.Fatalf("grabbed %d with a cap of one", len(adds))
+	}
+	var grabbed, waiting int
+	for _, e := range eps[1:] {
+		switch st := target(t, r.svc, e.ID); {
+		case st.State == store.TargetGrabbed:
+			grabbed++
+		case st.State == store.TargetWanted && st.NextSearchAt != nil && time.Until(*st.NextSearchAt) <= time.Hour:
+			waiting++
+		default:
+			t.Errorf("a new episode after the cap: %+v", st)
+		}
+	}
+	if grabbed != 1 || waiting != 1 {
+		t.Errorf("new episodes: %d grabbed, %d waiting for the next sweep", grabbed, waiting)
+	}
+	old := target(t, r.svc, eps[0].ID)
+	if old.State != store.TargetWanted || old.SearchOutcome != store.SearchFound || old.NextSearchAt == nil ||
+		time.Until(*old.NextSearchAt) < 11*time.Hour {
+		t.Errorf("the old backlog keeps its twelve hours: %+v", old)
+	}
+}
