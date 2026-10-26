@@ -290,7 +290,7 @@ metadata:
   namespace: zaentrum
 spec:
   chart:
-    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.2/acquire-0.6.2.tgz
+    ref: https://github.com/laedeli/acquire/releases/download/chart-acquire-0.6.3/acquire-0.6.3.tgz
     # digest: sha256:…           # optional: the archive digest the release names
   values:
     endpoints:
@@ -625,6 +625,15 @@ before the upgrade is not concerned.
 acquire 0.6.2 against an older gateway — one deployed on its own — imports
 nothing of what finished unseen, and its log says so on every run: give the
 gateway the image the chart pins.
+
+**To 0.6.3.** Nothing to set, and no migration. Once **downloads at once**
+stopped a sweep's grabs, only the target that met the cap was searched again
+on the next sweep; every later one the sweep found and would have grabbed
+waited twelve hours, as a find that is not grabbed on its own does. Each of
+them is now searched again on the next sweep. What the sweep finds and does
+not grab on its own — the old backlog, with only the new things grabbed —
+still waits twelve hours. Targets a 0.6.2 sweep left waiting come round at
+the time it set.
 
 ### Moving an existing deployment to the chart
 
