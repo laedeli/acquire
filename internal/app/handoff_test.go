@@ -195,10 +195,12 @@ type fakeGateway struct {
 	// described is how GET /api/v1/downloads/{client}/{id} describes a job,
 	// by "client/id"; a job it has no view of is one the client does not
 	// know. describeStatus answers every such call with that status instead.
+	// describeDown are the clients whose jobs cannot be described (502).
 	// describes is what was asked; onDescribe, when set, runs before a
 	// describe is answered.
 	described      map[string]gateway.JobView
 	describeStatus int
+	describeDown   map[string]bool
 	describes      []string
 	onDescribe     func(key string)
 	// down answers every request 503, as a gateway out of service.
@@ -293,6 +295,10 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 			}
 			if g.describeStatus != 0 {
 				http.Error(w, `{"error":"answered `+strconv.Itoa(g.describeStatus)+`"}`, g.describeStatus)
+				return
+			}
+			if client, _, _ := strings.Cut(key, "/"); g.describeDown[client] {
+				http.Error(w, `{"error":"`+client+` listgroups: HTTP 503"}`, http.StatusBadGateway)
 				return
 			}
 			v, ok := g.described[key]

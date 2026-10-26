@@ -110,11 +110,13 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 	}()
 
 	// What the gateway tracks, asked once, for the grabs handed over: without
-	// it, whether a grab's events will come is not known.
+	// it, whether a grab's events will come is not known. A client that did
+	// not answer is not asked again in the run.
 	var tracked map[string]bool
 	var listErr error
+	unanswered := map[string]bool{}
 	for _, g := range grabs {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || unanswered[g.Adapter] {
 			run.Unasked++
 			continue
 		}
@@ -151,6 +153,7 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 			run.Unknown++
 			continue
 		case err != nil:
+			unanswered[g.Adapter] = true
 			run.Unasked++
 			continue
 		case actsOn(job) && !s.jobIsGrabs(ctx, g, jobName(job.Title, job.Files)):

@@ -988,3 +988,68 @@ func TestAnAdoptedJobsCompletedEventIsItsGrabsByName(t *testing.T) {
 		t.Errorf("the job's row: %+v", d)
 	}
 }
+
+// stuckGrabs writes n grabs of title on client's jobs from first on, in state,
+// with no word of them for three days.
+func stuckGrabs(t *testing.T, prefix, client, state string, first, n int, title store.Title, target store.Target) {
+	t.Helper()
+	appSQL(t, `INSERT INTO target_grabs (id, title_id, target_ids, adapter, client_job_id, state, release_title, updated_at)
+		SELECT $1 || k, $2, ARRAY[$3], $4, ($5::int + k)::text, $6, 'Show.Name.S01E01.1080p.WEB.h264-GRP', now() - interval '3 days'
+		  FROM generate_series(0, $7::int - 1) AS k`, prefix, title.ID, target.ID, client, first, state, n)
+}
+
+// The stale-grab sweep asks at most repairBatch clients' answers a run — the
+// grabs past that wait for the next run —, and asks a client that did not
+// answer no more in the run, keeping its grabs.
+func TestTheStaleSweepIsBounded(t *testing.T) {
+	r := newTargetRig(t)
+	ctx := context.Background()
+	title, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	stuckGrabs(t, "tg_lost", "nzbget", store.GrabGrabbed, 100, repairBatch+5, title, eps[0])
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != repairBatch {
+		t.Fatalf("the first sweep freed %d: %v", freed, err)
+	}
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 5 {
+		t.Fatalf("the second sweep freed %d: %v", freed, err)
+	}
+
+	stuckGrabs(t, "tg_down", "nzbget", store.GrabGrabbed, 200, 3, title, eps[0])
+	stuckGrabs(t, "tg_up", "nzbget-2", store.GrabGrabbed, 300, 2, title, eps[0])
+	r.gw.mu.Lock()
+	r.gw.describeDown, r.gw.describes = map[string]bool{"nzbget": true}, nil
+	r.gw.mu.Unlock()
+	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 2 {
+		t.Fatalf("with one client down the sweep freed %d: %v", freed, err)
+	}
+	r.gw.mu.Lock()
+	defer r.gw.mu.Unlock()
+	down := 0
+	for _, key := range r.gw.describes {
+		if strings.HasPrefix(key, "nzbget/") {
+			down++
+		}
+	}
+	if down != 1 || len(r.gw.describes) != 3 {
+		t.Errorf("asked %v, want the client that is down once", r.gw.describes)
+	}
+}
+
+// The repair asks a client that did not answer no more in the run.
+func TestTheRepairStopsAskingAClientThatDoesNotAnswer(t *testing.T) {
+	r := newTargetRig(t)
+	ctx := context.Background()
+	title, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	stuckGrabs(t, "tg_stuck", "nzbget", store.GrabDownloaded, 100, 4, title, eps[0])
+	r.gw.mu.Lock()
+	r.gw.describeDown = map[string]bool{"nzbget": true}
+	r.gw.mu.Unlock()
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 4 || run.Unasked != 4 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	r.gw.mu.Lock()
+	defer r.gw.mu.Unlock()
+	if len(r.gw.describes) != 1 {
+		t.Errorf("asked %v, want the client once", r.gw.describes)
+	}
+}

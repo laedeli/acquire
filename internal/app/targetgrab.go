@@ -712,6 +712,11 @@ const staleGrabAge = 48 * time.Hour
 // newer grab since is given up without asking: its download is gone, and the
 // job the id names is the newer grab's. A gateway that cannot be asked gives
 // nothing up: no grab is given up on a guess.
+//
+// The sweep runs where the schedule's event is handled, so what it asks is
+// bounded: at most repairBatch clients' answers a run — the grabs past that
+// wait for the next run —, and a client that did not answer is not asked
+// again in the run.
 func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 	stale, err := s.st.StaleTargetGrabs(ctx, staleGrabAge)
 	if err != nil || len(stale) == 0 || !s.gw.Enabled() {
@@ -721,7 +726,13 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("stale grabs: the gateway cannot be asked which downloads it has: %w", err)
 	}
-	freed := 0
+	freed, asked, later := 0, 0, 0
+	unanswered := map[string]bool{} // clients that did not answer in this run
+	defer func() {
+		if later > 0 {
+			log.Printf("acquire: stale grabs: their clients were asked about %d; %d wait for the next run", asked, later)
+		}
+	}()
 	for _, g := range stale {
 		reused, err := s.st.JobReused(ctx, g.Adapter, g.ClientJobID, g.ID)
 		if err != nil {
@@ -731,9 +742,18 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 			continue
 		}
 		if g.ClientJobID != "" && !reused {
+			switch {
+			case unanswered[g.Adapter]:
+				continue // kept for now: its client did not answer in this run
+			case asked >= repairBatch:
+				later++
+				continue
+			}
+			asked++
 			settled, err := s.finishedUnseen(ctx, g)
 			switch {
 			case err != nil:
+				unanswered[g.Adapter] = true
 				log.Printf("acquire: stale grab %s kept for now: what became of its job cannot be asked: %v", g, err)
 				continue
 			case settled == unseenImported:
