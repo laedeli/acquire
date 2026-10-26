@@ -1054,3 +1054,40 @@ func TestTheRepairStopsAskingAClientThatDoesNotAnswer(t *testing.T) {
 		t.Errorf("asked %v, want the client once", r.gw.describes)
 	}
 }
+
+// An older grab's own late events while it is still in flight move nothing
+// once a newer grab got its job id: its completed event queues no import for
+// it, its failed event fails nothing, and the newer grab is left as it is.
+func TestAnOlderGrabsLateEventsWhileInFlightMoveNothing(t *testing.T) {
+	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, three)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 3, true)
+	a := r.grabOnJob(t, eps[0], "3")
+	appSQL(t, `UPDATE target_grabs SET created_at = now() - interval '10 days' WHERE id = $1`, a.ID)
+	b := r.grabOnJob(t, eps[2], "3")
+	r.writeDownload(t, one)
+
+	if err := r.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "3", WantedID: a.ID,
+		Files: []string{"/downloads/" + one}}); err != nil {
+		t.Fatal(err)
+	}
+	if im, err := r.svc.st.GetImport(ctx, "nzbget", "3"); err == nil {
+		t.Fatalf("an import was queued for the older grab: %+v", im)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, a.ID); got.State != store.GrabGrabbed {
+		t.Errorf("the older grab after its late completed event: %+v", got)
+	}
+	if err := r.svc.OnFailed(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "3", WantedID: a.ID, Error: "par repair failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetGrabbed || st.GrabFailures != 0 {
+		t.Errorf("the older grab's target after its late failed event: %+v", st)
+	}
+	if blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID); len(blocked) != 0 {
+		t.Errorf("the older grab's release was blocked: %v", blocked)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, b.ID); got.State != store.GrabGrabbed {
+		t.Errorf("the newer grab: %+v", got)
+	}
+}
