@@ -65,6 +65,7 @@ func (r *managedRig) done(t *testing.T, g store.TargetGrab, files map[string]str
 			t.Fatal(err)
 		}
 	}
+	r.clients.keeps(g.ClientJobID, "/downloads/complete/"+reported)
 	if err := r.svc.OnCompleted(context.Background(), events.DownloadEvent{
 		Adapter: g.Adapter, ClientID: g.ClientJobID, WantedID: g.ID, Files: []string{"/downloads/complete/" + reported},
 	}); err != nil {

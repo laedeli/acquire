@@ -6,8 +6,8 @@
 //
 // Only the few calls that needs: qBittorrent's WebUI API v2 (log in, look a
 // torrent up by the gateway's job tag, delete it with its files) and NZBGet's
-// JSON-RPC (mark a history record released). The HTTP client is the caller's,
-// so the endpoint policy applies to every connection.
+// JSON-RPC (look a history record up, mark it released). The HTTP client is
+// the caller's, so the endpoint policy applies to every connection.
 package clientapi
 
 import (
@@ -22,8 +22,12 @@ import (
 	"strings"
 )
 
-// maxResponse caps what is read of any answer.
-const maxResponse = 4 << 20
+// maxResponse caps what is read of any answer; maxHistory of NZBGet's history,
+// which holds every download it keeps.
+const (
+	maxResponse = 4 << 20
+	maxHistory  = 32 << 20
+)
 
 // ── qBittorrent ─────────────────────────────────────────────────────────────
 
@@ -177,6 +181,32 @@ func NewNZBGet(base, user, pass string, hc *http.Client) *NZBGet {
 	return &NZBGet{base: strings.TrimRight(base, "/"), user: user, pass: pass, http: hc}
 }
 
+// Record is one download in NZBGet's history: its id, name, the folder it was
+// unpacked to and how it ended.
+type Record struct {
+	ID      int    `json:"NZBID"`
+	Name    string `json:"Name"`
+	DestDir string `json:"DestDir"`
+	Status  string `json:"Status"`
+}
+
+// Record finds history record id. found is false when NZBGet keeps no record
+// of that id: released, deleted, or never there. NZBGet gives an id again
+// once it forgot the download that had it, so the record is the download the
+// id names now.
+func (n *NZBGet) Record(ctx context.Context, id int) (rec Record, found bool, err error) {
+	var history []Record
+	if err := n.call(ctx, "history", []any{false}, &history); err != nil {
+		return Record{}, false, err
+	}
+	for _, r := range history {
+		if r.ID == id {
+			return r, true, nil
+		}
+	}
+	return Record{}, false, nil
+}
+
 // Release marks history record id released (ReleaseParameter=yes).
 func (n *NZBGet) Release(ctx context.Context, id int) error {
 	var ok bool
@@ -216,7 +246,11 @@ func (n *NZBGet) call(ctx context.Context, method string, params []any, out any)
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponse)).Decode(&rpc); err != nil {
+	limit := int64(maxResponse)
+	if method == "history" {
+		limit = maxHistory
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, limit)).Decode(&rpc); err != nil {
 		return fmt.Errorf("nzbget %s: %w", method, err)
 	}
 	if rpc.Error != nil {

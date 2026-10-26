@@ -300,6 +300,45 @@ func TestCancellingAGrabLeavesAnotherGrabsImportAlone(t *testing.T) {
 	}
 }
 
+// The release step lets alone what NZBGet keeps under the job id for another
+// download — the id given again once this one's record went —, and a record
+// it keeps no more: nothing is released, and the import is done, saying so.
+func TestTheReleaseLeavesAnotherDownloadOnTheJobIDAlone(t *testing.T) {
+	const rel = "Show.Name.S01E02.1080p.WEB.h264-GRP"
+	for name, then := range map[string]func(r *managedRig, g store.TargetGrab){
+		"another download": func(r *managedRig, g store.TargetGrab) {
+			r.clients.keeps(g.ClientJobID, "/downloads/complete/Show.Name.S01E05.1080p.WEB.h264-GRP")
+		},
+		"no record": func(r *managedRig, g store.TargetGrab) {
+			r.clients.mu.Lock()
+			r.clients.history = nil
+			r.clients.mu.Unlock()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newManagedRig(t, rel)
+			ctx := context.Background()
+			_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+			g, err := r.svc.GrabTarget(ctx, eps[1].ID, "missing")
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.done(t, g, map[string]string{rel + "/" + rel + ".mkv": "the episode"}, rel)
+			then(r, g)
+			r.svc.importNext(ctx)
+			if r.released() != 0 {
+				t.Fatalf("released %d times", r.released())
+			}
+			if im := r.importOf(t, "nzbget", g.ClientJobID); im.State != store.ImportDone || !strings.Contains(im.Detail, "nothing was released") {
+				t.Errorf("import: %+v", im)
+			}
+			if st := target(t, r.svc, eps[1].ID); st.State != store.TargetHeld {
+				t.Errorf("target: %+v", st)
+			}
+		})
+	}
+}
+
 // A request's download on a job id that still holds another download's
 // import, not done, fails saying why — nothing looks at it again —, and
 // leaves that import alone.

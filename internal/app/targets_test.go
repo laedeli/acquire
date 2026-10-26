@@ -628,6 +628,7 @@ func TestACatalogWithoutTheContractKeepsTheDownloadWaiting(t *testing.T) {
 	if err := os.WriteFile(p, []byte("the episode"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	rig.clients.keeps(g.ClientJobID, "/downloads/complete/"+name)
 	if err := rig.svc.OnCompleted(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: g.ClientJobID, WantedID: g.ID,
 		Files: []string{"/downloads/complete/" + name}}); err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -52,12 +53,26 @@ func (f *fakeCatalog) server(t *testing.T) *httptest.Server {
 }
 
 // fakeClients answers NZBGet's JSON-RPC and qBittorrent's WebUI API, and
-// records what acquire asked of them.
+// records what acquire asked of them. history is NZBGet's: the folder of each
+// download it keeps a record of, by its id.
 type fakeClients struct {
 	mu        sync.Mutex
 	editqueue [][]any
+	history   map[int]string
 	state     string // the torrent's state
 	deleted   []string
+}
+
+// keeps makes NZBGet keep a record of job id: a finished download, in dir as
+// NZBGet reports it.
+func (f *fakeClients) keeps(id, dir string) {
+	n, _ := strconv.Atoi(id)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.history == nil {
+		f.history = map[int]string{}
+	}
+	f.history[n] = dir
 }
 
 func (f *fakeClients) server(t *testing.T) *httptest.Server {
@@ -71,6 +86,14 @@ func (f *fakeClients) server(t *testing.T) *httptest.Server {
 				Params []any  `json:"params"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Method == "history" {
+				records := []map[string]any{}
+				for id, dir := range f.history {
+					records = append(records, map[string]any{"NZBID": id, "Name": filepath.Base(dir), "DestDir": dir, "Status": "SUCCESS/ALL"})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"result": records})
+				return
+			}
 			f.editqueue = append(f.editqueue, body.Params)
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": true})
 		case "/api/v2/auth/login":
@@ -142,6 +165,9 @@ func (rig *importRig) finished(t *testing.T, client, job string, files map[strin
 	w, _, err := rig.svc.Request(ctx, store.Wanted{Title: "Film", Year: 2020, MediaType: "movie"}, asAdmin("user"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if client == "nzbget" {
+		rig.clients.keeps(job, "/downloads/complete/"+reported)
 	}
 	if err := rig.svc.OnCompleted(ctx, events.DownloadEvent{
 		Adapter: client, ClientID: job, WantedID: w.ID, Files: []string{"/downloads/complete/" + reported},

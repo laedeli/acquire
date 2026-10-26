@@ -117,6 +117,13 @@ func TestNZBGetRelease(t *testing.T) {
 			Params []any  `json:"params"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Method == "history" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": []map[string]any{
+				{"NZBID": 41, "Name": "Show.Name.S01E02.1080p.WEB.h264-GRP", "DestDir": "/downloads/complete/acquire/Show.Name.S01E02.1080p.WEB.h264-GRP", "Status": "SUCCESS/ALL"},
+				{"NZBID": 42, "Name": "Show.Name.S01E03.1080p.WEB.h264-GRP", "DestDir": "/downloads/complete/acquire/Show.Name.S01E03.1080p.WEB.h264-GRP", "Status": "SUCCESS/ALL"},
+			}})
+			return
+		}
 		got = body.Params
 		ids, _ := body.Params[3].([]any)
 		ok = body.Method == "editqueue" && len(ids) == 1 && ids[0] == float64(42)
@@ -135,5 +142,17 @@ func TestNZBGetRelease(t *testing.T) {
 	}
 	if err := NewNZBGet(srv.URL, "acquire", "wrong", srv.Client()).Release(context.Background(), 42); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("wrong login: %v", err)
+	}
+
+	rec, found, err := n.Record(context.Background(), 42)
+	if err != nil || !found || rec.Name != "Show.Name.S01E03.1080p.WEB.h264-GRP" ||
+		rec.DestDir != "/downloads/complete/acquire/Show.Name.S01E03.1080p.WEB.h264-GRP" || rec.Status != "SUCCESS/ALL" {
+		t.Errorf("record 42: %+v %v %v", rec, found, err)
+	}
+	if _, found, err := n.Record(context.Background(), 7); err != nil || found {
+		t.Errorf("a record NZBGet does not keep: %v %v", found, err)
+	}
+	if _, _, err := NewNZBGet(srv.URL, "acquire", "wrong", srv.Client()).Record(context.Background(), 42); err == nil {
+		t.Error("a refused login read a record")
 	}
 }

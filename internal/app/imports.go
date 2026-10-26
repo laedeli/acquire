@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -336,12 +337,33 @@ func (s *Service) releaseImport(ctx context.Context, im store.Import) {
 			save(store.ImportDone, "copied and handed over; the job id is no NZBGet record", 0)
 			return
 		}
-		if err := clientapi.NewNZBGet(c.BaseURL, c.Username, secret, hc).Release(ctx, id); err != nil {
+		// Releasing a record deletes its files, and NZBGet gives an id again
+		// once it forgot the download that had it — one removed from its
+		// history meanwhile, by hand or for its age. The record is released
+		// only while it is this download's: the folder NZBGet reported when it
+		// completed.
+		nzb := clientapi.NewNZBGet(c.BaseURL, c.Username, secret, hc)
+		rec, found, err := nzb.Record(ctx, id)
+		switch {
+		case err != nil:
+			later("asking nzbget failed", err)
+			return
+		case !found:
+			save(store.ImportDone, "copied and handed over; nzbget keeps no record of it any more, so nothing was released", 0)
+			return
+		case !reportedAs(rec.DestDir, im.Files):
+			save(store.ImportDone, clip("copied and handed over; nzbget's job "+im.ClientJobID+" is another download now ("+
+				rec.Name+"), so nothing was released", 300), 0)
+			return
+		}
+		if err := nzb.Release(ctx, id); err != nil {
 			later("releasing it in nzbget failed", err)
 			return
 		}
 		save(store.ImportDone, "copied, handed over and released in nzbget, which removes it with its files", 0)
 	case "qbittorrent":
+		// The job id is the gateway's tag, made anew for every add: it names
+		// this download's torrent and no other.
 		qb := clientapi.NewQBittorrent(c.BaseURL, c.Username, secret, hc)
 		t, found, err := qb.Torrent(ctx, im.ClientJobID)
 		switch {
@@ -360,6 +382,20 @@ func (s *Service) releaseImport(ctx context.Context, im store.Import) {
 			save(store.ImportDone, "copied, handed over, seeded to its goal and removed with its data", 0)
 		}
 	}
+}
+
+// reportedAs reports whether dir, a client's folder of a download, is one of
+// the paths it reported for it on completion.
+func reportedAs(dir string, files []string) bool {
+	if dir == "" {
+		return false
+	}
+	for _, f := range files {
+		if path.Clean(f) == path.Clean(dir) {
+			return true
+		}
+	}
+	return false
 }
 
 // openClientSecret opens a client's stored secret ("" for none).
