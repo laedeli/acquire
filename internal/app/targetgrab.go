@@ -640,9 +640,15 @@ func (s *Service) completeTargetGrab(ctx context.Context, g store.TargetGrab, ev
 // another, and they are wanted again after a wait (failure recovery). A grab
 // whose download finished already, or that was given up, moves nothing.
 func (s *Service) onTargetFailed(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) error {
+	_, err := s.failTargetGrab(ctx, g, ev)
+	return err
+}
+
+// failTargetGrab is onTargetFailed, saying whether it failed the grab.
+func (s *Service) failTargetGrab(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) (bool, error) {
 	g, moves, err := s.inFlightGrab(ctx, g, ev)
 	if err != nil || !moves || g.State != store.GrabGrabbed {
-		return err
+		return false, err
 	}
 	detail := ev.Error
 	if detail == "" {
@@ -654,7 +660,7 @@ func (s *Service) onTargetFailed(ctx context.Context, g store.TargetGrab, ev eve
 		_ = s.BlockFailedRelease(ctx, id, g.ReleaseTitle, g.Indexer, clip(detail, 200))
 	}
 	s.notify()
-	return nil
+	return true, nil
 }
 
 // cancelTargetGrab gives up the target grab of a download someone cancelled
@@ -716,13 +722,16 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 			continue
 		}
 		if g.ClientJobID != "" && !reused {
-			imported, err := s.finishedUnseen(ctx, g)
-			if err != nil {
+			settled, err := s.finishedUnseen(ctx, g)
+			switch {
+			case err != nil:
 				log.Printf("acquire: stale grab %s kept for now: what became of its job cannot be asked: %v", g, err)
 				continue
-			}
-			if imported {
+			case settled == unseenImported:
 				log.Printf("acquire: stale grab %s: its download completed unseen; imported, not given up", g)
+				continue
+			case settled == unseenFailed:
+				log.Printf("acquire: stale grab %s: its download failed unseen; failed as its event would have, its release blocked", g)
 				continue
 			}
 		}
@@ -739,35 +748,54 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 	return freed, nil
 }
 
+// unseen is what asking a stale grab's client came to.
+type unseen int
+
+const (
+	// unseenNothing: nothing to keep the grab for — it is given up.
+	unseenNothing unseen = iota
+	// unseenImported: its download completed; imported, not given up.
+	unseenImported
+	// unseenFailed: its download failed; failed as its failed event would
+	// have, its release blocked.
+	unseenFailed
+)
+
 // finishedUnseen asks a stale grab's client, through the gateway, what its
-// job is, imports a completed one as its completed event would have (as
-// RepairGrabs does), and reports whether it did. A job the client does not
-// know, one not completed or without files, and a gateway older than the
-// question are no reason to keep the grab; nor is a client the gateway does
-// not know that acquire no longer has, or has disabled — the gateway is told
-// no such client. A gateway or a client that cannot be asked is: the error
-// says why.
-func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (bool, error) {
+// job is, and settles one that ended as its event would have (as RepairGrabs
+// does): a completed one imported, a failed one failed by its release. A job
+// the client does not know, one not finished or without files, and a gateway
+// older than the question are no reason to keep the grab; nor is a client the
+// gateway does not know that acquire no longer has, or has disabled — the
+// gateway is told no such client. A gateway or a client that cannot be asked
+// is: the error says why.
+func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (unseen, error) {
 	job, err := s.gw.Describe(ctx, g.Adapter, g.ClientJobID)
 	switch {
 	case errors.Is(err, gateway.ErrJobNotFound), errors.Is(err, gateway.ErrNoDescribe):
-		return false, nil
+		return unseenNothing, nil
 	case errors.Is(err, gateway.ErrUnknownClient):
 		// A restarted gateway is told acquire's enabled clients shortly.
 		c, cerr := s.st.GetDownloadClient(ctx, g.Adapter)
 		if errors.Is(cerr, store.ErrNotFound) || (cerr == nil && !c.Enabled) {
-			return false, nil
+			return unseenNothing, nil
 		}
-		return false, err
+		return unseenNothing, err
 	case err != nil:
-		return false, err
+		return unseenNothing, err
+	case job.State == "failed":
+		failed, err := s.failUnseen(ctx, g, job)
+		if err != nil || !failed {
+			return unseenNothing, err
+		}
+		return unseenFailed, nil
 	case job.State != "completed" || len(job.Files) == 0:
-		return false, nil
+		return unseenNothing, nil
 	}
 	if _, err := s.importUnseen(ctx, g, job); err != nil && !errors.Is(err, errImportWaits) {
-		return false, err
+		return unseenNothing, err
 	}
-	return true, nil
+	return unseenImported, nil
 }
 
 // RecoverGrabs is the grab-recovery schedule: targets their release failed

@@ -132,6 +132,14 @@ func (e *AtCapacityError) Error() string {
 // grabber at once — the sweep, the sources' newest releases, the grab queue.
 const reserveLock = 4207001
 
+// downloadsInFlightSQL counts the download rows that say their download runs,
+// but not one whose target grab has ended — failed, given up or imported —:
+// its row runs on only because no event ended it, and would hold a slot of
+// the downloads at once for good.
+const downloadsInFlightSQL = `SELECT count(*) FROM downloads d
+	 WHERE d.state NOT IN ('completed','failed','cancelled')
+	   AND NOT EXISTS (SELECT 1 FROM target_grabs ended WHERE ended.id = d.wanted_id AND ended.state IN ('failed','imported'))`
+
 // ReserveTargetGrabWithin is ReserveTargetGrab under a cap: with max > 0, it
 // is refused (AtCapacityError) while max grabs are under way — downloads in
 // flight, grabs handed over the gateway has not reported yet, and other
@@ -141,7 +149,8 @@ const reserveLock = 4207001
 // A grab handed over counts until a download row of its own shows: one that
 // names it (wanted_id), not any row of its client job. A client that gave the
 // job id again has the ended row of an earlier grab under it, which says
-// nothing of this one (see JobOwner).
+// nothing of this one (see JobOwner). A row counts while it runs
+// (downloadsInFlightSQL).
 func (s *Store) ReserveTargetGrabWithin(ctx context.Context, g TargetGrab, anchor string, covered []string, max int) (TargetGrab, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -154,7 +163,7 @@ func (s *Store) ReserveTargetGrabWithin(ctx context.Context, g TargetGrab, ancho
 		}
 		var n int
 		if err := tx.QueryRow(ctx, `
-			SELECT (SELECT count(*) FROM downloads WHERE state NOT IN ('completed','failed','cancelled'))
+			SELECT (`+downloadsInFlightSQL+`)
 			     + (SELECT count(*) FROM target_grabs g
 			         WHERE g.created_at > now() - interval '1 hour'
 			           AND (g.state = 'pending'
@@ -361,7 +370,10 @@ func (s *Store) UnimportedTargetGrabs(ctx context.Context, quiet time.Duration, 
 
 // FreeTargetGrab fails a grab that will not finish — cancelled, or stale —
 // and frees its targets: those it reserved, and those in flight with it, go
-// back to wanted with the reason. It reports how many it freed.
+// back to wanted with the reason. It reports how many it freed. The grab's own
+// download row, if it still says the download runs, ends with it, saying why:
+// no event of it comes any more, and a row left running would hold a slot of
+// the downloads at once for good.
 func (s *Store) FreeTargetGrab(ctx context.Context, id, reason string) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -370,6 +382,12 @@ func (s *Store) FreeTargetGrab(ctx context.Context, id, reason string) (int64, e
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE target_grabs SET state = 'failed', detail = $2, updated_at = now() WHERE id = $1`, id, clipText(reason)); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE downloads SET state = 'failed', error = $2, speed_bps = 0, eta_sec = NULL,
+		       finished_at = COALESCE(finished_at, now()), updated_at = now()
+		 WHERE wanted_id = $1 AND state NOT IN ('completed','failed','cancelled')`, id, clipText(reason)); err != nil {
 		return 0, err
 	}
 	tag, err := tx.Exec(ctx, `

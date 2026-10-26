@@ -22,9 +22,12 @@ import (
 // grab stays grabbed or downloaded for ever: the gateway forgets a job once it
 // ends, and adopts only the jobs still running after it restarts, so no event
 // comes again. The repair asks the client, through the gateway, what became of
-// such a grab's job, and imports a completed one as its completed event would
-// have. It runs on the grab-recovery schedule, before the stale-grab sweep,
-// and once shortly after acquire starts.
+// such a grab's job, and settles one that ended as its event would have: a
+// completed one imported, a failed one failed by its release — no failed event
+// comes of a job that failed unseen either, and its download row would run on,
+// holding a slot of the downloads at once. It runs on the grab-recovery
+// schedule, before the stale-grab sweep, and once shortly after acquire
+// starts.
 
 const (
 	// repairBatch bounds the grabs one repair asks the gateway about.
@@ -45,8 +48,9 @@ type RepairRun struct {
 	Queued  int // their import queued
 	Moved   int // nothing queued: queued already, or the grab moved on meanwhile — done or given up
 	Waiting int // their job id still holds another download's import, not done
+	Failed  int // failed in their client: failed as their failed event would have, the release blocked
 	Running int // not finished in their client
-	Ended   int // ended in their client with nothing to import: failed, or no files
+	Ended   int // ended in their client with nothing to import or fail: completed without files, or failed after it completed
 	Unknown int // their client does not know the job: left to the stale-grab sweep
 	Reused  int // their job id names a newer grab's download: left to the stale-grab sweep
 	Tracked int // the gateway still tracks the job: its events will come
@@ -63,6 +67,7 @@ func (r RepairRun) String() string {
 	add(r.Queued, "queued for import")
 	add(r.Moved, "queued already or moved on meanwhile")
 	add(r.Waiting, "waiting for another download's import on the same job id")
+	add(r.Failed, "failed in their client, their release blocked")
 	add(r.Running, "not finished in their client")
 	add(r.Ended, "ended in their client with nothing to import")
 	add(r.Unknown, "unknown to their client")
@@ -79,11 +84,13 @@ func (r RepairRun) String() string {
 // one's client, through the gateway, what its job is now, and a job that
 // completed with files goes to the completed event's path — its paths mapped,
 // its import queued, replacing a finished import of another grab on the job id
-// (onTargetCompleted). A job the client does not know is left to the
-// stale-grab sweep, and so is a grab whose job id the client gave to a newer
-// grab since: the job the id names now is the newer grab's, and so are its
-// files. A gateway or a client that cannot be asked leaves the grab for the
-// next run. One line in the log says what the run did.
+// (onTargetCompleted) —, one that failed to the failed event's: its row
+// ended, the grab failed by its release (onTargetFailed). A job the client
+// does not know is left to the stale-grab sweep, and so is a grab whose job id
+// the client gave to a newer grab since: the job the id names now is the
+// newer grab's, and so are its files. A gateway or a client that cannot be
+// asked leaves the grab for the next run. One line in the log says what the
+// run did.
 func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 	var run RepairRun
 	if s.st == nil || !s.gw.Enabled() {
@@ -142,7 +149,21 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 		case err != nil:
 			run.Unasked++
 			continue
-		case job.State == "failed" || (job.State == "completed" && len(job.Files) == 0):
+		case job.State == "failed":
+			// No failed event comes of a job that failed while nothing was
+			// watching: its row would run on, holding a slot, and its release
+			// would stay unblocked.
+			failed, err := s.failUnseen(ctx, g, job)
+			switch {
+			case err != nil:
+				return run, fmt.Errorf("repair %s: %w", g, err)
+			case failed:
+				run.Failed++
+			default:
+				run.Ended++
+			}
+			continue
+		case job.State == "completed" && len(job.Files) == 0:
 			run.Ended++
 			continue
 		case job.State != "completed":
@@ -169,7 +190,28 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 
 // handled counts the grabs a run has come to an answer for.
 func (r RepairRun) handled() int {
-	return r.Queued + r.Moved + r.Waiting + r.Running + r.Ended + r.Unknown + r.Reused + r.Tracked + r.Unasked
+	return r.Queued + r.Moved + r.Waiting + r.Failed + r.Running + r.Ended + r.Unknown + r.Reused + r.Tracked + r.Unasked
+}
+
+// failUnseen hands a job its client says failed to the failed event's path,
+// as if the gateway had sent the event: its download row ended with the
+// client's word, and the grab, still handed over, failed by its release — the
+// release blocked for its targets, wanted again after a wait
+// (failTargetGrab). It reports whether the grab failed: one whose download
+// had completed already, or that moved on meanwhile, moves nothing.
+func (s *Service) failUnseen(ctx context.Context, g store.TargetGrab, job gateway.JobView) (bool, error) {
+	why := strings.TrimSpace(job.Message)
+	if why == "" {
+		why = "the download failed in " + g.Adapter
+	}
+	ev := events.DownloadEvent{Adapter: g.Adapter, ClientID: g.ClientJobID, WantedID: g.ID, Title: job.Title,
+		State: "failed", NativeState: job.NativeState, Error: why}
+	_ = s.saveDownload(ctx, ev, "failed")
+	now, err := s.st.GetTargetGrab(ctx, g.ID)
+	if err != nil {
+		return false, err
+	}
+	return s.failTargetGrab(ctx, now, ev)
 }
 
 // importUnseen hands a job its client says completed to the completed event's

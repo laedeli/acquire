@@ -329,14 +329,14 @@ func (s *Store) RetryableTargetsBy(ctx context.Context, limit int, o DueOrder) (
 }
 
 // ActiveDownloads counts in-flight work, so a sweep cannot start unbounded
-// grabs. Terminal states are excluded; anything else is still consuming disk.
-// A target grab handed over whose download the gateway has not reported yet
-// counts too (GrabsInFlight): without it a run of grabs sees the same count
-// for each and overshoots the limit.
+// grabs. Terminal states are excluded; anything else is still consuming disk —
+// but for a row whose target grab ended, which no event ended
+// (downloadsInFlightSQL). A target grab handed over whose download the
+// gateway has not reported yet counts too (GrabsInFlight): without it a run of
+// grabs sees the same count for each and overshoots the limit.
 func (s *Store) ActiveDownloads(ctx context.Context) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM downloads WHERE state NOT IN ('completed','failed','cancelled')`).Scan(&n)
+	err := s.pool.QueryRow(ctx, downloadsInFlightSQL).Scan(&n)
 	if err != nil {
 		return 0, err
 	}

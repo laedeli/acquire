@@ -732,3 +732,91 @@ func TestTheRepairCountsWhatItDid(t *testing.T) {
 		})
 	}
 }
+
+// failedView is nzbget's job as the gateway describes it once its download
+// failed.
+func failedView(job, name string) gateway.JobView {
+	return gateway.JobView{
+		Job:     gateway.Job{Adapter: "nzbget", ClientJobID: job, Title: name, State: "failed", NativeState: "FAILURE/HEALTH"},
+		Message: "nzbget: FAILURE/HEALTH",
+	}
+}
+
+// A download that failed while nothing was watching — the gateway restarted
+// as it failed and adopts no finished job, so no failed event comes —: the
+// repair fails it as its event would have. Its row ends with the client's
+// word, its target fails with its release blocked, and its slot of the
+// downloads at once is free.
+func TestADownloadThatFailedUnseenFreesItsSlot(t *testing.T) {
+	const one = "Show.Name.S01E01.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "3")
+	_ = r.svc.OnProgress(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: "3", WantedID: g.ID, State: "downloading", Title: one, ProgressPct: 40})
+	if n, _ := r.svc.st.ActiveDownloads(ctx); n != 1 {
+		t.Fatalf("downloads at once while it runs = %d", n)
+	}
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '20 minutes'`)
+	appSQL(t, `UPDATE downloads SET updated_at = now() - interval '20 minutes'`)
+	r.describes("3", failedView("3", one))
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 1 || run.Failed != 1 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	if d, _ := r.svc.st.GetDownload(ctx, "nzbget", "3"); d.State != "failed" || d.Error != "nzbget: FAILURE/HEALTH" || d.FinishedAt == nil {
+		t.Errorf("the job's row: %+v", d)
+	}
+	st := target(t, r.svc, eps[0].ID)
+	if st.State != store.TargetFailed || !strings.Contains(st.Detail, "download failed: nzbget: FAILURE/HEALTH") || st.RetryAt == nil {
+		t.Errorf("the target: %+v", st)
+	}
+	if blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID); blocked[one] == "" {
+		t.Errorf("the failed release is not blocked: %v", blocked)
+	}
+	if n, _ := r.svc.st.ActiveDownloads(ctx); n != 0 {
+		t.Errorf("downloads at once after the repair = %d, want 0", n)
+	}
+}
+
+// The stale-grab sweep ends what it gives up: a grab whose client does not know
+// its job is given up, and its download row, left running, ends with it; one
+// whose job failed is failed as its event would have, its release blocked.
+func TestTheStaleSweepEndsWhatItGivesUp(t *testing.T) {
+	const one, two = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E02.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one, two)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 2, true)
+	lost := r.grabOnJob(t, eps[0], "41")
+	failed := r.grabOnJob(t, eps[1], "42")
+	for job, g := range map[string]store.TargetGrab{"41": lost, "42": failed} {
+		_ = r.svc.OnProgress(ctx, events.DownloadEvent{Adapter: "nzbget", ClientID: job, WantedID: g.ID, State: "downloading", ProgressPct: 10})
+	}
+	appSQL(t, `UPDATE target_grabs SET updated_at = now() - interval '3 days'`)
+	appSQL(t, `UPDATE downloads SET updated_at = now() - interval '3 days'`)
+	r.describes("42", failedView("42", two))
+
+	freed, err := r.svc.SweepStaleGrabs(ctx)
+	if err != nil || freed != 1 {
+		t.Fatalf("the sweep freed %d: %v", freed, err)
+	}
+	if d, _ := r.svc.st.GetDownload(ctx, "nzbget", "41"); d.State != "failed" || !strings.Contains(d.Error, "given up") {
+		t.Errorf("the given-up grab's row: %+v", d)
+	}
+	if st := target(t, r.svc, eps[0].ID); st.State != store.TargetWanted || !strings.Contains(st.Detail, "given up") {
+		t.Errorf("the given-up grab's target: %+v", st)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, failed.ID); got.State != store.GrabFailed || got.Detail != "nzbget: FAILURE/HEALTH" {
+		t.Errorf("the failed grab: %+v", got)
+	}
+	if st := target(t, r.svc, eps[1].ID); st.State != store.TargetFailed || st.GrabFailures != 1 {
+		t.Errorf("the failed grab's target: %+v", st)
+	}
+	if blocked, _ := r.svc.st.BlockedFor(ctx, eps[1].ID); blocked[two] == "" {
+		t.Errorf("the failed release is not blocked: %v", blocked)
+	}
+	if n, _ := r.svc.st.ActiveDownloads(ctx); n != 0 {
+		t.Errorf("downloads at once after the sweep = %d, want 0", n)
+	}
+}

@@ -369,3 +369,54 @@ func TestARequestHandedToAJobIDAgainOwnsIt(t *testing.T) {
 		t.Errorf("the request's latest grab: %+v %v", g, err)
 	}
 }
+
+// A grab given up ends its own download row, saying why — no event of it
+// comes any more —, and leaves another grab's row alone. A row that still
+// runs for a target grab that ended — failed, given up or imported — does not
+// count against the downloads at once.
+func TestAGrabGivenUpEndsItsDownloadRow(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	id, eps := series(t, s, 28, 3)
+	grabOn(t, s, "tg_lost", id, eps[0], "nzbget", "1", 0)
+	grabOn(t, s, "tg_other", id, eps[1], "nzbget", "2", 0)
+	for job, wanted := range map[string]string{"1": "tg_lost", "2": "tg_other"} {
+		if _, err := s.UpsertDownload(ctx, Download{Adapter: "nzbget", ClientJobID: job, WantedID: wanted, State: "downloading",
+			SpeedBps: 100}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, _ := s.ActiveDownloads(ctx); n != 2 {
+		t.Fatalf("active before = %d", n)
+	}
+	if _, err := s.FreeTargetGrab(ctx, "tg_lost", "given up: nothing was heard of it"); err != nil {
+		t.Fatal(err)
+	}
+	lost, _ := s.GetDownload(ctx, "nzbget", "1")
+	if lost.State != "failed" || lost.Error != "given up: nothing was heard of it" || lost.FinishedAt == nil || lost.SpeedBps != 0 {
+		t.Fatalf("the given-up grab's row: %+v", lost)
+	}
+	if other, _ := s.GetDownload(ctx, "nzbget", "2"); other.State != "downloading" {
+		t.Fatalf("another grab's row: %+v", other)
+	}
+	if n, _ := s.ActiveDownloads(ctx); n != 1 {
+		t.Errorf("active after = %d, want 1", n)
+	}
+
+	// Rows left running by grabs that ended count no more.
+	if _, err := s.pool.Exec(ctx, `UPDATE downloads SET state = 'downloading', finished_at = NULL WHERE client_job_id = '1'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.ActiveDownloads(ctx); n != 1 {
+		t.Errorf("active with the given-up grab's row running = %d, want 1", n)
+	}
+	if err := s.SetTargetGrabState(ctx, "tg_other", GrabImported, "imported"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.ActiveDownloads(ctx); n != 0 {
+		t.Errorf("active with both grabs ended = %d, want 0", n)
+	}
+	if _, err := s.ReserveTargetGrabWithin(ctx, TargetGrab{ID: "tg_next", TitleID: id}, eps[2], eps[2:3], 1); err != nil {
+		t.Errorf("a reservation under a cap of 1 with nothing in flight: %v", err)
+	}
+}
