@@ -553,12 +553,23 @@ func (s *Service) inFlightGrab(ctx context.Context, g store.TargetGrab, ev event
 	return g, g.State == store.GrabGrabbed || g.State == store.GrabDownloaded, nil
 }
 
+// errImportWaits: a target grab's download finished while its client job still
+// held the import of another download that had the job id before, not
+// finished (store.ErrImportBusy). Nothing was queued; the grab is downloaded,
+// saying so, and the grab recovery queues its import once the other one is
+// done.
+var errImportWaits = errors.New("its import waits for another download's on the same job id")
+
 // onTargetCompleted: the download of a target grab finished. Its targets move
 // from grabbed to downloaded and the download is queued for the import worker,
 // which copies its files into the arrivals when they lie outside them and hands
 // each over by identity (targetimport.go). A repeat of the event queues
 // nothing twice, and a target that failed meanwhile stays failed, for its
 // recovery.
+//
+// Only an import queued, or this grab's queued before, moves the targets as
+// handed on: a job id the client gave again may still hold another download's
+// import, which is not replaced while it runs (errImportWaits).
 func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) error {
 	g, moves, err := s.inFlightGrab(ctx, g, ev)
 	if err != nil || !moves {
@@ -567,7 +578,18 @@ func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev 
 	created, err := s.st.EnqueueImport(ctx, store.Import{
 		Adapter: ev.Adapter, ClientJobID: ev.ClientID, WantedID: g.ID, Files: ev.Files,
 	})
-	if err != nil {
+	var busy *store.ImportBusyError
+	switch {
+	case errors.As(err, &busy):
+		why := clip(fmt.Sprintf("downloaded; not copied into the library yet: %s gave its job id %s to an earlier download, "+
+			"whose import is not done (%s); queued once it is", ev.Adapter, ev.ClientID, busy.State), 300)
+		_ = s.st.SetTargetGrabState(ctx, g.ID, store.GrabDownloaded, why)
+		_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed, store.TargetDownloaded}, store.TargetDownloaded, why)
+		log.Printf("acquire: grab %s: its import waits: %s/%s still holds the import of %s (%s)",
+			g.ID, ev.Adapter, ev.ClientID, busy.WantedID, busy.State)
+		s.notify()
+		return fmt.Errorf("%w: %v", errImportWaits, busy)
+	case err != nil:
 		// The store failing says nothing of the targets: they stay grabbed,
 		// for the event's repeat or the stale-grab sweep.
 		log.Printf("acquire: queue the import of %s: %v", g.ID, err)
@@ -581,7 +603,8 @@ func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev 
 	if files := s.mapEventFiles(ctx, ev); len(files) > 0 && s.copiesIntoArrivals(files[0]) {
 		detail = "downloaded; copying into the library"
 	}
-	_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed}, store.TargetDownloaded, detail)
+	// Targets downloaded already waited for another download's import to end.
+	_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed, store.TargetDownloaded}, store.TargetDownloaded, detail)
 	s.wakeImports()
 	s.notify()
 	return nil
@@ -628,7 +651,8 @@ func (s *Service) cancelTargetGrab(ctx context.Context, adapter, jobID string) {
 	for _, id := range g.TargetIDs {
 		_ = s.BlockFailedRelease(ctx, id, g.ReleaseTitle, g.Indexer, "its download was cancelled")
 	}
-	if im, err := s.st.GetImport(ctx, adapter, jobID); err == nil && im.State == store.ImportPending {
+	// The job's import may be another grab's, on a job id the client gave again.
+	if im, err := s.st.GetImport(ctx, adapter, jobID); err == nil && im.WantedID == g.ID && im.State == store.ImportPending {
 		im.State, im.Detail, im.NextAt = store.ImportDone, "the grab was cancelled; nothing more handed over", time.Now()
 		_ = s.st.SaveImport(ctx, im)
 	}

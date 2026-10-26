@@ -78,11 +78,22 @@ func (s *Service) copiesIntoArrivals(path string) bool {
 	return err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// queueImport records a finished download for the worker and wakes it.
+// queueImport records a finished download for the worker and wakes it. A job
+// id the client gave again may still hold the import of the download that had
+// it before (store.ErrImportBusy): a request's download is not looked at
+// again then, so it fails saying why, to be grabbed again.
 func (s *Service) queueImport(ctx context.Context, ev eventRef, wantedID string) {
-	if _, err := s.st.EnqueueImport(ctx, store.Import{
+	_, err := s.st.EnqueueImport(ctx, store.Import{
 		Adapter: ev.adapter, ClientJobID: ev.jobID, WantedID: wantedID, Files: ev.files,
-	}); err != nil {
+	})
+	var busy *store.ImportBusyError
+	switch {
+	case errors.As(err, &busy):
+		log.Printf("acquire: queue import %s/%s for %s: %v", ev.adapter, ev.jobID, wantedID, err)
+		s.setStatus(ctx, wantedID, "failed", clip(fmt.Sprintf("downloaded, but not copied into the library: %s gave its job id %s "+
+			"to an earlier download, whose import is not done; grab it again", ev.adapter, ev.jobID), 300))
+		return
+	case err != nil:
 		log.Printf("acquire: queue import %s/%s: %v", ev.adapter, ev.jobID, err)
 		s.setStatus(ctx, wantedID, "failed", "the finished download could not be queued for import: "+err.Error())
 		return

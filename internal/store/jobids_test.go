@@ -228,3 +228,62 @@ func TestAGrabOnAJobIDGivenAgainHoldsItsTargetsRows(t *testing.T) {
 		t.Errorf("the old grab still holds %+v", old)
 	}
 }
+
+// The import of a job id the client gave again: another grab's import that
+// is not finished keeps its row, saying whose it is; a finished one gives way
+// to the new grab's, pending with its files, as new; the new grab's repeat
+// records nothing; a save of the import taken over writes nothing.
+func TestAnImportOfAJobIDGivenAgain(t *testing.T) {
+	s := migrated(t)
+	ctx := context.Background()
+	a := Import{Adapter: "nzbget", ClientJobID: "3", WantedID: "tg_a", Files: []string{"/downloads/complete/acquire/Show.Name.S01E01.1080p.WEB.h264-GRP"}}
+	b := Import{Adapter: "nzbget", ClientJobID: "3", WantedID: "tg_b", Files: []string{"/downloads/complete/acquire/Show.Name.S01E03.1080p.WEB.h264-GRP"}}
+	if created, err := s.EnqueueImport(ctx, a); err != nil || !created {
+		t.Fatalf("A: %v %v", created, err)
+	}
+	var busy *ImportBusyError
+	for _, state := range []string{ImportPending, ImportImported} {
+		if _, err := s.pool.Exec(ctx, `UPDATE imports SET state = $1, attempts = 2, detail = 'working', arrival = '/arrivals/x' WHERE wanted_id = 'tg_a'`, state); err != nil {
+			t.Fatal(err)
+		}
+		created, err := s.EnqueueImport(ctx, b)
+		if created || !errors.As(err, &busy) || !errors.Is(err, ErrImportBusy) || busy.WantedID != "tg_a" || busy.State != state {
+			t.Fatalf("B while A's import is %s: %v %v", state, created, err)
+		}
+		if got, _ := s.GetImport(ctx, "nzbget", "3"); got.WantedID != "tg_a" || got.State != state || got.Attempts != 2 {
+			t.Fatalf("A's import while %s after B: %+v", state, got)
+		}
+	}
+
+	if _, err := s.pool.Exec(ctx, `UPDATE imports SET state = 'done', next_at = now() - interval '9 days',
+		created_at = now() - interval '9 days' WHERE wanted_id = 'tg_a'`); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := s.EnqueueImport(ctx, b); err != nil || !created {
+		t.Fatalf("B once A's import is done: %v %v", created, err)
+	}
+	got, err := s.GetImport(ctx, "nzbget", "3")
+	if err != nil || got.WantedID != "tg_b" || got.State != ImportPending || got.Attempts != 0 || got.Detail != "" ||
+		got.Arrival != "" || len(got.Files) != 1 || got.Files[0] != b.Files[0] || time.Since(got.CreatedAt) > time.Minute ||
+		time.Since(got.NextAt) > time.Minute {
+		t.Fatalf("B's import: %+v %v", got, err)
+	}
+	if created, err := s.EnqueueImport(ctx, b); err != nil || created {
+		t.Fatalf("B's repeated completed event: %v %v", created, err)
+	}
+	// The holder of A's import, late, writes nothing over B's.
+	a.State, a.Detail = ImportDone, "released"
+	if err := s.SaveImport(ctx, a); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a save of the import taken over: %v", err)
+	}
+	if got, _ := s.GetImport(ctx, "nzbget", "3"); got.WantedID != "tg_b" || got.State != ImportPending {
+		t.Fatalf("B's import after A's late save: %+v", got)
+	}
+	// A failed import gives way too.
+	if _, err := s.pool.Exec(ctx, `UPDATE imports SET state = 'failed' WHERE wanted_id = 'tg_b'`); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := s.EnqueueImport(ctx, Import{Adapter: "nzbget", ClientJobID: "3", WantedID: "w_c"}); err != nil || !created {
+		t.Fatalf("after B's import failed: %v %v", created, err)
+	}
+}
