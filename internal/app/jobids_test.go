@@ -1364,3 +1364,33 @@ func TestTheStaleSweepKeepsAGrabItsClientWorksOn(t *testing.T) {
 		t.Errorf("its target: %+v", st)
 	}
 }
+
+// A grab whose download completed, and whose job its client says failed since
+// — removed in the client, say —, fails nothing by its release: the repair
+// leaves it, and its row says what it did, completed, not failed.
+func TestAFailureAfterTheDownloadCompletedLeavesItsRow(t *testing.T) {
+	const one = "Show.Name.S01E01.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "71")
+	if _, err := r.svc.st.UpsertDownload(ctx, store.Download{Adapter: "nzbget", ClientJobID: "71", WantedID: g.ID, Title: one,
+		State: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+	appSQL(t, `UPDATE target_grabs SET state = 'downloaded' WHERE id = $1`, g.ID)
+	removed := failedView("71", one)
+	removed.NativeState, removed.Message = "DELETED/MANUAL", "removed: DELETED/MANUAL"
+	r.describes("71", removed)
+
+	run, err := r.svc.RepairGrabs(ctx)
+	if err != nil || run.Found != 1 || run.Ended != 1 || run.Failed != 0 {
+		t.Fatalf("the repair: %+v %v", run, err)
+	}
+	if d, _ := r.svc.st.GetDownload(ctx, "nzbget", "71"); d.State != "completed" || d.Error != "" {
+		t.Errorf("its row: %+v", d)
+	}
+	if blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID); len(blocked) != 0 {
+		t.Errorf("its release was blocked: %v", blocked)
+	}
+}

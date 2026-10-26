@@ -230,12 +230,16 @@ func runningEvent(g store.TargetGrab, job gateway.JobView) events.DownloadEvent 
 }
 
 // failUnseen hands a job its client says failed to the failed event's path,
-// as if the gateway had sent the event: its download row ended with the
-// client's word, and the grab, still handed over, failed by its release — the
-// release blocked for its targets, wanted again after a wait
-// (failTargetGrab). It reports whether the grab failed: one whose download
-// had completed already, or that moved on meanwhile, moves nothing.
+// as if the gateway had sent the event: the grab, if it is still handed over,
+// fails by its release — the release blocked for its targets, wanted again
+// after a wait (failTargetGrab) —, and its download row ends with the client's
+// word. It reports whether the grab failed: one whose download had completed
+// already, or that moved on meanwhile, moves nothing, its row left as it is.
 func (s *Service) failUnseen(ctx context.Context, g store.TargetGrab, job gateway.JobView) (bool, error) {
+	now, err := s.st.GetTargetGrab(ctx, g.ID)
+	if err != nil || now.State != store.GrabGrabbed {
+		return false, err
+	}
 	why := strings.TrimSpace(job.Message)
 	if why == "" {
 		why = "the download failed in " + g.Adapter
@@ -243,10 +247,6 @@ func (s *Service) failUnseen(ctx context.Context, g store.TargetGrab, job gatewa
 	ev := events.DownloadEvent{Adapter: g.Adapter, ClientID: g.ClientJobID, WantedID: g.ID, Title: job.Title,
 		State: "failed", NativeState: job.NativeState, Error: why}
 	_ = s.saveDownload(ctx, ev, "failed")
-	now, err := s.st.GetTargetGrab(ctx, g.ID)
-	if err != nil {
-		return false, err
-	}
 	return s.failTargetGrab(ctx, now, ev)
 }
 
