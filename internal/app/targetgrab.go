@@ -518,7 +518,8 @@ func (s *Service) targetGrabNext(ctx context.Context) bool {
 // gateway echoes, else — a restarted gateway forgot it — by the client job,
 // whose grab is the newest handed to it (store.FindTargetGrabByJob) when the
 // job is named after that grab's release (jobIsGrabs). One that is not is
-// another download under the id, and the grab is left for a person.
+// another download under the id: the grab's own download is gone, and the
+// grab is given up, its targets wanted again (giveUpToAnother).
 func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (store.TargetGrab, bool) {
 	if s.st == nil {
 		return store.TargetGrab{}, false
@@ -533,7 +534,7 @@ func (s *Service) targetGrabOf(ctx context.Context, ev events.DownloadEvent) (st
 			return store.TargetGrab{}, false
 		}
 		if name := jobName(ev.Title, ev.Files); !s.jobIsGrabsOf(ctx, g, name, ev.ClientType) {
-			s.leaveForAPerson(ctx, g, name)
+			s.giveUpToAnother(ctx, g, name)
 			return store.TargetGrab{}, false
 		}
 		return g, true
@@ -766,7 +767,7 @@ func (s *Service) SweepStaleGrabs(ctx context.Context) (int, error) {
 				log.Printf("acquire: stale grab %s: its download failed unseen; failed as its event would have, its release blocked", g)
 				continue
 			case settled == unseenForeign:
-				continue // left for a person, saying why
+				continue // given up to the other download, its targets wanted again
 			}
 		}
 		const why = "nothing was heard of its download for two days and the gateway does not know it: given up, wanted again"
@@ -797,8 +798,8 @@ const (
 	// have, its release blocked.
 	unseenFailed
 	// unseenForeign: its client holds another download under its job id;
-	// nothing of it taken for the grab, which failed, left for a person
-	// (leaveForAPerson).
+	// nothing of it taken for the grab, which is given up, its targets
+	// wanted again (giveUpToAnother).
 	unseenForeign
 )
 
@@ -825,7 +826,7 @@ func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (unsee
 	case err != nil:
 		return unseenNothing, err
 	case actsOn(job) && !s.jobIsGrabs(ctx, g, jobName(job.Title, job.Files)):
-		s.leaveForAPerson(ctx, g, jobName(job.Title, job.Files))
+		s.giveUpToAnother(ctx, g, jobName(job.Title, job.Files))
 		return unseenForeign, nil
 	case job.State == "failed":
 		failed, err := s.failUnseen(ctx, g, job)

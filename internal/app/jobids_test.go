@@ -915,9 +915,9 @@ func TestTheRepairQueuesTheFiveTheRestartLeftStuck(t *testing.T) {
 // NZBGet restarted; B's add got id 7, but its answer was lost, so acquire
 // recorded no job for B. Job 7 is B's, named after B's release. The repair,
 // B's completed event — the gateway adopted B's job and names no grab — and
-// the stale-grab sweep each take nothing of it for A: A fails, left for a
-// person, its target failed not by its release — nothing blocked, nothing
-// tried again on its own —, its detail saying why.
+// the stale-grab sweep each take nothing of it for A: A's own download is
+// gone, so A is given up, its row ended, and its target is wanted again —
+// nothing blocked —, its detail saying why, for the sweep to grab again.
 func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
 	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
 	setup := func(t *testing.T) (*targetRig, store.TargetGrab, []store.Target) {
@@ -938,23 +938,27 @@ func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
 		r.describes("7", completedView("7", three))
 		return r, a, eps
 	}
-	leftForAPerson := func(t *testing.T, r *targetRig, a store.TargetGrab, eps []store.Target) {
+	givenUp := func(t *testing.T, r *targetRig, a store.TargetGrab, eps []store.Target) {
 		t.Helper()
 		ctx := context.Background()
 		if _, err := r.svc.st.GetImport(ctx, "nzbget", "7"); err == nil {
 			t.Fatal("B's job was queued for A")
 		}
+		const why = "nzbget holds another download under its job id 7 (" + three + ")"
 		got, _ := r.svc.st.GetTargetGrab(ctx, a.ID)
-		if got.State != store.GrabFailed || !strings.Contains(got.Detail, "left for a person") ||
-			!strings.Contains(got.Detail, "nzbget holds another download under job 7 ("+three+")") {
+		if got.State != store.GrabFailed || !strings.Contains(got.Detail, why) {
 			t.Fatalf("A: %+v", got)
 		}
 		st := target(t, r.svc, eps[0].ID)
-		if st.State != store.TargetFailed || !strings.Contains(st.Detail, "left for a person") || st.RetryAt != nil || st.GrabFailures != 0 {
+		if st.State != store.TargetWanted || !strings.Contains(st.Detail, why) || !strings.Contains(st.Detail, "wanted again") ||
+			st.RetryAt != nil || st.GrabFailures != 0 {
 			t.Errorf("A's target: %+v", st)
 		}
 		if blocked, _ := r.svc.st.BlockedFor(ctx, eps[0].ID); len(blocked) != 0 {
 			t.Errorf("A's release was blocked: %v", blocked)
+		}
+		if miss, _ := r.svc.st.Missing(ctx, 10); len(miss) == 0 {
+			t.Error("A's target is not missing again")
 		}
 	}
 
@@ -964,7 +968,7 @@ func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
 		if err != nil || run.Found != 1 || run.Foreign != 1 || run.Queued != 0 {
 			t.Fatalf("the repair: %+v %v", run, err)
 		}
-		leftForAPerson(t, r, a, eps)
+		givenUp(t, r, a, eps)
 		if run, _ := r.svc.RepairGrabs(context.Background()); run.Found != 0 {
 			t.Errorf("A is looked at again: %+v", run)
 		}
@@ -975,7 +979,7 @@ func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
 			Files: []string{"/downloads/" + three}}); err != nil {
 			t.Fatal(err)
 		}
-		leftForAPerson(t, r, a, eps)
+		givenUp(t, r, a, eps)
 		if d, _ := r.svc.st.GetDownload(context.Background(), "nzbget", "7"); d.WantedID == a.ID {
 			t.Errorf("B's row was taken for A's: %+v", d)
 		}
@@ -986,7 +990,7 @@ func TestAJobAnUnrecordedHandOverHoldsIsNotTheOlderGrabs(t *testing.T) {
 		if freed, err := r.svc.SweepStaleGrabs(context.Background()); err != nil || freed != 0 {
 			t.Fatalf("the stale-grab sweep freed %d: %v", freed, err)
 		}
-		leftForAPerson(t, r, a, eps)
+		givenUp(t, r, a, eps)
 	})
 }
 
@@ -1289,6 +1293,29 @@ func TestTheStaleSweepGivesNothingUpThatMovedOnMeanwhile(t *testing.T) {
 	r.gw.mu.Unlock()
 	if freed, err := r.svc.SweepStaleGrabs(ctx); err != nil || freed != 0 {
 		t.Fatalf("the sweep freed %d: %v", freed, err)
+	}
+	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported || got.Detail != "1 handed over" {
+		t.Errorf("the grab imported meanwhile: %+v", got)
+	}
+}
+
+// A grab imported while the repair asks its client is not given up for
+// another download's job either: it is given up only from the state it is in.
+func TestTheRepairGivesNothingUpThatMovedOnMeanwhile(t *testing.T) {
+	const one, three = "Show.Name.S01E01.1080p.WEB.h264-GRP", "Show.Name.S01E03.1080p.WEB.h264-GRP"
+	r := newTargetRig(t, one)
+	ctx := context.Background()
+	_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+	g := r.grabOnJob(t, eps[0], "52")
+	appSQL(t, `UPDATE target_grabs SET state = 'downloaded' WHERE id = $1`, g.ID)
+	r.describes("52", completedView("52", three))
+	r.gw.mu.Lock()
+	r.gw.onDescribe = func(string) {
+		appSQL(t, `UPDATE target_grabs SET state = 'imported', detail = '1 handed over' WHERE id = $1`, g.ID)
+	}
+	r.gw.mu.Unlock()
+	if _, err := r.svc.RepairGrabs(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if got, _ := r.svc.st.GetTargetGrab(ctx, g.ID); got.State != store.GrabImported || got.Detail != "1 handed over" {
 		t.Errorf("the grab imported meanwhile: %+v", got)
