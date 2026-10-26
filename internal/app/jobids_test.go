@@ -697,3 +697,38 @@ func TestAStaleGrabOfAClientTheGatewayDoesNotKnow(t *testing.T) {
 		t.Fatalf("with the client disabled: freed %d %v", freed, err)
 	}
 }
+
+// The repair counts what it did, not what it tried: a grab that moved on
+// while its client was asked — imported meanwhile, or its import queued by
+// another run — is not counted as queued.
+func TestTheRepairCountsWhatItDid(t *testing.T) {
+	const one = "Show.Name.S01E01.1080p.WEB.h264-GRP"
+	for name, meanwhile := range map[string]func(r *targetRig, g store.TargetGrab){
+		"imported meanwhile": func(r *targetRig, g store.TargetGrab) {
+			appSQL(t, `UPDATE target_grabs SET state = 'imported' WHERE id = $1`, g.ID)
+		},
+		"queued by another run": func(r *targetRig, g store.TargetGrab) {
+			if _, err := r.svc.st.EnqueueImport(context.Background(), store.Import{Adapter: "nzbget", ClientJobID: "3",
+				WantedID: g.ID, Files: []string{"/downloads/" + one}}); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newTargetRig(t, one)
+			ctx := context.Background()
+			_, eps := track(t, r.svc, 4711, "Show Name", 1, true)
+			g := r.grabOnJob(t, eps[0], "3")
+			appSQL(t, `UPDATE target_grabs SET state = 'downloaded' WHERE id = $1`, g.ID)
+			r.writeDownload(t, one)
+			r.describes("3", completedView("3", one))
+			r.gw.mu.Lock()
+			r.gw.onDescribe = func(string) { meanwhile(r, g) }
+			r.gw.mu.Unlock()
+			run, err := r.svc.RepairGrabs(ctx)
+			if err != nil || run.Found != 1 || run.Queued != 0 || run.Moved != 1 {
+				t.Fatalf("the repair: %+v %v", run, err)
+			}
+		})
+	}
+}

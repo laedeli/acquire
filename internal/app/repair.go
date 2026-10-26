@@ -43,6 +43,7 @@ const (
 type RepairRun struct {
 	Found   int // grabs that may have finished unseen
 	Queued  int // their import queued
+	Moved   int // nothing queued: queued already, or the grab moved on meanwhile — done or given up
 	Waiting int // their job id still holds another download's import, not done
 	Running int // not finished in their client
 	Ended   int // ended in their client with nothing to import: failed, or no files
@@ -60,6 +61,7 @@ func (r RepairRun) String() string {
 		}
 	}
 	add(r.Queued, "queued for import")
+	add(r.Moved, "queued already or moved on meanwhile")
 	add(r.Waiting, "waiting for another download's import on the same job id")
 	add(r.Running, "not finished in their client")
 	add(r.Ended, "ended in their client with nothing to import")
@@ -147,13 +149,16 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 			run.Running++
 			continue
 		}
-		switch err := s.OnCompleted(ctx, completedEvent(g, job)); {
+		done, err := s.importUnseen(ctx, g, job)
+		switch {
 		case errors.Is(err, errImportWaits):
 			run.Waiting++
 		case err != nil:
 			return run, fmt.Errorf("repair %s: %w", g, err)
-		default:
+		case done == completedQueued:
 			run.Queued++
+		default:
+			run.Moved++
 		}
 	}
 	if run.Queued > 0 {
@@ -164,7 +169,21 @@ func (s *Service) RepairGrabs(ctx context.Context) (RepairRun, error) {
 
 // handled counts the grabs a run has come to an answer for.
 func (r RepairRun) handled() int {
-	return r.Queued + r.Waiting + r.Running + r.Ended + r.Unknown + r.Reused + r.Tracked + r.Unasked
+	return r.Queued + r.Moved + r.Waiting + r.Running + r.Ended + r.Unknown + r.Reused + r.Tracked + r.Unasked
+}
+
+// importUnseen hands a job its client says completed to the completed event's
+// path, as if the gateway had sent the event: its download row recorded, its
+// import queued (completeTargetGrab) — for the grab as it is now, read again,
+// since it may have moved on while its client was asked.
+func (s *Service) importUnseen(ctx context.Context, g store.TargetGrab, job gateway.JobView) (completion, error) {
+	ev := completedEvent(g, job)
+	_ = s.saveDownload(ctx, ev, "completed")
+	now, err := s.st.GetTargetGrab(ctx, g.ID)
+	if err != nil {
+		return completedNothing, err
+	}
+	return s.completeTargetGrab(ctx, now, ev)
 }
 
 // trackedJobs is what the gateway tracks: each job by its grab's id, when the

@@ -195,10 +195,12 @@ type fakeGateway struct {
 	// described is how GET /api/v1/downloads/{client}/{id} describes a job,
 	// by "client/id"; a job it has no view of is one the client does not
 	// know. describeStatus answers every such call with that status instead.
-	// describes is what was asked.
+	// describes is what was asked; onDescribe, when set, runs before a
+	// describe is answered.
 	described      map[string]gateway.JobView
 	describeStatus int
 	describes      []string
+	onDescribe     func(key string)
 	// down answers every request 503, as a gateway out of service.
 	down bool
 }
@@ -284,6 +286,11 @@ func (g *fakeGateway) server(t *testing.T) *httptest.Server {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/downloads/"):
 			key := strings.TrimPrefix(r.URL.Path, "/api/v1/downloads/")
 			g.describes = append(g.describes, key)
+			if hook := g.onDescribe; hook != nil {
+				g.mu.Unlock()
+				hook(key)
+				g.mu.Lock()
+			}
 			if g.describeStatus != 0 {
 				http.Error(w, `{"error":"answered `+strconv.Itoa(g.describeStatus)+`"}`, g.describeStatus)
 				return

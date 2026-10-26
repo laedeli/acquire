@@ -572,9 +572,28 @@ var errImportWaits = errors.New("its import waits for another download's on the 
 // handed on: a job id the client gave again may still hold another download's
 // import, which is not replaced while it runs (errImportWaits).
 func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) error {
+	_, err := s.completeTargetGrab(ctx, g, ev)
+	return err
+}
+
+// completion is what a completed event did with its grab.
+type completion int
+
+const (
+	// completedNothing: the grab is done, given up, or its job id a newer
+	// grab's — nothing moved.
+	completedNothing completion = iota
+	// completedQueued: its import was queued now.
+	completedQueued
+	// completedBefore: its import was queued before — a repeat of the event.
+	completedBefore
+)
+
+// completeTargetGrab is onTargetCompleted, saying what it did.
+func (s *Service) completeTargetGrab(ctx context.Context, g store.TargetGrab, ev events.DownloadEvent) (completion, error) {
 	g, moves, err := s.inFlightGrab(ctx, g, ev)
 	if err != nil || !moves {
-		return err
+		return completedNothing, err
 	}
 	created, err := s.st.EnqueueImport(ctx, store.Import{
 		Adapter: ev.Adapter, ClientJobID: ev.ClientID, WantedID: g.ID, Files: ev.Files,
@@ -589,15 +608,19 @@ func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev 
 		log.Printf("acquire: grab %s: its import waits: %s/%s still holds the import of %s (%s)",
 			g.ID, ev.Adapter, ev.ClientID, busy.WantedID, busy.State)
 		s.notify()
-		return fmt.Errorf("%w: %v", errImportWaits, busy)
+		return completedNothing, fmt.Errorf("%w: %v", errImportWaits, busy)
 	case err != nil:
 		// The store failing says nothing of the targets: they stay grabbed,
 		// for the event's repeat or the stale-grab sweep.
 		log.Printf("acquire: queue the import of %s: %v", g.ID, err)
-		return err
+		return completedNothing, err
+	}
+	done := completedQueued
+	if !created {
+		done = completedBefore
 	}
 	if !created && g.State == store.GrabDownloaded {
-		return nil
+		return done, nil
 	}
 	_ = s.st.SetTargetGrabState(ctx, g.ID, store.GrabDownloaded, "downloaded")
 	detail := "downloaded; handing it over to the library"
@@ -608,7 +631,7 @@ func (s *Service) onTargetCompleted(ctx context.Context, g store.TargetGrab, ev 
 	_, _ = s.st.MoveGrabTargets(ctx, g.ID, []string{store.TargetGrabbed, store.TargetDownloaded}, store.TargetDownloaded, detail)
 	s.wakeImports()
 	s.notify()
-	return nil
+	return done, nil
 }
 
 // onTargetFailed: the download of a target grab failed. Its targets that are
@@ -741,7 +764,7 @@ func (s *Service) finishedUnseen(ctx context.Context, g store.TargetGrab) (bool,
 	case job.State != "completed" || len(job.Files) == 0:
 		return false, nil
 	}
-	if err := s.OnCompleted(ctx, completedEvent(g, job)); err != nil && !errors.Is(err, errImportWaits) {
+	if _, err := s.importUnseen(ctx, g, job); err != nil && !errors.Is(err, errImportWaits) {
 		return false, err
 	}
 	return true, nil
